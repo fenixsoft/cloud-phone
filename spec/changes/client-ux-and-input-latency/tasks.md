@@ -49,7 +49,7 @@
 
 - [x] 3.1 Messages.kt 新增 AppListRequest/AppListMessage（AppEntry{packageName,label} 列表）与编解码，Framing 通用记录通道复用，单测覆盖编解码往返
 - [x] 3.2 StreamService.kt 处理 AppListRequest：packageManager.queryIntentActivities(MAIN+LAUNCHER) 枚举、排除 cloudphone.source 自身、会话在线才应答；docs/protocol.md 增补两条消息字段表与时序
-- [ ] 3.3 验证：客户端会话在线发请求 1s 内收到含负载 App 的列表；无会话时请求被忽略（老客户端兼容）
+- [x] 3.3 验证：客户端会话在线发请求 1s 内收到含负载 App 的列表；无会话时请求被忽略（老客户端兼容）
 
 ## 4. 客户端应用列表与桌面快捷方式（app-shortcuts 前端半）
 
