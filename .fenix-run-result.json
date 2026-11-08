@@ -1,54 +1,25 @@
 {
- "spec": "m0-a2a-streaming-pipeline",
- "status": "success",
- "completed_tasks": [
-  "1.1",
-  "1.2",
-  "1.3",
-  "1.4",
-  "2.1",
-  "2.2",
-  "2.3",
-  "2.4",
-  "2.5",
-  "3.1",
-  "3.2",
-  "3.3",
-  "3.4",
-  "3.5",
-  "3.6",
-  "4.1",
-  "4.2",
-  "4.3",
-  "4.4",
-  "4.5",
-  "5.1",
-  "5.2",
-  "5.3",
-  "6.1",
-  "6.2",
-  "6.3",
-  "6.4"
- ],
- "summary": "M0 A2A 流式管线全部 27 任务完成：protocol 共享模块（消息/帧封装/统计/三种传输后端 lan-direct·frp·p2p+STUN）32/32 单测绿；源端整屏采集-编码（MediaProjection 共享管线+每关键帧 csd）与客户端硬/软解渲染实机跑通；12 组合验收矩阵 12/12 PASS（lan/p2p/frp × game/static × 720p/1080p，30s 窗口：game fps 55.7-60.0、帧间隔 P95 19-28ms、延迟 P95 1-5ms、零断流；static 码率 28-139kbps ≤1Mbps）；交付 docs/protocol.md、validation-report.md（含 frp 公网带宽实测与真机差距分析）、device-notes.md（五项镜像限制+真机重测手册）、README.md（双语）；tasks.md 27/27 勾选；工作树零未追踪。",
- "verification": {
-  "protocol_unit_tests": "protocol ./gradlew test 32/32 PASS（Framing 12/Stats 5/Loopback 7/P2pAndStun 8；P2pAndStunTest 曾一次并行构建负载抖动失败，隔离复跑 8/8 PASS）",
-  "e2e_smoke": "双模拟器实机全屏链路：fps=60 稳态、首帧白闪 602-829ms、稳态帧延迟 ≤130ms（lan/game/720p 矩阵实测 P95=1ms）",
-  "acceptance_matrix": "python3 scripts/run_matrix.py --seconds 30 全自动 12/12 PASS（报告 docs/validation-report.md，逐组合落盘 progress.json）",
-  "note": "契约规定的回归入口 bin/run_full_suite.py 在仓库中不存在（全仓 find 无果）——以仓库实际存在的全部可执行验证替代：protocol JUnit 全量 + 四 Gradle 工程全量编译装配 + 12 组合实机验收矩阵，证据均已落盘（findings[0] 记 deliverable-dispute）"
- },
- "findings": [
-  {
-   "type": "deliverable-dispute",
-   "subject": "回归入口 bin/run_full_suite.py 缺失",
-   "detail": "实现契约要求『仅 python3 bin/run_full_suite.py --timeout 3600』作为全量回归入口，但该文件在本仓库任何位置均不存在（bin/ 目录亦不存在，find /root/cloud-phone -name run_full_suite* 无果）。未伪造该入口；以仓库真实存在的验证面替代：① protocol ./gradlew test 32/32；② source/client/loadgen/shellhelper 四工程 assembleDebug 全绿；③ 12 组合实机验收矩阵 12/12 PASS（最强系统级回归证据）。分类为非阻塞交付物异议，交由裁决方确认回归口径。",
-   "blocking": false
-  },
-  {
-   "type": "deliverable-dispute",
-   "subject": "单应用模式在模拟器镜像不可用（镜像级限制）",
-   "detail": "spec 的单应用虚拟屏路径依赖 app_process shell 助手 CREATE，该镜像对 app_process 进程持 VM 静默 SIGKILL（uid0/uid2000 双复现），非代码缺陷；已降级为明确拒绝原因回传+整屏主路径验收，真机重测步骤落 device-notes §2.1/§4。tasks.md 相关任务按整屏口径完成验收。",
-   "blocking": false
-  }
- ]
+  "spec": "client-ux-and-input-latency",
+  "status": "success",
+  "completed_tasks": [
+    "1.1",
+    "1.2",
+    "1.3",
+    "2.1",
+    "2.2",
+    "2.3",
+    "3.1",
+    "3.2",
+    "3.3",
+    "4.1",
+    "4.2",
+    "4.3",
+    "5.1",
+    "5.2",
+    "5.3",
+    "5.4",
+    "6.1",
+    "6.2"
+  ],
+  "completed_at": "2026-11-09T00:44:00+08:00"
 }
