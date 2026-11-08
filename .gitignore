@@ -18,3 +18,13 @@ __pycache__/
 # 在此追加 `!` 规则即可。
 !.fenix/todo.md
 !.fenix/verify.yaml
+
+# ── Android / Gradle 构建产物与本地配置 ──
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
