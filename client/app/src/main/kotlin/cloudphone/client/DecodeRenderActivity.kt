@@ -166,7 +166,11 @@ class DecodeRenderActivity : android.app.Activity() {
                 continue
             }
             if (index >= 0) {
-                codec.releaseOutputBuffer(index, true) // 渲染到 Surface
+                // latest-wins 渲染（触摸延迟修复 5.3）：解码照常（保 P 帧参考链完整），
+                // 但仅当队列为空（本帧已是最新）或本帧为关键帧时才上屏；
+                // 积压的陈旧帧 releaseOutputBuffer(false) 丢弃，避免显示滞后 = 积压深度 × 帧间隔
+                val isLatest = frameQueue.isEmpty() || frame.keyframe
+                codec.releaseOutputBuffer(index, isLatest) // true=渲染到 Surface
                 onFrameRendered(frame, info)
             }
         }
@@ -186,6 +190,14 @@ class DecodeRenderActivity : android.app.Activity() {
             android.util.Log.i(
                 "cloudphone-latency",
                 "frame seq=${frame.sequence} delayMs=$delayMs keyframe=${frame.keyframe}",
+            )
+        }
+        // ⑥ 渲染完成打点（触摸延迟插桩 5.1）：sinceTouchMs = 本帧渲染时刻 − 最近触摸发出时刻
+        val sinceTouchMs = SystemClock.elapsedRealtime() - ClientSession.lastInputSentAtMs
+        if (ClientSession.lastInputSentAtMs > 0 && sinceTouchMs in 0..5000) {
+            android.util.Log.i(
+                "cloudphone-touch",
+                "t6 render seq=${frame.sequence} sinceTouchMs=$sinceTouchMs keyframe=${frame.keyframe}",
             )
         }
         if (firstFrameRenderedMs.compareAndSet(-1, SystemClock.elapsedRealtime())) {

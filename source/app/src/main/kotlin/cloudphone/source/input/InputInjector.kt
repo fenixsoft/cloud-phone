@@ -27,7 +27,14 @@ class InputInjector(
         }
         val nx = normalizedX.coerceIn(0, NORMALIZED_MAX)
         val ny = normalizedY.coerceIn(0, NORMALIZED_MAX)
+        val t0 = android.os.SystemClock.elapsedRealtime()
         val result = bootstrap.injectTouch(displayId, action.id, nx, ny)
+        val costMs = android.os.SystemClock.elapsedRealtime() - t0
+        // ③ 注入完成打点（触摸延迟插桩 5.1）
+        android.util.Log.i(
+            "cloudphone-touch",
+            "t3 inject done display=$displayId action=${action.id} ok=${result.ok} costMs=$costMs",
+        )
         return if (result.ok) null else result.value
     }
 

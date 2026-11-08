@@ -7,7 +7,7 @@
     <application
         android:label="CloudPhone Client"
         android:theme="@android:style/Theme.Material"
-        android:allowBackup="false">
+        android:allowBackup="true">
 
         <activity
             android:name="cloudphone.client.MainActivity"
@@ -20,6 +20,18 @@
 
         <activity
             android:name="cloudphone.client.ConnectActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="cloudphone" android:host="launch" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name="cloudphone.client.SourceAppsActivity"
             android:exported="false" />
 
         <activity
@@ -29,6 +41,10 @@
 
         <activity
             android:name="cloudphone.client.SessionDrawerActivity"
+            android:exported="false" />
+
+        <receiver
+            android:name="cloudphone.client.PinShortcutResultReceiver"
             android:exported="false" />
     </application>
 </manifest>

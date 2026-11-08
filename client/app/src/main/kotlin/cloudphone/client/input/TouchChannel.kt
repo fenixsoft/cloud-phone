@@ -30,6 +30,9 @@ class TouchChannel(
         (v.coerceIn(0f, total.toFloat()) / total.coerceAtLeast(1) * normMax).toInt()
 
     private fun sendAction(pointerId: Int, action: InputAction, x: Int, y: Int) {
+        // ① 触摸事件产生打点（触摸延迟插桩 5.1）
+        android.util.Log.i("cloudphone-touch", "t1 action=${action.id} p=$pointerId x=$x y=$y")
+        val t0 = android.os.SystemClock.elapsedRealtime()
         send(
             ControlMessage.InputEvent(
                 sessionId = sessionIdProvider(),
@@ -39,6 +42,13 @@ class TouchChannel(
                 y = y,
             ),
         )
+        // 写出耗时（定位控制通道排队段：>50ms 说明发送路径阻塞）
+        val dt = android.os.SystemClock.elapsedRealtime() - t0
+        if (dt > 20) {
+            android.util.Log.w("cloudphone-touch", "t1b send slow dtMs=$dt")
+        } else {
+            android.util.Log.d("cloudphone-touch", "t1b send ok dtMs=$dt")
+        }
     }
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {

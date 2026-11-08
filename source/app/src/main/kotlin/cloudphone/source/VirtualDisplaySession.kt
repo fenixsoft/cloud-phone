@@ -62,7 +62,19 @@ class VirtualDisplaySession(
             readerThread = Thread({
                 try {
                     while (running.get()) {
-                        val record = reader.read() ?: break
+                        // 记录级解析失败不得崩进程（实测：挂机会话的陈旧 helper 流上
+                        // ProtocolException 未捕获曾整进程 crash，dropbox data_app_crash 实证）——
+                        // 帧流连接在损坏后已失去同步，断开帧流走断流处理（对齐控制面
+                        // 「记录级失败不拖垮服务」语义）
+                        val record = try {
+                            reader.read()
+                        } catch (e: cloudphone.protocol.ProtocolException) {
+                            android.util.Log.w(
+                                "cloudphone-source",
+                                "vd-frame-$displayId corrupt record: ${e.message}",
+                            )
+                            break
+                        } ?: break
                         if (record.type != Framing.RECORD_VIDEO) continue
                         // helper 帧记录 = 单分片视频载荷（布局同 docs/protocol.md §2.2）
                         val frame = cloudphone.transport.TcpStreamChannel.decodeVideoRecord(record.payload)

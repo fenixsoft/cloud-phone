@@ -41,6 +41,8 @@ class StreamService : Service() {
     private var backend: TransportBackend? = null
     private var sessionManager: SessionManager? = null
     private var injector: InputInjector? = null
+    /** 触摸延迟修复 5.3：输入窗口合成驱动 */
+    private var inputComposer: InputComposer? = null
     @Volatile private var currentSession: SessionManager.Session? = null
     /** 授权时创建的共享采集管线（VD+编码器常驻；一授权一实例） */
     @Volatile private var sharedCapture: ScreenCapture? = null
@@ -134,6 +136,9 @@ class StreamService : Service() {
         val bootstrap = ShellBootstrap()
         sessionManager = SessionManager(this, token, bootstrap)
         injector = InputInjector(bootstrap, sessionManager!!)
+        // 触摸延迟修复 5.3：输入窗口合成驱动（透明悬窗 5fps；未授权时降级并 WARN）
+        inputComposer = InputComposer.get(this)
+        inputComposer?.start()
         val config = TransportConfig(Role.SOURCE, kind, "", tcpPort, udpPort, useUdpVideo = useUdp)
         val b = when (kind) {
             BackendKind.FRP -> FrpBackend(config)
@@ -199,13 +204,49 @@ class StreamService : Service() {
             }
             is ControlMessage.IdrRequest -> sharedCapture?.requestIdr()
             is ControlMessage.InputEvent -> {
+                // ② InputEvent 到达打点（触摸延迟插桩 5.1）+ 输入窗口标记（5.3 修复挂点）
+                android.util.Log.i("cloudphone-touch", "t2 recv action=${msg.action.id} sid=${msg.sessionId}")
+                sharedCapture?.onInputActivity()
+                inputComposer?.onInputActivity()
                 injector?.inject(msg.sessionId, msg.action, msg.pointerId, msg.x, msg.y)
             }
             is ControlMessage.Ping -> send(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
             is ControlMessage.StatsMessage -> Unit // 客户端统计：M0 源端仅消费 RTT（后端已自测）
+            is ControlMessage.AppListRequest -> handleAppListRequest(msg)
             is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话（协议要求）
             else -> Unit
         }
+    }
+
+    /**
+     * APP_LIST 请求-应答（client-ux-and-input-latency 3.2）：
+     * - 会话在线才应答（请求-应答制：老客户端不发该消息即零影响，无 BREAKING）；
+     * - PackageManager 枚举 MAIN+LAUNCHER 可启动应用，排除源端 App 自身，其余不过滤
+     *   （含负载/第三方/系统应用，spec app-shortcuts Requirement 1）；
+     * - 枚举 + label 解析在控制线程内完成（实测 <100ms，1s 应答 SLA 足够）。
+     */
+    private fun handleAppListRequest(msg: ControlMessage.AppListRequest) {
+        if (currentSession == null) {
+            android.util.Log.i("cloudphone-source", "app list request req=${msg.requestId} ignored (no active session)")
+            return
+        }
+        val pm = packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val self = packageName
+        val byPackage = LinkedHashMap<String, String>()
+        for (info in pm.queryIntentActivities(launcher, 0)) {
+            val pkg = info.activityInfo.packageName
+            if (pkg == self) continue
+            if (byPackage.containsKey(pkg)) continue
+            val label = runCatching { info.loadLabel(pm).toString() }.getOrDefault(pkg)
+            byPackage[pkg] = label
+        }
+        val apps = byPackage.entries.map { cloudphone.protocol.AppEntry(it.key, it.value) }
+        android.util.Log.i(
+            "cloudphone-source",
+            "app list response req=${msg.requestId} count=${apps.size} first=${apps.firstOrNull()?.packageName ?: "-"}",
+        )
+        send(ControlMessage.AppListMessage(msg.requestId, apps))
     }
 
     private fun handleHello(msg: ControlMessage.Hello) {
@@ -255,7 +296,10 @@ class StreamService : Service() {
         } else {
             when (msg.mode) {
                 WatchMode.FULLSCREEN -> {
-                    // 整屏会话挂接授权时建好的共享采集管线（VD/编码器常驻，见 ensureSharedCapture）
+                    // 整屏会话挂接授权时建好的共享采集管线（VD/编码器常驻，见 ensureSharedCapture）；
+                    // 请求档位与现行管线不同时按请求重建（2.2：档位必须生效，旧实现 attachFullscreen
+                    // 静默沿用旧参，分辨率/码率变更需重启源端进程）
+                    ensureSharedCapture(params(msg))
                     if (sharedCapture != null) {
                         manager.attachFullscreen(params(msg))
                     } else {
@@ -374,6 +418,8 @@ class StreamService : Service() {
     override fun onDestroy() {
         running = false
         statsThread?.interrupt()
+        inputComposer?.stop()
+        inputComposer = null
         currentSession?.let { sessionManager?.hangup(it) }
         currentSession = null
         sharedCapture?.stop()

@@ -68,6 +68,8 @@
 | `0x07` | STATS | 双向 | ≥1Hz 统计 |
 | `0x08` | PING | C → S | RTT/时钟偏移探测 |
 | `0x09` | PONG | S → C | PING 应答 |
+| `0x0A` | APP_LIST_REQUEST | C → S | 请求枚举源端可启动应用（请求-应答制） |
+| `0x0B` | APP_LIST | S → C | 可启动应用列表应答（会话在线才应答） |
 
 控制记录 payload 首字节即 msgType，其后按各消息字段表排列。
 
@@ -143,6 +145,22 @@
 | 6 | fps | u8 | 帧率 |
 | 7 | bitrateKbps | u32 | 码率 |
 
+**目标档位语义（resolution-passthrough）**：客户端在 width/height（及 fps/bitrateKbps）填的是
+**目标档位**，不是精确采集尺寸承诺。源端保证：
+
+1. **短边吻合**：采集短边 = 请求档位短边（`min(width,height)`）；
+2. **比例保真**：采集宽高比 = 源端自身屏幕真实宽高比（aspect-exact 等比适配，
+   实现见 `ScreenCapture.buildPipeline`）——客户端 letterbox 显示无扭曲；
+3. **/16 对齐偏差**：编码器要求宽高 16 对齐，等比缩放后逐维向下取整到 16 的倍数，
+   允许 ±15px 级偏差。例：请求 1080x2400 于 1080x2400 同比例源屏 → 实际 ≈1080x2400；
+   请求 720x1280 于 1080x2400（20.6:9）源屏 → 实际 720x1600（短边=720、源屏比例）。
+   适配结果在源端日志 `capture: aspect-exact ...` 可见，并经 HELLO_ACK/会话 ACCEPTED
+   的 width/height 字段回传实际值；
+4. **默认档**：width=height=0（或 fps/bitrateKbps=0）→ 源端取默认 1280x720@60fps/8000kbps；
+5. 范围钳制在源端 `EncoderPipeline.SessionParams.normalized`（width 320–2560、
+   height 240–2560、fps 15–60、bitrate 1000–20000kbps）；客户端侧仅做同区间范围校验，
+   对齐（/16）交给源端处理。
+
 ### 3.4 STOP_SESSION（0x04）
 
 | 序 | 字段 | 类型 | 说明 |
@@ -191,6 +209,29 @@
 | 1 | nonce | i64 | 回显 PING.nonce |
 | 2 | senderUs | i64 | 回显 PING.senderUs |
 | 3 | echoUs | i64 | 响应侧单调时钟微秒 |
+
+### 3.10 APP_LIST_REQUEST（0x0A）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | requestId | i32 | 请求序号（客户端自选），APP_LIST 原样回显 |
+
+- 客户端 → 源端，空载荷消息（仅 requestId）。**请求-应答制**：客户端不发该消息即零影响
+  （老客户端兼容，无 BREAKING）；源端不主动推送。
+
+### 3.11 APP_LIST（0x0B）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | requestId | i32 | 回显 APP_LIST_REQUEST.requestId |
+| 2 | appCount | u16 | 应用条目数 N |
+| 3 | N × 条目 | — | `{str packageName, str label}` 逐条紧凑排列 |
+
+- 源端 → 客户端。枚举规则：`PackageManager.queryIntentActivities(MAIN + LAUNCHER)`，
+  排除源端 App 自身（`cloudphone.source`），其余应用（负载/第三方/系统应用）不过滤；
+  包名去重，标签取 `loadLabel`（非空，异常时回退包名）。
+- **应答条件与时序**：仅当会话在线（存在 ACTIVE 会话）才应答，目标 ≤1s（实测 <100ms）；
+  无会话时静默忽略（客户端以 3s 超时判定列表获取失败）。
 
 ## 4. 握手与会话时序（文字版）
 

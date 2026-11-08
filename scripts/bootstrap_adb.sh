@@ -136,6 +136,10 @@ case "${1:-all}" in
     # 屏幕常亮：虚拟显示镜像依赖宿主屏持续合成，熄屏会让编码器断粮
     adb -s "$SOURCE_SERIAL" shell svc power stayon true >/dev/null
     adb -s "$CLIENT_SERIAL" shell svc power stayon true >/dev/null
+    # 触摸延迟修复（SPEC 5.3）：输入窗口合成驱动需要 SYSTEM_ALERT_WINDOW（透明 1×1 悬窗
+    # 以 5fps 失效自身，强制 display 0 逐次合成）。属设备侧一次性登记；未授权时源端降级运行并 WARN。
+    adb -s "$SOURCE_SERIAL" shell appops set cloudphone.source SYSTEM_ALERT_WINDOW allow
+    say "SYSTEM_ALERT_WINDOW 已登记（InputComposer 输入窗口合成驱动）"
     # 顺序关键：先起服务（Android 14 要求 getMediaProjection 时已有 mediaProjection FGS），再授权
     adb -s "$SOURCE_SERIAL" shell am start-foreground-service -n cloudphone.source/.StreamService >/dev/null
     sleep 1

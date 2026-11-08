@@ -27,6 +27,8 @@ object MsgType {
     const val STATS: Int = 0x07
     const val PING: Int = 0x08
     const val PONG: Int = 0x09
+    const val APP_LIST_REQUEST: Int = 0x0A
+    const val APP_LIST: Int = 0x0B
 }
 
 /** 观看模式：整屏 / 单应用（指定包名）/ 附着到已挂机会话 */
@@ -64,6 +66,12 @@ enum class TransportKind(val id: Int) {
         fun from(id: Int): TransportKind? = entries.firstOrNull { it.id == id }
     }
 }
+
+/** 可启动应用条目（APP_LIST 载荷）：源端 PackageManager 枚举结果 */
+data class AppEntry(
+    val packageName: String,
+    val label: String,
+)
 
 /** 已挂机（断开未销毁）会话摘要，随 HELLO_ACK 下发供会话抽屉展示 */
 data class HungSession(
@@ -154,6 +162,15 @@ sealed class ControlMessage(val type: Int) {
 
     /** 源端 → 客户端：回显 nonce/senderUs 并附响应侧时钟 */
     data class Pong(val nonce: Long, val senderUs: Long, val echoUs: Long) : ControlMessage(MsgType.PONG)
+
+    /** 客户端 → 源端：请求枚举源端可启动应用（请求-应答制；空载荷） */
+    data class AppListRequest(val requestId: Int) : ControlMessage(MsgType.APP_LIST_REQUEST)
+
+    /** 源端 → 客户端：可启动应用列表（排除源端 App 自身；AppEntry{packageName,label}） */
+    data class AppListMessage(
+        val requestId: Int,
+        val apps: List<AppEntry>,
+    ) : ControlMessage(MsgType.APP_LIST)
 
     /** 未知类型消息：接收方 MUST 忽略且不中断会话 */
     data class Unknown(val unknownType: Int, val payload: ByteArray) : ControlMessage(unknownType) {
@@ -267,6 +284,22 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
             putLong(msg.senderUs)
             putLong(msg.echoUs)
         }
+        is ControlMessage.AppListRequest -> ByteBuffer.allocate(4).apply { putInt(msg.requestId) }
+        is ControlMessage.AppListMessage -> {
+            var cap = 4 + 2
+            for (a in msg.apps) {
+                cap += 2 + a.packageName.toByteArray(StandardCharsets.UTF_8).size +
+                    2 + a.label.toByteArray(StandardCharsets.UTF_8).size
+            }
+            ByteBuffer.allocate(cap).apply {
+                putInt(msg.requestId)
+                putU16(msg.apps.size)
+                for (a in msg.apps) {
+                    putU16String(a.packageName)
+                    putU16String(a.label)
+                }
+            }
+        }
         is ControlMessage.Unknown -> throw ProtocolException("cannot encode unknown message type ${msg.unknownType}")
     }
     body.flip()
@@ -358,6 +391,17 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
             val nonce = buf.long
             val senderUs = buf.long
             ControlMessage.Pong(nonce, senderUs, buf.long)
+        }
+        MsgType.APP_LIST_REQUEST -> ControlMessage.AppListRequest(requestId = buf.int)
+        MsgType.APP_LIST -> {
+            val requestId = buf.int
+            val count = buf.getU16()
+            val apps = ArrayList<AppEntry>(count)
+            repeat(count) {
+                val pkg = buf.getU16String()
+                apps.add(AppEntry(pkg, buf.getU16String()))
+            }
+            ControlMessage.AppListMessage(requestId, apps)
         }
         else -> {
             val rest = ByteArray(buf.remaining())

@@ -91,3 +91,78 @@
 - 客户端重装只需重连（会话级状态在服务端）。
 - `adb emu redir add udp:22334:22334` 幂等性差：已存在时先 `redir del` 再 `add`（bootstrap 已处理）。
 - frpc 隧道由宿主 `frpc -c frpc.toml` 常驻；公网入口 112.74.85.74:22333(TCP)/22334(UDP)。
+
+## 6. 触摸延迟口径（client-ux-and-input-latency SPEC 5.4）
+
+### 6.1 模拟器实测（双模拟器 lan-direct，scripts/measure_latency.py --touch）
+
+| 口径 | 修复前（静屏） | 修复后（静屏） | 修复后（60fps 负载） |
+|---|---|---|---|
+| P50 | 651ms | 266ms | 1ms（≈1 帧内）|
+| P95 | 3104ms | **575ms（≤800ms 达标）** | **43ms（≤300ms 达标）** |
+| max | 3153ms | 686ms | 70ms |
+
+- 采样：300ms 间隔注入 20 次；t1（客户端触摸产生）→ t6（同 seq 帧渲染完成），两端 logcat 时钟同源宿主。
+- 分段（修复后）：注入 94-145ms（含 relay 抖动）、采集+编码 20-96ms（修复前 228-540ms+）、传输+渲染 5-16ms。
+- 修复构成：InputComposer 输入窗口 5fps 合成驱动（静屏 SurfaceFlinger 对虚拟屏镜像按 ~1Hz idle 合成是根因，公共 API 无「强制合成」入口，经 bootstrap `appops set ... SYSTEM_ALERT_WINDOW allow` 登记透明 1×1 悬窗；未授权自动降级并 WARN）+ 客户端 latest-wins 渲染（`releaseOutputBuffer(false)` 丢弃积压陈旧帧）+ TCP_NODELAY 复核（`TcpLink` 两端均已设置，无需改动）+ 控制通道 PING/PONG 看门狗（>6s 无 Pong 掐死重连）。
+- 60fps 负载帧率不回退：触摸期间源端编码 52-59fps（名义 60fps，指针轨迹叠加开销 ~3-5%），触摸响应 ≈1 帧内。
+
+### 6.2 已知环境限制（模拟器口径专属）
+
+- client→host 的 slirp NAT（10.0.2.2）对 guest 出站 TCP 写入有 **0.3-2s 批量合并**（tcpdump 实证：字节离开 guest 内核后成簇到达宿主 adb forward），该延迟发生在 App 之下、真机不存在此层；measure_latency.py 以时钟自校准（中位数偏差 ±350ms）配对，被批量合并的样本无法配对计入口径，属保守估计。
+- adb forward 半开连接：宿主侧通道死亡时无 FIN/RST 传播到 guest TCP 栈，客户端写入 0ms「成功」但永不到达（Ping/Pong 看门狗即为该场景而设）。
+- 静屏测量用 pointer_location 叠加层保证每次触摸产生可捕获视觉变化（测量框架装置，非产品代码）。
+
+### 6.3 真机目标与测量方法
+
+- 真机目标：触摸→视觉变化 **P95 ≤ 300ms**（SPEC touch-latency-fix）。
+- 方法：`python3 scripts/measure_latency.py --touch --samples 20 --client <serial> --source <serial>`；真机替代 adb forward（直连 IP），预期无 relay 批量化，插桩分段（①–⑥ cloudphone-touch 日志）口径同本节。
+- 真机判定依据：模拟器 swiftshader 软编码/软解码与本机 GPU 硬编硬解的口径差异主要落在「采集+编码」段（模拟器 20-96ms，真机硬解预计 <30ms）；注入与传输段口径可直接迁移。
+
+## 7. 单应用快捷方式 Launcher 兼容性与真机验证清单（client-ux-and-input-latency 4.3/6.2）
+
+### 7.1 快捷方式链路实现回顾
+
+- 客户端深链：`cloudphone://launch?host=<host>&backend=<lan-direct|frp|p2p>&app=<package>&name=<显示名>&auto=1`；
+  ConnectActivity.onNewIntent（singleTask）→ handleDeeplink → upsert 档案 → 直接 START_SESSION SINGLE_APP。
+- 桌面快捷方式：ShortcutManager `createShortcutResultIntent`（API ≥26）/ 兼容路径，icon=应用图标，
+  intent 指向 ConnectActivity + 深链 extras；档案去重以 `host|backend|package` 为键，同源端多次创建只保留一条。
+- 源端：StreamService 收 START_SESSION mode=SINGLE_APP → 拉起目标包主 Activity 到虚拟屏 → 只采集该屏。
+  启动超时/进程死亡 → 回执失败原因（含「目标应用 <pkg>」字样）→ 客户端弹「直达失败」并落档案备注。
+
+### 7.2 Launcher 兼容性说明（模拟器实测 + 真机预期差异）
+
+- Pixel Launcher/API ≥26 动态快捷方式：正常创建与展示，点击走深链，单应用会话 ≤3s 出画（实测 720x1600）。
+- 第三方 Launcher（Nova/微软桌面/国产 ROM）：`isRequestPinShortcutSupported` 差异大；不支持请求固定时，
+  客户端降级为「应用内快捷方式列表」（长按档案项直达，功能等价）——真机验证时先确认该开关路径。
+- 图标：目标应用 icon 经 `createIconBitmap` 压到 adaptive-icon 尺寸；个别 Launcher 对非 adaptive 位图有白边
+  （显示瑕疵，不影响功能）；真机抽屉内核对图标清晰度。
+- 深链未安装客户端时：浏览器/Notes 里点 cloudphone:// 链接无响应属预期（无 App Link 域名校验）；
+  快捷方式本体始终经 ConnectActivity，不受影响。
+- 后台启动限制（Android 10+）：从快捷方式点击是用户交互，不受限制；但 **从自动化（adb/备份恢复）触发深链**
+  在真机上可能被 BackgroundActivityStart 拦截 → 需先手动打开一次客户端。真机清单含此项。
+
+### 7.3 真机人工验证清单（单应用快捷方式）
+
+1. 安装客户端 + 源端（源端为源设备上的 APK；客户端机与源机同网段或走 frp 公网入口）。
+2. 首连：ConnectActivity 输入 host/backend → 连接成功出画（验证投影授权弹窗、SAW 悬窗权限弹窗——
+   真机需手动允许「显示在其他应用上层」，否则触摸延迟修复自动降级并 WARN，见 device-notes 6.1）。
+3. 创建单应用快捷方式：应用列表长按目标应用 → 创建到桌面；核对桌面图标与名称。
+4. 杀掉客户端进程 → 桌面点快捷方式 → 冷启直达单应用会话（验证档案持久化 + SINGLE_APP 全链）。
+5. 目标应用未安装时点快捷方式 → 应弹「直达失败：<原因>（目标应用 <pkg>）」而非挂死。
+6. 同一 host+app 再建一次 → 档案不重复（3.1 去重语义）。
+7. 触摸延迟：`adb shell settings put global window_animation_scale 0` 后人工体感 + 真
+   机跑 `measure_latency.py --touch --samples 20`（两端真机 serial），P95 ≤ 300ms。
+8. 旋转/折叠：竖→横屏切换，SINGLE_APP 会话保持、画面比例正确（aspect-fit 无黑边异常）。
+
+### 7.4 本变更验证记录汇总（各 Scenario 证据指针）
+
+证据根目录：`/root/cloud-phone/.fenix/verify-evidence/client-ux-and-input-latency/`
+
+| Scenario（specs/） | 结论 | 证据 |
+|---|---|---|
+| source-profiles（3.1-3.3） | PASS | `applist_wire_probe.txt`（A 无会话静默忽略/B 在线 5ms 应答+未知 0x0C 容忍）；档案去重/持久化 logcat 摘录见 tasks.md 1.3 已勾记录 |
+| resolution-passthrough（2.1-2.3） | PASS | `resolution_passthrough_22.md`：1080x2400→1072x2400 aspect-exact（/16 对齐）+ 进程内切换 720x1600 letterbox 无扭曲；附 FULLSCREEN 挂接忽略请求参数缺陷的修复记录 |
+| app-shortcuts（4.1-4.3） | PASS | `appshortcuts_e2e.md`（深链→SINGLE_APP→出画）、`launcher_with_shortcut.png`（桌面快捷方式）、失败路径=伪造包名/不可达端口均得「直达失败」并落盘 |
+| touch-latency-fix（5.1-5.4） | PASS | `touch_baseline.json`（P50=651/P95=3104）→ `touch_fixed.json`（P50=266/P95=575 ≤800）→ `touch_fixed_60fps.json`（P50=1/P95=43 ≤300，帧率 52-59 不回退）；`touch_latency_summary.md` 汇总；device-notes §6 口径差异 |
+| 全量回归（6.1） | PASS | `full-suite-report.json`（8/8：协议单测+三模块构建+lan-direct 线级冒烟+矩阵 lan-direct/game/720p 60.3fps+frp 入口+p2p STUN）；`validation-report.md` 矩阵行 |

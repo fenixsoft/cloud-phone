@@ -100,10 +100,13 @@ class ScreenCapture(
                 }
             }
         }
-        val enc = EncoderPipeline(p.width, p.height, p.fps, p.bitrateKbps) { seq, pts, kf, data ->
+        val enc = EncoderPipeline(p.width, p.height, p.fps, p.bitrateKbps, { seq, pts, kf, data ->
             PipelineCounters.sentFrames.incrementAndGet()
             onFrame(seq, pts, kf, data)
-        }
+        }, { gapMs ->
+            // ④ 采集出帧 idle 段打点（触摸延迟插桩 5.1：帧间隔>200ms 的静屏段）
+            android.util.Log.i("cloudphone-touch", "t4 capture idle gapMs=$gapMs")
+        })
         enc.start()
         encoder = enc
         val surface: Surface = checkNotNull(enc.surface) { "encoder surface unavailable" }
@@ -169,6 +172,11 @@ class ScreenCapture(
 
     override fun requestIdr() {
         encoder?.requestIdr()
+    }
+
+    /** InputEvent 到达：打开 2s 插桩/提速窗口（5.1 打点 + 5.3 修复挂点，StreamService 调用） */
+    fun onInputActivity() {
+        encoder?.inputTraceUntilMs = android.os.SystemClock.elapsedRealtime() + 2000
     }
 
     override fun stop() {
