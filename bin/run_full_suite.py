@@ -2,12 +2,13 @@
 """run_full_suite.py — 全量回归唯一许可入口（client-ux-and-input-latency 6.1）。
 
 边界与语义：
-  - 本脚本是有界运行器：逐阶段 faulthandler 超时保护，单阶段超时不拖垮整批；
+  - 本脚本是有界运行器：逐阶段超时保护（覆盖输出读取，超时即 kill 并回收），
+    单阶段超时不拖垮整批，各阶段超时按剩余整批预算动态收缩；
   - 覆盖：protocol 模块单测（JVM 级，含 APP_LIST 编解码）、三模块 Android 构建、
     （--with-device 时）三后端连接冒烟 + 矩阵关键组合（lan game 720p）；
   - 结果写 build/full-suite-report.json（阶段级 PASS/FAIL/SKIP + 摘要）；
-  - --baseline <json>：已存在失败分类基线（键=阶段名，值=已知失败原因列表），
-    命中基线的失败标记为 known-fail（不计入退出码失败）。
+  - --baseline <json>：已存在失败分类基线（键=阶段名，须与阶段名精确相等，
+    值=已知失败原因列表），命中基线的失败标记为 known-fail（不计入退出码失败）。
 
 用法：
   python3 bin/run_full_suite.py --timeout 3600
@@ -20,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,37 +52,63 @@ def run_phase(phase, baseline):
         proc = subprocess.Popen(
             phase.cmd, cwd=phase.cwd, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            errors="replace",  # 非 UTF-8 字节以 U+FFFD 代替，不让运行器崩溃
         )
     except FileNotFoundError as e:
         phase.status, phase.detail = "FAIL", f"启动失败: {e}"
         return classify(phase, baseline)
+
     tail = []
     timed_out = False
-    # faulthandler 兜底：子进程卡死由 wait(timeout) 收割并 kill
+
+    def _drain():
+        # 输出读取放在 daemon 线程：子进程持管道挂死也不再阻塞主线程的超时判定
+        try:
+            for line in proc.stdout:
+                tail.append(line.rstrip())
+                if len(tail) <= 400:
+                    print("  " + line.rstrip(), flush=True)
+        except (ValueError, OSError):
+            pass  # 主线程收尾关闭管道后的残余 I/O 错误
+
+    reader = threading.Thread(target=_drain, daemon=True)
+    reader.start()
+    # 超时保护覆盖子进程整个生命周期（含输出读取）：主线程只 wait(timeout)
     try:
-        for line in proc.stdout:
-            tail.append(line.rstrip())
-            if len(tail) <= 400:
-                print("  " + line.rstrip(), flush=True)
         proc.wait(timeout=phase.timeout_s)
     except subprocess.TimeoutExpired:
         timed_out = True
         proc.kill()
-        phase.status, phase.detail = "FAIL", f"超时（>{phase.timeout_s}s，已 kill）"
+        try:
+            proc.wait(timeout=10)  # kill 后回收子进程，避免僵尸
+        except subprocess.TimeoutExpired:
+            pass  # 极端不可中断态；daemon 读线程不阻塞主流程退出
+    reader.join(timeout=5)
+    try:
+        proc.stdout.close()
+    except (OSError, ValueError):
+        pass
     phase.seconds = round(time.time() - t0, 1)
     if not timed_out:
         out = "\n".join(tail)
         if proc.returncode == 0:
-            phase.status, phase.detail = "PASS", out[-500:]
+            if any("[SKIP-ENV]" in ln for ln in tail):
+                # 冒烟探测环境不可达：脚本 exit 0 但带 [SKIP-ENV] 标记 → 记 SKIP
+                phase.status = "SKIP"
+                phase.detail = "环境不可达，未验证\n" + out[-500:]
+            else:
+                phase.status, phase.detail = "PASS", out[-500:]
         else:
             phase.status, phase.detail = "FAIL", f"exit={proc.returncode}\n{out[-1500:]}"
+    else:
+        phase.status, phase.detail = "FAIL", f"超时（>{phase.timeout_s}s，已 kill）"
     return classify(phase, baseline)
 
 
 def classify(phase, baseline):
     if phase.status == "FAIL" and baseline:
         for key, reasons in baseline.items():
-            if key in phase.name and any(r in phase.detail for r in reasons):
+            if key == phase.name and any(r in phase.detail for r in reasons):
                 phase.known_fail = True
                 phase.status = "known-fail"
                 break
@@ -90,18 +118,29 @@ def classify(phase, baseline):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--timeout", type=int, default=3600, help="整批预算（秒）")
+    ap.add_argument("--timeout", type=int, default=3600,
+                    help="整批预算（秒）；各阶段超时按剩余预算动态收缩")
     ap.add_argument("--with-device", action="store_true",
                     help="追加设备在线阶段：3 后端连接冒烟 + 矩阵关键组合")
     ap.add_argument("--source-serial", default="emulator-5554")
     ap.add_argument("--client-serial", default="emulator-5556")
-    ap.add_argument("--baseline", default=None, help="已知失败分类 JSON")
+    ap.add_argument("--baseline", default=None,
+                    help="已知失败分类 JSON（键=阶段名，须与阶段名精确相等；值=已知失败原因列表）")
     args = ap.parse_args()
 
     baseline = {}
-    if args.baseline and os.path.exists(args.baseline):
-        with open(args.baseline) as f:
-            baseline = json.load(f)
+    if args.baseline:
+        if not os.path.exists(args.baseline):
+            print(f"警告: baseline 文件不存在: {args.baseline}（按空基线继续，"
+                  f"known-fail 将全部计为真 FAIL）", file=sys.stderr, flush=True)
+        else:
+            try:
+                with open(args.baseline) as f:
+                    baseline = json.load(f)
+            except (json.JSONDecodeError, OSError, ValueError) as e:
+                print(f"错误: baseline JSON 解析失败 {args.baseline}: {e}",
+                      file=sys.stderr, flush=True)
+                sys.exit(2)
 
     per_phase = max(60, args.timeout // 3)
     phases = [
@@ -136,7 +175,7 @@ def main():
                    "    s=socket.create_connection(('112.74.85.74',22333),timeout=5)\n"
                    "    s.close(); print('frp tcp 入口可达')\n"
                    "except Exception as e:\n"
-                   "    print('frp 入口不可达（宿主 frpc 未运行时 SKIP 语义）:',e); sys.exit(0)\n"
+                   "    print('[SKIP-ENV] frp 入口不可达（宿主 frpc 未运行），未验证:',e); sys.exit(0)\n"
                    "PY"],
                   ROOT, per_phase),
             Phase("smoke-p2p",
@@ -150,12 +189,23 @@ def main():
                    "try:\n"
                    "    d,_=s.recvfrom(256); print('STUN 应答', len(d),'B → p2p 打洞前置可达')\n"
                    "except socket.timeout:\n"
-                   "    print('STUN 超时（宿主 UDP 出网受限，SKIP 语义）'); raise SystemExit(0)\n"
+                   "    print('[SKIP-ENV] STUN 超时（宿主 UDP 出网受限），未验证'); raise SystemExit(0)\n"
                    "PY"],
                   ROOT, per_phase),
         ]
 
-    results = [run_phase(p, baseline) for p in phases]
+    # 整批预算：逐阶段超时按剩余预算动态收缩，预算耗尽后的阶段记 SKIP 不再执行，
+    # 保证多阶段串行总耗时不突破 --timeout
+    deadline = time.monotonic() + args.timeout
+    results = []
+    for p in phases:
+        remaining = int(deadline - time.monotonic())
+        if remaining <= 0:
+            p.status, p.detail = "SKIP", "整批预算耗尽，未执行"
+            results.append(classify(p, baseline))
+            continue
+        p.timeout_s = min(p.timeout_s, remaining)
+        results.append(run_phase(p, baseline))
     passed = sum(1 for r in results if r.status == "PASS")
     known = sum(1 for r in results if r.status == "known-fail")
     failed = sum(1 for r in results if r.status == "FAIL")
