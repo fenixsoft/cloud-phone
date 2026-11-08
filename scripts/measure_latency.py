@@ -60,9 +60,11 @@ def run_touch(args):
     client, source = args.client, args.source
     n = args.samples
 
-    # 前置：源端静屏 + pointer_location（测量结束后恢复）
-    sh("adb", "-s", source, "shell", "am", "start", "-n",
-       "com.android.settings/.Settings")
+    # 前置：源端静屏 + pointer_location（测量结束后恢复）；
+    # --load 模式跳过静屏准备（源端由 60fps 负载画面提供视觉变化，帧率回归口径）
+    if not args.load:
+        sh("adb", "-s", source, "shell", "am", "start", "-n",
+           "com.android.settings/.Settings")
     sh("adb", "-s", source, "shell", "settings", "put", "system",
        "pointer_location", "1")
     time.sleep(3)
@@ -129,7 +131,7 @@ def run_touch(args):
         })
 
     result = {
-        "mode": "touch",
+        "mode": "touch-load" if args.load else "touch",
         "samples_requested": n,
         "samples_matched": len(latencies),
         "p50_ms": round(percentile(latencies, 0.50), 1),
@@ -150,6 +152,7 @@ def run_touch(args):
 def main():
     ap = argparse.ArgumentParser(description="触摸/视觉延迟测量")
     ap.add_argument("--touch", action="store_true", help="触摸口径（t1→t6）")
+    ap.add_argument("--load", action="store_true", help="60fps 负载口径（跳过静屏准备）")
     ap.add_argument("--client", default="emulator-5556")
     ap.add_argument("--source", default="emulator-5554")
     ap.add_argument("--samples", type=int, default=20)
@@ -160,7 +163,6 @@ def main():
     if not args.touch:
         ap.error("当前仅支持 --touch 触摸口径（视觉变化口径见 SPEC 5.2 说明）")
     run_touch(args)
-
 
 if __name__ == "__main__":
     main()

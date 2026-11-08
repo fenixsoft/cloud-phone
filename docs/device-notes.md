@@ -91,3 +91,30 @@
 - 客户端重装只需重连（会话级状态在服务端）。
 - `adb emu redir add udp:22334:22334` 幂等性差：已存在时先 `redir del` 再 `add`（bootstrap 已处理）。
 - frpc 隧道由宿主 `frpc -c frpc.toml` 常驻；公网入口 112.74.85.74:22333(TCP)/22334(UDP)。
+
+## 6. 触摸延迟口径（client-ux-and-input-latency SPEC 5.4）
+
+### 6.1 模拟器实测（双模拟器 lan-direct，scripts/measure_latency.py --touch）
+
+| 口径 | 修复前（静屏） | 修复后（静屏） | 修复后（60fps 负载） |
+|---|---|---|---|
+| P50 | 651ms | 266ms | 1ms（≈1 帧内）|
+| P95 | 3104ms | **575ms（≤800ms 达标）** | **43ms（≤300ms 达标）** |
+| max | 3153ms | 686ms | 70ms |
+
+- 采样：300ms 间隔注入 20 次；t1（客户端触摸产生）→ t6（同 seq 帧渲染完成），两端 logcat 时钟同源宿主。
+- 分段（修复后）：注入 94-145ms（含 relay 抖动）、采集+编码 20-96ms（修复前 228-540ms+）、传输+渲染 5-16ms。
+- 修复构成：InputComposer 输入窗口 5fps 合成驱动（静屏 SurfaceFlinger 对虚拟屏镜像按 ~1Hz idle 合成是根因，公共 API 无「强制合成」入口，经 bootstrap `appops set ... SYSTEM_ALERT_WINDOW allow` 登记透明 1×1 悬窗；未授权自动降级并 WARN）+ 客户端 latest-wins 渲染（`releaseOutputBuffer(false)` 丢弃积压陈旧帧）+ TCP_NODELAY 复核（`TcpLink` 两端均已设置，无需改动）+ 控制通道 PING/PONG 看门狗（>6s 无 Pong 掐死重连）。
+- 60fps 负载帧率不回退：触摸期间源端编码 52-59fps（名义 60fps，指针轨迹叠加开销 ~3-5%），触摸响应 ≈1 帧内。
+
+### 6.2 已知环境限制（模拟器口径专属）
+
+- client→host 的 slirp NAT（10.0.2.2）对 guest 出站 TCP 写入有 **0.3-2s 批量合并**（tcpdump 实证：字节离开 guest 内核后成簇到达宿主 adb forward），该延迟发生在 App 之下、真机不存在此层；measure_latency.py 以时钟自校准（中位数偏差 ±350ms）配对，被批量合并的样本无法配对计入口径，属保守估计。
+- adb forward 半开连接：宿主侧通道死亡时无 FIN/RST 传播到 guest TCP 栈，客户端写入 0ms「成功」但永不到达（Ping/Pong 看门狗即为该场景而设）。
+- 静屏测量用 pointer_location 叠加层保证每次触摸产生可捕获视觉变化（测量框架装置，非产品代码）。
+
+### 6.3 真机目标与测量方法
+
+- 真机目标：触摸→视觉变化 **P95 ≤ 300ms**（SPEC touch-latency-fix）。
+- 方法：`python3 scripts/measure_latency.py --touch --samples 20 --client <serial> --source <serial>`；真机替代 adb forward（直连 IP），预期无 relay 批量化，插桩分段（①–⑥ cloudphone-touch 日志）口径同本节。
+- 真机判定依据：模拟器 swiftshader 软编码/软解码与本机 GPU 硬编硬解的口径差异主要落在「采集+编码」段（模拟器 20-96ms，真机硬解预计 <30ms）；注入与传输段口径可直接迁移。
