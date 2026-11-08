@@ -1,0 +1,77 @@
+# =============================================================================
+# .fenix/verify.yaml — 验证契约
+# （Administrator 起草 2026-11-08，针对 spec: m0-a2a-streaming-pipeline 的
+#   verify_contract_missing 信号；完整字段语义见 .fenix/core/verify_contract.py）
+# =============================================================================
+# 【项目形态判定】
+# Android 串流平台（Gradle 工程 protocol/ + source/ + client/），交付物为
+# APK 与 adb/双模拟器驱动脚本（scripts/run_matrix.py 等）。验证场景为纯 cli
+# 形态，无 HTTP 可服务实例 → 依 verify-runner-engine「纯 cli 场景集」规则，
+# serve/ready 段整段省略（不回退 commands.start——无人消费的实例不拉起）。
+#
+# 【prepare 渐进生效形态】
+# 本契约起草时 spec 尚处实现早期（protocol/source/client 的 gradlew 均未
+# 落地）：构建步骤按各模块 gradlew 存在性渐进生效——未落地模块跳过（自证
+# 当下全通），实现完成后每轮验证对全部模块 fresh 构建，构建失败非零退出 =
+# 验证环境错误（唯一环境门，走 infra-retry 廉价重试车道）。
+#
+# 【regression 段：省略】
+# 项目尚无可运行测试体系（协议模块 FramingTest.kt 仍在 tasks 未落地；无
+# package.json / pytest / go.mod），探测不出可证实产出 JUnit XML 的命令，
+# 按规则不臆造。测试体系落地后可经 verify_regression_missing 车道补段：
+# gradle test 产 XML 于 <module>/build/test-results/test/（每类一文件），
+# 需合并为单一 XML 供 output 解析。
+#
+# 【环境事实与预检边界】（立项侦察 + 2026-11-08 复核）
+# /opt/android-sdk 已装齐（SDK 34 + emulator 37.2）；双模拟器
+# emulator-5554(src)/emulator-5556(client) 常驻 = 本项目验证夹具。prepare
+# 预检【不做】模拟器清杀：常驻模拟器 ppid=1 系启动者退出后的正常 reparent，
+# 模板预检①的 ppid=1 孤儿清杀会误杀夹具。设备编排（双模拟器健康检查/APK
+# 安装/adb forward/UDP 中继）由 scripts/bootstrap_adb.sh 在场景执行期完成，
+# 不属 prepare 职责。
+# =============================================================================
+
+prepare:
+  # 步骤 1：宿主依赖预检（幂等；任一失败即非零退出 → 环境门如实拦截，
+  # 走 infra-retry 廉价重试；不吞错退 0）
+  - run: |
+      test -w /dev/kvm
+      free -m | awk 'NR==2{exit !(($7)>512)}'
+      command -v adb >/dev/null
+
+  # 步骤 2：协议共享模块（纯 JVM 库）——build 含 test（FramingTest 等），
+  # 与 App 构建分步以各享 600s 步级超时预算（PREPARE_STEP_TIMEOUT）
+  - run: |
+      if [ -f protocol/gradlew ]; then
+        chmod +x protocol/gradlew
+        (cd protocol && ./gradlew --no-daemon --console=plain build) || exit 1
+      else
+        echo "[prepare] protocol/gradlew 不存在——协议模块尚未落地，跳过构建"
+      fi
+
+  # 步骤 3：源端 App（Android 工程）——fresh 构建 debug APK
+  - run: |
+      if [ -f source/gradlew ]; then
+        chmod +x source/gradlew
+        export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
+        export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
+        (cd source && ./gradlew --no-daemon --console=plain assembleDebug) || exit 1
+      else
+        echo "[prepare] source/gradlew 不存在——源端工程尚未落地，跳过构建"
+      fi
+
+  # 步骤 4：观看端 App（Android 工程）——fresh 构建 debug APK
+  - run: |
+      if [ -f client/gradlew ]; then
+        chmod +x client/gradlew
+        export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-/opt/android-sdk}"
+        export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
+        (cd client && ./gradlew --no-daemon --console=plain assembleDebug) || exit 1
+      else
+        echo "[prepare] client/gradlew 不存在——观看端工程尚未落地，跳过构建"
+      fi
+
+# serve/ready：省略——纯 cli 场景集合法（无 HTTP 实例形态）。场景执行期框架
+# 注入 FENIX_VERIFY_BASE_URL / FENIX_VERIFY_PORT（无实例形态下为无害空操作）。
+
+# evidence_dir: .fenix/verify-evidence/<spec>/   # 缺省即此值，无需显式声明
