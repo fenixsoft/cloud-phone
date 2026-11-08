@@ -138,7 +138,18 @@ class TcpStreamChannel(
 
     private val output: OutputStream = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
     @Volatile private var reading = false
+    @Volatile private var retired = false
     private var readerThread: Thread? = null
+
+    /**
+     * 退役：被更新通道替换后，读泵静默退出——既有 socket 上后续的读异常
+     * （含延迟/立即 close 触发的 SocketException）不再触发 onError，
+     * 否则会向全局误报 DISCONNECTED，令客户端把新连接也拆掉重连（3s 重连风暴根因）。
+     */
+    fun retire() {
+        retired = true
+        reading = false
+    }
 
     /** 启动接收泵（单线程阻塞读，逐记录分发） */
     fun startReading(name: String) {
@@ -165,10 +176,10 @@ class TcpStreamChannel(
                     }
                 }
             } catch (e: IOException) {
-                if (reading) onError(e)
+                if (reading && !retired) onError(e)
             } catch (e: ProtocolException) {
                 stats.onBadEvent(TransportStats.BadEvent.STREAM_ERROR, e.message ?: "protocol")
-                if (reading) onError(IOException(e.message, e))
+                if (reading && !retired) onError(IOException(e.message, e))
             } finally {
                 reading = false
             }

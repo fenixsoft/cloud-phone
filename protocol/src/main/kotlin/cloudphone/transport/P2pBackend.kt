@@ -153,7 +153,7 @@ class P2pBackend(
     }
 
     private fun installChannel(socket: Socket, restored: Boolean) {
-        channel.getAndSet(null)?.close()
+        channel.getAndSet(null)?.let { it.retire(); it.close() }
         val ch = TcpStreamChannel(socket, stats, this, onError = { reason ->
             onControlBroken(reason.message ?: "io")
         })
@@ -225,7 +225,7 @@ class P2pBackend(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        channel.getAndSet(null)?.close()
+        channel.getAndSet(null)?.let { it.retire(); it.close() }
         videoChannel?.close()
         punchSocket?.close()
         listener?.close()
