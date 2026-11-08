@@ -58,3 +58,8 @@
   - 证据：commit 7006cc8（任务 6.1『矩阵实跑』）只执行 `--only lan-direct,game,720p`；impl-result.json 的 18 项 completed_tasks 无 12 组合全跑记录；而验收场景 test_scenarios.json#regression-matrix-12-combos 要求 12 条 passed=true（含 1080p）。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：impl 收工门：当 spec 验收含全量矩阵/长场景时，impl-result 必须附该验收场景原命令的完整产物（12/12 或带归因的失败），否则不允许勾 6.x 收工；或把矩阵子集跑标注为 partial 并在 verify 前置拦截。
+- **[arbiter:client-u] 矩阵场景断言只覆盖 progress 首尾条目**
+  - 影响：若 run_matrix 退出码语义漂移或中途异常，中间组合失败可能被漏判为 PASS；本轮 1080p 失败仅靠 exit_code 断言兜住，断言与描述不一致。
+  - 证据：.fenix/verify-progress/client-ux-and-input-latency/test_scenarios.json 中 regression-matrix-12-combos 的 assertions 仅有 `json_output [0].passed` 与 `json_output [11].passed`，其余 10 组合靠 run_matrix 退出码间接覆盖；场景描述却写『恰 12 条逐条 passed=true』。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：增加聚合断言（一步 python 校验 len==12 且 all(passed)，或 json_output 指向汇总字段），把『逐条 passed』从描述落到断言；同类多组合场景统一模板。
