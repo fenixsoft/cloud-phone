@@ -26,10 +26,10 @@ M0 SPEC（m0-a2a-streaming-pipeline）已交付并 12/12 PASS：双模拟器全�
 ## Decisions
 
 ### D1 源端档案：SharedPreferences + JSON 数组，单文件单类
-`client/.../SourceProfiles.kt`：`SourceProfile(name, host, tcpPort, udpPort, backend, token, lastConnectedAt)`，存 `SharedPreferences(MODE_PRIVATE)` 内 JSON（org.json，Android 自带）。自动保存时机=START_SESSION ACCEPTED；键=host+tcpPort+backend（同键更新）。连接页下拉 `Spinner` 填充档案列表 + 「删除」按钮。不用 Room/DataStore（依赖最小化，数据量 ≤ 数十条）。
+`client/.../SourceProfiles.kt`：`SourceProfile(name, host, tcpPort, udpPort, backend, token, lastConnectedAt)`，存 `SharedPreferences(MODE_PRIVATE)` 内 JSON（org.json，Android 自带）。自动保存时机=START_SESSION ACCEPTED；键=host+tcpPort+backend（同键更新）。连接页下拉 `Spinner` 填充档案列表 + 「删除」按钮。不用 Room/DataStore（依赖最小化，数据量 ≤ 数十条）。备份恢复通道约定：当前 client manifest 为 `allowBackup="false"`（实测），须改为 `true` 使档案 prefs 文件纳入系统自动备份——「重装客户端后一键恢复」Scenario 依赖该通道；无备份传输的环境（部分模拟器）卸载重装后档案丢失属预期降级，首次需重输（Non-Goal 不做云同步/多设备导入导出 UI）。
 
 ### D2 分辨率传递：纯 UI 增强，协议零改动
-连接页新增三控件：分辨率 Spinner（跟随本机/720p/1080p/自定义…）+ 帧率 Spinner（30/60）+ 码率 Spinner（4/8/16/20Mbps）。「跟随本机」取 `windowManager.maximumWindowMetrics`（API 30+）或 `realDisplayMetrics`（降级路径）当前真实尺寸。客户端只做 240–2560 范围校验，对齐交给源端（aspect-exact 已处理 /16 对齐）。横竖屏：跟随本机直接取当前朝向尺寸；720p/1080p 按客户端当前朝向映射（竖屏 720x1280）。源端语义不变：请求短边=档位短边，等比适配源屏——协议文档补「目标档位语义」一段。
+连接页新增三控件：分辨率 Spinner（跟随本机/720p/1080p/自定义…）+ 帧率 Spinner（30/60）+ 码率 Spinner（4/8/16/20Mbps）。「跟随本机」取 `windowManager.maximumWindowMetrics`（API 30+）或 `realDisplayMetrics`（降级路径）当前真实尺寸。客户端只做范围校验（width 320–2560、height 240–2560，对齐源端 `EncoderPipeline.normalized` 既有钳制区间——实测源端 width 下限为 320，客户端校验区间须与之一致以免请求被源端静默钳制），对齐交给源端（aspect-exact 已处理 /16 对齐）。横竖屏：跟随本机直接取当前朝向尺寸；720p/1080p 按客户端当前朝向映射（竖屏 720x1280）。源端语义不变：请求短边=档位短边，等比适配源屏——协议文档补「目标档位语义」一段。
 
 ### D3 应用枚举：协议加两条消息，源端 App 自己枚举（无 shell 依赖）
 `AppListRequest`（空载荷）/ `AppListMessage{apps: List<AppEntry(packageName,label)>}`。源端 handler：`packageManager.queryIntentActivities(Intent(MAIN).addCategory(LAUNCHER), 0)` → 排除 `cloudphone.source` 自身 → label 取 `loadLabel`。会话在线才响应（请求-应答制，天然兼容旧客户端）。编码走既有 Framing 通用记录通道，无新 RECORD 类型。
@@ -44,7 +44,7 @@ M0 SPEC（m0-a2a-streaming-pipeline）已交付并 12/12 PASS：双模拟器全�
 ### D5 触摸延迟：先插桩测量，按数据修，禁止盲改
 **根因假设**（待证实）：触摸注入（②③）是毫秒级，瓶颈在④源屏合成→采集出帧——静屏下 swiftshader 合成 ~1fps + 采集按内容变化出帧，视觉反馈被拖秒级；模拟器软渲染是主因素，真机硬件合成预期远好，但**静屏变频档的交互死区在真机同样存在**（静止屏≈0 出帧），故修复须对两类场景都有效。
 
-插桩方案（先做，为修复定位）：源端 InputInjector 注入完成打点 + ScreenCapture 出帧打点（帧间隔>200ms 标记 idle 段）+ 客户端 DecodeRenderActivity 渲染打点；`measure_latency.py` 增「触摸口径」：串流静屏画面下脚本注入触摸（input tap 改为经客户端协议链路或 adb 直注源端）+ 客户端截屏 diff 检测视觉变化，输出 P50/P95。模拟器上跑 20 次。
+插桩方案（先做，为修复定位，覆盖全链①–⑥）：客户端 TouchChannel 触摸事件产生打点（①）+ 源端 InputInjector 注入完成打点（②③）+ ScreenCapture 出帧打点（④，帧间隔>200ms 标记 idle 段）+ EncoderPipeline 编码出帧打点（⑤）+ 客户端 DecodeRenderActivity 渲染打点（⑥）；`measure_latency.py` 增「触摸口径」：串流静屏画面下脚本注入触摸（input tap 改为经客户端协议链路或 adb 直注源端）+ 客户端截屏 diff 检测视觉变化，输出 P50/P95。模拟器上跑 20 次。
 
 修复手段按测量结论择优组合（实现者以数据说话，允许只实施其中生效项）：
 1. **输入触发帧率提升（预期主修复）**：InputEvent 到达后 2s 窗口内，源端主动驱动采集管线出帧（必要时以轻量 overlay 心跳/VD 重绘强制合成——机制实现者验证，能达成「输入后 2s 内 ≥5fps」即可），窗口结束回落变频档
@@ -52,7 +52,8 @@ M0 SPEC（m0-a2a-streaming-pipeline）已交付并 12/12 PASS：双模拟器全�
 3. TCP_NODELAY 复核（两端 socket 已逐记录 flush，确认无 Nagle 合批残留）
 
 ### D6 验收环境与口径
-- 模拟器口径：双模拟器（swiftshader）验收 touch-latency-fix Scenario 阈值 800ms；快捷方式创建/直达、档案、分辨率 UI 均在模拟器完成功能性验收
+- 模拟器口径：双模拟器（swiftshader）验收 touch-latency-fix Scenario 阈值 800ms；快捷方式创建（钉选）、失败回退路径、档案、分辨率 UI 在模拟器完成功能性验收；单应用「直达」因模拟器镜像级限制（device-notes §2.1：SINGLE_APP 不可用）仅验收「失败带原因回连接页」回退路径，直达 5s 口径由真机人工复测
+- 阈值留痕：若插桩实测证实 swiftshader 平台瓶颈致 800ms 不可达，放宽须同步修订本 SPEC 对应 Scenario 阈值（不得仅记 device-notes 而 使 spec 验收门与实门口径脱节），并在设计文档留数据依据，不得静默放水
 - 真机口径：device-notes 记录真机测量步骤与 ≤300ms 目标，真机单应用快捷方式直达由用户人工复测（沿用 device-notes §2.1/§4 手册；模拟器单应用镜像限制不变）
 - 「禁止伪造验收」红线沿用：所有 Scenario 数据须来自真实运行
 

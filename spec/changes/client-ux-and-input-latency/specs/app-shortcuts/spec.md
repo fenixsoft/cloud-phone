@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: APP_LIST 协议消息
-协议 SHALL 新增 AppListRequest（客户端→源端）与 AppListMessage（源端→客户端，含 AppEntry{packageName,label} 列表）两条控制消息；源端 SHALL 以 PackageManager 枚举带 LAUNCHER intent 的可启动应用（排除自身与 cloudphone.loadgen 之外的第三方与系统应用不做人工过滤，仅排除源端 App 自身）。
+协议 SHALL 新增 AppListRequest（客户端→源端）与 AppListMessage（源端→客户端，含 AppEntry{packageName,label} 列表）两条控制消息；源端 SHALL 以 PackageManager 枚举带 LAUNCHER intent 的可启动应用，仅排除源端 App 自身；其余应用（含 cloudphone.loadgen 游戏负载、第三方与系统应用）不做人工过滤。
 
 #### Scenario: 源端枚举回传
 - **WHEN** 客户端发送 AppListRequest 且会话在线
@@ -29,7 +29,7 @@
 
 #### Scenario: 桌面图标一键直达
 - **WHEN** 用户已为源端某应用创建快捷方式，随后从桌面点击该图标
-- **THEN** 客户端自动完成连接与单应用会话发起，无需任何手动输入；源端正常可用时 5s 内进入该应用串流画面
+- **THEN** 客户端自动完成连接与单应用会话发起，无需任何手动输入；源端正常可用时 5s 内进入该应用串流画面（真机口径；模拟器因镜像级限制单应用不可用——device-notes §2.1——此时仅验收「失败带原因回连接页」回退路径）
 
 #### Scenario: 快捷方式指向的源端不可达
 - **WHEN** 点击桌面图标但源端离线

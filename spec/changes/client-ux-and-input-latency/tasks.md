@@ -19,6 +19,8 @@
   kind: modify
 - path: source/app/src/main/kotlin/cloudphone/source/ScreenCapture.kt
   kind: modify
+- path: source/app/src/main/kotlin/cloudphone/source/EncoderPipeline.kt
+  kind: modify
 - path: source/app/src/main/kotlin/cloudphone/source/input/InputInjector.kt
   kind: modify
 - path: protocol/src/main/kotlin/cloudphone/protocol/Messages.kt
@@ -34,12 +36,12 @@
 ## 1. 源端档案持久化（source-profiles）
 
 - [ ] 1.1 实现 SourceProfiles.kt：SourceProfile(name/host/tcpPort/udpPort/backend/token/lastConnectedAt) 模型与 SharedPreferences(MODE_PRIVATE) JSON 数组存取（upsert 键=host+tcpPort+backend、list、delete、无日志泄漏 token）
-- [ ] 1.2 ConnectActivity.kt 集成档案：连接页顶部「已保存源端」Spinner（选中自动填充全部字段）、删除入口、连接成功（START_SESSION ACCEPTED）自动 upsert 档案与 lastConnectedAt
+- [ ] 1.2 ConnectActivity.kt 集成档案：连接页顶部「已保存源端」Spinner（选中自动填充全部字段）、删除入口、连接成功（START_SESSION ACCEPTED）自动 upsert 档案与 lastConnectedAt；AndroidManifest.xml 将 allowBackup 改为 true（档案 prefs 纳入系统自动备份支撑重装恢复路径，device-notes 记录无备份传输环境的降级口径）
 - [ ] 1.3 模拟器端到端自验：首次连接成功→重启 App 档案在列且回填正确；同源端连 3 次仅 1 条；删除后不再出现（日志截图或 logcat 摘录入验证记录）
 
 ## 2. 分辨率/帧率/码率传递（resolution-passthrough）
 
-- [ ] 2.1 ConnectActivity.kt 新增档位 UI：分辨率 Spinner（跟随本机=真实屏幕尺寸默认档/720p/1080p/自定义宽高对话框，本地校验 240–2560）、帧率 Spinner(30/60 默认60)、码率 Spinner(4/8/16/20Mbps 默认8)；选定值随 START_SESSION width/height/fps/bitrateKbps 下发
+- [ ] 2.1 ConnectActivity.kt 新增档位 UI：分辨率 Spinner（跟随本机=真实屏幕尺寸默认档/720p/1080p/自定义宽高对话框，本地校验 width 320–2560、height 240–2560，对齐源端 EncoderPipeline 钳制区间）、帧率 Spinner(30/60 默认60)、码率 Spinner(4/8/16/20Mbps 默认8)；选定值随 START_SESSION width/height/fps/bitrateKbps 下发
 - [ ] 2.2 适配验证：请求 1080x2400（同比例源屏）源端 aspect-exact 日志 ≈1080x2400；请求 720p 于 20:9 源屏得 720x1600 且客户端 letterbox 无扭曲（复用现有 AspectFitSurfaceView）
 - [ ] 2.3 docs/protocol.md 补「目标档位语义」段：客户端传目标档位，源端保证短边吻合+源屏宽高比（含 /16 对齐偏差说明）
 
@@ -57,9 +59,9 @@
 
 ## 5. 触摸响应插桩与修复（touch-latency-fix）
 
-- [ ] 5.1 全链插桩：InputInjector 注入完成打点、ScreenCapture 出帧打点（帧间隔>200ms 标记 idle）、DecodeRenderActivity 渲染打点（cloudphone-* tag 可检索）
+- [ ] 5.1 全链插桩（覆盖①–⑥）：TouchChannel 触摸事件产生打点（①）、InputInjector 注入完成打点（②③）、ScreenCapture 出帧打点（④，帧间隔>200ms 标记 idle）、EncoderPipeline 编码出帧打点（⑤）、DecodeRenderActivity 渲染打点（⑥）（cloudphone-* tag 可检索）
 - [ ] 5.2 scripts/measure_latency.py 增触摸口径：串流静屏下注入触摸+客户端侧视觉变化检测，输出注入→视觉变化 P50/P95（20 次），先采基线数据（预期秒级）入验证记录
-- [ ] 5.3 实施修复（以 5.2 数据选型）：输入后 2s 窗口内源端驱动采集出帧 ≥5fps（机制实现者验证：优先免权限方案）、客户端解码 latest-wins 渲染（陈旧帧 releaseOutputBuffer(false)）、TCP_NODELAY 复核；ScreenCapture.kt/StreamService.kt/InputInjector.kt/DecodeRenderActivity.kt 按选型落码
+- [ ] 5.3 实施修复（以 5.2 数据选型）：输入后 2s 窗口内源端驱动采集出帧 ≥5fps（机制实现者验证：优先免权限方案）、客户端解码 latest-wins 渲染（陈旧帧 releaseOutputBuffer(false)）、TCP_NODELAY 复核；ScreenCapture.kt/StreamService.kt/InputInjector.kt/EncoderPipeline.kt/DecodeRenderActivity.kt 按选型落码（选型涉及关键帧请求/短时固定帧率时触及 EncoderPipeline）
 - [ ] 5.4 修复后复测：静屏触摸 P95 ≤800ms（模拟器口径）与 60fps 负载不回退（P95 ≤300ms）双场景达标，前后对比数据入验证记录；docs/device-notes.md 记录模拟器/真机口径差异、真机目标 ≤300ms、可复现测量步骤
 
 ## 6. 回归与收尾

@@ -15,7 +15,7 @@
 
 #### Scenario: 自定义分辨率非法输入拦截
 - **WHEN** 用户输入 width=99999 或非正数
-- **THEN** 连接被本地拦截并提示合法范围（宽高 240–2560，需 16 对齐由源端处理，客户端只做范围校验）
+- **THEN** 连接被本地拦截并提示合法范围（width 320–2560、height 240–2560，对齐源端 EncoderPipeline 钳制区间；16 对齐由源端处理，客户端只做范围校验）
 
 ### Requirement: 帧率与码率可调
 连接页 SHALL 提供帧率（30/60）与码率（4/8/16/20 Mbps）选择，默认 60fps / 8Mbps；选定值随 START_SESSION 的 fps/bitrateKbps 下发。
