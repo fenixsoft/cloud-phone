@@ -6,12 +6,14 @@
 
 ### 浪费
 - **client-ux规划首跑空转21分钟死亡，重跑再耗34分钟**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：client-ux 规划阶段墙钟 55 分钟，首个规划 run（planner-plan，测试场景规划 agent）21.1 分钟跑完 24 轮后进程死亡，未落任何场景产物，第二个 attempt（同车道重试编号）从零重取证再花 33.9 分钟才交付，纯浪费约 21 分钟 agent 时长；对比 planner-plan 组中位 749.2s（数据摘要第六节口径）为本例单 attempt 的 2.7 倍。
   - 证据：run planner-plan-client-ux-and-input-latency-1794150065-a1（run_metrics 行：duration 1268.9s、54 turns、remaining_tasks=18、单轮停滞 max 604.9s）本地 23:22:14 打出 604.9s 停滞轮，23:22:15 fenixd.log 记「planner-plan failed (attempt 1)」，run jsonl 尾部 error 事件为「Exit code: 1」；23:22:25 派 attempt 2，23:56:18 成功（run_metrics duration 2032.8s、163 turns、91 次工具调用、落盘 35 条场景）。数据摘要把两 attempt 墙钟都记成 3311.961s，回源 run_metrics 实为 a1 1268.9s + a2 2032.8s 的串行和（≈3301.7s 加开销）——该字段是阶段墙钟同时记到两个 attempt，不是单 run 时长。
   - 调查评估：在处置 client-ux-and-input-latency（触控延迟与客户端 UX SPEC）规划阶段暴露。已核实事实：首 attempt 在第 24 轮 604.9s 的 API 往返（远超 300s 升级线）结束后整体退出，dsh-events.jsonl 事件流本身以 turn_end/final 正常收尾、无 stderr 栈，故死亡根因（网关断连、dsh 崩溃、本机资源）证据不足——未定、多假说并存，只断言「长停滞轮后进程退出、零产物」。与存量工作关系：既有的 in-place retry（原地重试，add-judge-artifact-gate）面向产物门失败，停滞判停（run-stop-loss）缺省关闭，均不覆盖本形态；attempt 重建时 worktree 复用但取证工作无增量产物可续，全部重做。结论：单次 provider 长尾即放大成 55 分钟规划阶段，缺产物增量落盘与停滞样本归因留存。
   - 建议：planner-plan 车道增加阶段内产物增量落盘（取证记录、场景草稿即写即存），attempt 重建时声明复用已落盘中间产物；run_metrics 对 ≥300s 单轮追加 provider 长尾标记字段，为后续 provider 分流提供逐 run 证据。
 
 - **全窗16个run合计2.5小时API停滞，最长单轮604.9秒**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：窗口 45 个 run 中 16 个命中 API 停滞（单轮往返 >60s 计一次 stall，停滞=请求发出后长时间无响应的等待），按深扫聚合行合计 9044 秒（约 2 小时 31 分）纯等待，占窗口 run 总时长的大头；成功 run 也不例外——planner-judge run 1807.8s 里 stalls=6、单轮最长 519.6s，implementer run 5759.1s 里 stalls=9、停滞合计 1147.6s。
   - 证据：逐 run 回源核实：16 个 run 的 run_metrics 行 stalls/max 与数据摘要第六节 16/16 一致（如 planner-plan a1 stalls=3 max=604.9、a2 stalls=10 max=376.5、impl-m0-a2a-streaming-pipeline-1794128070-a1 stalls=10 max=149.2 且 duration 9453.5s 为窗口最长 run）；合计 9044s 为该 16 行 total 字段求和（口径：run 内 >60s 往返样本时长求和，逐 run 总量行出自 daemon 深扫聚合，非本人重算）；fenixd.log 在飞侧仅逐条 WARNING 留痕（如本地 23:50:05「API round-trip stall: 376.5s (round #66)」），无任何干预动作。
   - 调查评估：跨 spec 现象（m0 与 client-ux 两车道、planner/implementer/judge/spec-review/admin 全角色都有），max 分布 79s–604.9s，形态指向 provider 网关长尾而非单车道问题；token 字段全窗为 0（usage_source=available 但 input_tokens=0），成本只能按时长口径量化，无法按金额。与存量工作关系：api_round_stall_escalated 升级信号（evo-add-api-stall-disposition-closeout 2.1）对 success 终态显式豁免（admin_monitor.py「曾停滞但正常完成」不落信号），而本窗 16 个停滞 run 全部成功收尾——升级面零触发；停滞判停机制另见改进条目。结论：本窗形态（成功收尾的长停滞）在现有信号与止损面上完全不可见，属系统性敞口而非一次性失误。
@@ -19,12 +21,14 @@
 
 ### 失误
 - **首日配置失误致模型路由全失效，单次评审烧19条run**
+  - 自进化：问题成立 / 建议不合理 / — 不需要
   - 影响：m0-a2a-streaming-pipeline 首次方案评审（spec-review，SPEC 方案单轮只读评审 agent）从 16:07 拖到 16:26 才成功：19 条 run 记录里 15 条被两次 daemon 重启清扫、3 条死在 dsh 启动失败，另有 planner-plan 3 连秒挂（进程启动数秒内即死）触发 16:32-16:37 的 300 秒全车道冷却（冷却期间该 spec 的 implementer/fast-track/repair/planner-plan/verifier 派发与管理员唤起全部跳过），m0 流水线整体推迟约 47 分钟（16:07 起草、16:54 planner-plan 才成功）。
   - 证据：根因为单因确定性，证据充分：① 16:11 配置加载日志逐角色列出全部 13 个 agents.models.*.provider 引用未注册 provider 名（bigmodel.cn / inferaiapi.com / maomaoai / deepseek——注册表里只有 bigmodel-cn，属命名笔误类错误），加载器仅打 ERROR「已跳过，不阻塞加载」继续运行；② 宿主机无 claude CLI（实测 which claude 失败，dsh 在 /usr/bin/dsh），而 harness（spawn agent 进程的边界实现）缺省值是 claude（core/config.py HARNESS_DEFAULT），07:57-08:17 产生 36 条 FileNotFoundError 'claude' 日志（agent_runner 20、spec_review 15、arbiter 1）；③ dsh 侧诊断 startup-2026-11-08T08-22-25：fenix-model-config 插件断言「模型未显式配置」拒绝启动，headless-runner 等 4 插件连锁未激活——即失败样本里的「headless-runner (required)」输出。恢复轨迹：4 次配置热重载（16:09/16:11/16:26/16:32）加 daemon 重启（15:52 首启后 16:16、16:22、16:49 再启），16:26 spec-review 成功、16:54 planner-plan 成功；告警面 instant_fail_storm（告警 f5816fbcf092，秒挂风暴）与 spec-review-incomplete ×6（评审器连败至尝试上限，18:53 批量收口）。
   - 调查评估：在处置 m0-a2a-streaming-pipeline（A2A 串流管线 SPEC，当日 19:32 已 done）评审阶段暴露。已核实事实如证据所列，属首日 bring-up 的执行层配置失误：项目 15:52 才启动 daemon、16:04 才提交 bootstrap skeleton，配置编辑引入笔误 provider 名、且 harness 与宿主二进制不匹配，迭代 4 次热重载加 3 次重启才收敛；当日已修复（现行 config 13 角色全指向 bigmodel-cn、agent.harness=dsh，两 spec 后续全程正常）。两点残余缺口：① 同一笔误当天 19:37 二次回归——告警 83309dfbf020（provider_ref_invalid，agents.models.arbiter.provider 引用 bigmodel.cn，handled=false），现行 config 已无该键，修复动作无留痕（config.yaml 不入 git，无 diff 可核），此点标注未核实；② spawn 失败路径不写终态，15 条 run 记录残留到重启才被 startup terminal-state sweep（daemon 启动时把非终态 run 批量标 interrupted 的清扫机制）闭合，构成数据摘要「其他终态 19」的主体。与存量工作关系：加载器既有逐角色 provider 校验但刻意非阻塞，无派发前硬门——系统性修复见改进条目。
   - 建议：补两条低成本收尾：给 arbiter 笔误的修复补一条带留痕的处置记录或 commit 闭掉告警 83309dfbf020；spawn 失败路径即时写 error 终态，不再依赖重启清扫收敛非终态残留。
 
 - **活性报告未入库阻塞merge-back 11分钟，双run收场**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：client-ux-and-input-latency 的 merge-back（实现分支合并回主树）在 00:37-00:48 被主树 3 个未提交重叠文件阻塞 11 分钟，6 轮自动 merge-only 重试全败，最终消耗 1 个 admin run（13 轮）加 1 个 repair run（37 轮）才收场；同一 ERROR 每 2 分钟复记还触发了 2 条 daemon_errors 升级告警（指纹 3469e5f8），其中一条被在飞 admin run 覆盖跳过。
   - 证据：fenixd.log 00:37:05 起连续 6 条「Merge-back blocked by WIP overlap precheck (policy=escalate)」（WIP overlap precheck=合并前对主树未提交改动与分支改动路径重叠的拦截闸门，防 stash pop 静默丢弃，主树零污染），重叠文件为 docs/bootstrap-screenshots/projection_grant_try1.png、docs/validation-report.md、docs/validation-report.md.progress.json；告警 816fab70e5b5（mergeback_wip_overlap major）00:41 唤起 Administrator，admin 提交 07a7ee6（00:44，收编主树再生产物，validation-report 落为 20:17 矩阵重跑版 12/12 PASS）；00:46 merge rehearsal（合并预演）检出同 3 路径语义冲突进入 repair 通道，00:48 re-merge-back 完成（merge 提交 81c6395，parents=07a7ee6+d3b6857）。
   - 调查评估：在处置 client-ux-and-input-latency 收工合并时暴露。已核实事实：docs/validation-report.md 及其 progress.json 是 scripts/run_matrix.py 每次实跑都整文件再生的活性报告（git show 07a7ee6 可见 19:28 版被 20:17 版整表替换）；m0 验证车道 20:17 在主树重跑矩阵后只入库了 per-spec 的 verification-report（提交 eb26488 仅 +56 行该文件），再生主报告留在主树未提交；而 client-ux 分支在自己的 worktree 里也实跑矩阵并把同名文件提交上了分支（提交 7006cc8「6.1 矩阵实跑修正」）——两条车道写同一活性报告路径，merge-back 必撞重叠闸门。根因归属：再生后不入库是执行层遗漏，但「两车道共享活性报告写面」是结构性诱因，复发概率高（见改进条目）。次要留痕：repair run 收尾时「产物硬门未识别 agent_type='repair'（按无门放行）」与「预算计数对账偏差 used=1 vs 正常收工 run 数=0」两条 WARNING 属小缺陷。与存量工作关系：spec/changes 活跃区仅两 spec、archive 为空，无既有条目覆盖此写面治理。
@@ -32,18 +36,21 @@
 
 ### 可改进
 - **停滞监督面缺位：判停关闭加成功豁免，2.5小时停滞零止损**
+  - 自进化：问题部分成立 / 建议部分合理 / — 不需要
   - 影响：复发敞口：按本窗实测，同类窗口单日约 9044 秒（2.5 小时）API 停滞等待、单轮最长 604.9 秒，因全部成功收尾而零告警零止损，每次照付；叠加判活通道因 claude CLI 缺失全程 fail-open（通道不可用时放行不拦截，liveness.py 自述「dsh 独立部署且宿主无 claude CLI」形态，最后一条 binary_missing 见 19:24），长 run 实际仅剩零事件/零产出兜底。
   - 证据：config.yaml 无任何 agents.run_stall_budget_* 键（core/config.py:469 缺省关闭，代码注释自述「evo-add-run-stop-loss 2.1，缺省关闭」）；admin_monitor.py _check_api_round_stall_escalated 对 success 终态显式豁免；本窗 16 个停滞 run 终态全部 success（run_metrics 回源核实）。
   - 调查评估：既有能力对账：停滞观测三层（60s 统计线、120s 在飞 WARNING 线、300s 升级线）与 run 停滞预算判停均已建成，缺的是「启用判定」与「成功终态聚合面」，非重复立项，也不是要新建告警流。机制铁律「延迟数据不触发独立人工告警」应继续遵守，建议动作落在既有判停机制的灰度启用与日回顾数据投影上。
   - 建议：SPEC 提案：① 灰度启用 run_stall_budget（先观测键后判定键，阈值按本窗 p90/max 实测校准）；② run_metrics 增加窗口级停滞合计投影供日回顾消费；③ ≥300s 停滞轮计入 provider 健康度计数，为分流换道提供依据；④ 评估判活通道改用 dsh 或随部署修复 claude 二进制。
 
 - **配置错误无派发前预检，全角色失效仍连发19分钟**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：复发敞口：单次同类配置失误按本窗实测代价为 25 次无效派发 run（19 条评审记录加 3 次秒挂加 2 次 arbiter、1 次 administrator 失败）、12 条以上告警记录、3 次 daemon 重启、47 分钟流水线延迟；一次派发前预检可把该代价压到零。
   - 证据：加载器对未注册 provider 仅打 ERROR「已跳过，不阻塞加载」（16:11，13 角色全失效）后继续派发，失效要等到 dsh 侧 fenix-model-config 插件断言才暴露；'claude' CLI 缺失同样到 spawn 时点才 FileNotFoundError；provider_ref_invalid 告警 19:37 才发出且不拦截派发——同一笔误当天二次出现（arbiter 角色）证明告警面无阻断力。
   - 调查评估：与存量关系：core/config.py 既有逐角色非阻塞校验，admin_monitor 既有 provider_ref_invalid 告警，但「配置声明」与「运行时可用」之间无一致性硬门，检索日志与代码注释未见 config-preflight 类既有项，不与既有 evo 重复。结论：这是把首日失误放大 25 倍的结构缺口，值得立项。
   - 建议：SPEC 提案：daemon 启动与热重载时执行配置预检（provider 引用齐注册、harness 二进制存在、模型三元组齐备），预检失败则拒绝热重载、冻结派发并出单条汇总告警（替代逐 run 失败加多告警流），预检通过自动解除冻结。
 
 - **verify契约前置起草缺位，spec起草37分钟后才落契约**
+  - 自进化：问题部分成立 / 建议部分合理 / — 不需要
   - 影响：复发敞口：m0 从起草（16:07）到验证契约落位（17:00，提交 96a21df）间隔 37 分钟，期间产生 8 条 verify_contract_missing 告警记录（前置预检发现 .fenix/verify.yaml 即验证契约文件仍是全注释模板态）并动用 2 个 admin run（admin-m0-...-1794128069 与 -1794128669）代起草，另有 1 条信号在契约已 resolved 后重复派发（告警 38179311da56）。
   - 证据：告警时间链：16:32 首条 verify_contract_missing、16:54 与 17:04 两次「Administrator 处置中」、17:01 第二个 admin run 派发、17:09 重复信号告警（自述「在契约已被前序 admin run 起草落位并 resolved 之后重复派发」）；后续 01:16 又以 verify_regression_missing（regression 段缺失信号）补段一次（提交 f3b577e，protocol JVM 单测 5 类 39 例）——同一天内 verify.yaml 触发三种信号流；另有 15:57 whitelist_untracked 告警（.fenix/verify.yaml 被 .gitignore ! 规则放行却未入库，现 git ls-files 已确认入库）。
   - 调查评估：在处置 m0-a2a-streaming-pipeline 进入验证前置预检时暴露。已核实事实如上；处置本身走升级链自动化完成（零人工落盘），功能上闭环，但「spec 起草时契约必须已可裁决」这一前置条件无人把关，导致每个新 spec 大概率重演一遍代起草流程。与存量关系：active 区两 spec 中仅 m0 触发（client-ux 由并行出题车道供场景），属首日新项目契约冷启动形态；未检索到契约前置起草类既有条目。结论：契约生命周期应从「验证时被动升级」改为「起草时主动落位」，并把 resolved 后信号重复派发修掉。
