@@ -1,6 +1,7 @@
 {
-  "spec": "client-ux-and-input-latency",
   "status": "success",
+  "spec": "client-ux-and-input-latency",
+  "summary": "已把 mainline（本仓库主枝为 master，无 main ref）合入实现分支并解决 3 处冲突：docs/validation-report.md、docs/validation-report.md.progress.json 与 docs/bootstrap-screenshots/projection_grant_try1.png 均取 mainline 权威版本。理由：mainline 为完整 12/12 PASS 验收矩阵（2026-11-08 20:17 重跑再生，progress.json 含 12 条逐组合记录），而实现分支此前仅以 --only lan-direct,game,720p 复跑，把报告覆盖成 1/1 子集；这些 m0-a2a 产物不属于本 spec 交付物，保留完整矩阵而非部分覆盖。master 侧 transport 退役通道热修（TcpStreamChannel.retire 等 4 文件）自动合并、无冲突。提交后定向回归：protocol ./gradlew test 39/39 PASS（Framing 12/Messages 7/Stats 5/TransportLoopback 7/P2pAndStun 8，覆盖本次合入的 transport 代码），bin/run_full_suite.py --timeout 600 4/4 PASS（protocol 单测 + protocol/source/client 三模块构建）。未验证边界：本轮未重跑双模拟器设备级 12 组合验收矩阵与真机项（仅做合并冲突修复，无设备依赖）。",
   "completed_tasks": [
     "1.1",
     "1.2",
@@ -21,5 +22,5 @@
     "6.1",
     "6.2"
   ],
-  "completed_at": "2026-11-09T00:44:00+08:00"
+  "completed_at": "2026-11-09T00:52:00+08:00"
 }
