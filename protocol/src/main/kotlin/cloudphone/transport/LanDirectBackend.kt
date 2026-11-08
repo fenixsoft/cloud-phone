@@ -71,15 +71,29 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
     }
 
     private fun installChannel(socket: Socket, restored: Boolean) {
-        channel?.close()
-        val ch = TcpStreamChannel(socket, stats, this, onError = { reason ->
+        // 旧通道延迟关闭：新连接立即掐死旧通道曾吞掉在途控制应答
+        // （两端重连竞态时 START_SESSION ack 写出后旧 socket 即关，客户端永远收不到）
+        val old = channel
+        channel = TcpStreamChannel(socket, stats, this, onError = { reason ->
             if (!closed.get()) {
                 stats.onBadEvent(TransportStats.BadEvent.DISCONNECT, reason.message ?: "io")
                 onStreamEvent?.onEvent(StreamEvent.DISCONNECTED, reason.message ?: "io")
             }
-        })
-        channel = ch
-        ch.startReading("lan")
+        }).also { ch ->
+            ch.startReading("lan")
+        }
+        if (old != null) {
+            Thread({
+                try {
+                    Thread.sleep(3000)
+                } catch (_: InterruptedException) {
+                }
+                try {
+                    old.close()
+                } catch (_: IOException) {
+                }
+            }, "lan-old-channel-reap").apply { isDaemon = true; start() }
+        }
         if (restored) {
             stats.onBadEvent(TransportStats.BadEvent.RECONNECT, "lan client re-connected")
         }

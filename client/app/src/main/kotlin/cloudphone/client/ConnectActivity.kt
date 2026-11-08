@@ -75,6 +75,9 @@ object ClientSession {
     private var currentMode: WatchMode = WatchMode.FULLSCREEN
     private var currentPackage = ""
     private val reconnecting = AtomicBoolean(false)
+    // 单飞守卫：connect 主流程与 scheduleReconnect 竞态曾造成双 TCP 连接并存，
+    // 两侧共享同一 ackQueue 互吃对方应答（HELLO ack timeout 竟发生在收到 ack 之后）
+    private val connecting = AtomicBoolean(false)
     // 有界缓冲（避免 SynchronousQueue 无阻塞 offer 在 poll 未就绪时丢 ack 的竞态）
     private val ackQueue = java.util.concurrent.LinkedBlockingQueue<ControlMessage.HelloAck>(8)
 
@@ -82,10 +85,18 @@ object ClientSession {
 
     /** 建链 + HELLO 握手（≤500ms 目标；成功 true） */
     fun connect(cfg: Config, mode: WatchMode, packageName: String): Boolean {
-        config = cfg
-        currentMode = mode
-        currentPackage = packageName
-        return connectOnce() && handshake(mode, packageName)
+        if (!connecting.compareAndSet(false, true)) {
+            lastError = "连接流程进行中"
+            return false
+        }
+        try {
+            config = cfg
+            currentMode = mode
+            currentPackage = packageName
+            return connectOnce() && handshake(mode, packageName)
+        } finally {
+            connecting.set(false)
+        }
     }
 
     private fun connectOnce(): Boolean {
@@ -118,7 +129,9 @@ object ClientSession {
                 StreamEvent.DISCONNECTED -> {
                     connected = false
                     onConnectionLost?.invoke()
-                    scheduleReconnect()
+                    // connectOnce 内部换后端/旧链关闭也会触发 DISCONNECTED，
+                    // connect 主流程进行中时禁止 scheduleReconnect 插进来抢 ackQueue
+                    if (!connecting.get()) scheduleReconnect()
                 }
                 else -> Unit
             }
@@ -244,6 +257,11 @@ object ClientSession {
 
     private fun scheduleReconnect() {
         if (!reconnecting.compareAndSet(false, true)) return
+        // 与主连接流程互斥：拿不到单飞守卫说明主流程在跑，放弃本次重连
+        if (!connecting.compareAndSet(false, true)) {
+            reconnecting.set(false)
+            return
+        }
         Thread({
             try {
                 val target = currentSessionId
@@ -265,6 +283,7 @@ object ClientSession {
                 lastError = "重连失败（已尝试 $attempt 次）"
             } finally {
                 reconnecting.set(false)
+                connecting.set(false)
             }
         }, "client-reconnect").apply { isDaemon = true; start() }
     }
