@@ -78,6 +78,7 @@ class FrpBackend(config: TransportConfig) : TransportBackendBase(config) {
     /** 装配一条已连接流（读泵 + 事件通知）；替换旧通道 */
     private fun installChannel(socket: Socket, restored: Boolean) {
         val old = channel.getAndSet(null)
+        old?.retire()
         old?.close()
         val ch = TcpStreamChannel(socket, stats, this, onError = { reason ->
             onStreamBroken(reason.message ?: "io")

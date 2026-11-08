@@ -83,6 +83,7 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
             ch.startReading("lan")
         }
         if (old != null) {
+            old.retire() // 退役通道静默关闭：读泵不再把回收时的 SocketException 误报为断开
             Thread({
                 try {
                     Thread.sleep(3000)
