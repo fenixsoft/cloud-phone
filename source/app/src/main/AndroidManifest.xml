@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 输入窗口合成驱动（SPEC 5.3 InputComposer）：透明 1×1 悬窗 5fps 强制 display 0 合成；
+         需 bootstrap appops 登记（特殊权限，无运行时弹窗），未授权时自动降级 1Hz idle 合成 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <!-- APP_LIST 枚举可见性（Android 11+ package filtering）：仅声明可启动应用查询面 -->
     <queries>

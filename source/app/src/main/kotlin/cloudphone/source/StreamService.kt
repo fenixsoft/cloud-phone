@@ -41,6 +41,8 @@ class StreamService : Service() {
     private var backend: TransportBackend? = null
     private var sessionManager: SessionManager? = null
     private var injector: InputInjector? = null
+    /** 触摸延迟修复 5.3：输入窗口合成驱动 */
+    private var inputComposer: InputComposer? = null
     @Volatile private var currentSession: SessionManager.Session? = null
     /** 授权时创建的共享采集管线（VD+编码器常驻；一授权一实例） */
     @Volatile private var sharedCapture: ScreenCapture? = null
@@ -134,6 +136,9 @@ class StreamService : Service() {
         val bootstrap = ShellBootstrap()
         sessionManager = SessionManager(this, token, bootstrap)
         injector = InputInjector(bootstrap, sessionManager!!)
+        // 触摸延迟修复 5.3：输入窗口合成驱动（透明悬窗 5fps；未授权时降级并 WARN）
+        inputComposer = InputComposer.get(this)
+        inputComposer?.start()
         val config = TransportConfig(Role.SOURCE, kind, "", tcpPort, udpPort, useUdpVideo = useUdp)
         val b = when (kind) {
             BackendKind.FRP -> FrpBackend(config)
@@ -199,6 +204,10 @@ class StreamService : Service() {
             }
             is ControlMessage.IdrRequest -> sharedCapture?.requestIdr()
             is ControlMessage.InputEvent -> {
+                // ② InputEvent 到达打点（触摸延迟插桩 5.1）+ 输入窗口标记（5.3 修复挂点）
+                android.util.Log.i("cloudphone-touch", "t2 recv action=${msg.action.id} sid=${msg.sessionId}")
+                sharedCapture?.onInputActivity()
+                inputComposer?.onInputActivity()
                 injector?.inject(msg.sessionId, msg.action, msg.pointerId, msg.x, msg.y)
             }
             is ControlMessage.Ping -> send(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
@@ -406,6 +415,8 @@ class StreamService : Service() {
     override fun onDestroy() {
         running = false
         statsThread?.interrupt()
+        inputComposer?.stop()
+        inputComposer = null
         currentSession?.let { sessionManager?.hangup(it) }
         currentSession = null
         sharedCapture?.stop()

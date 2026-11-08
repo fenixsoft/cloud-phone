@@ -26,10 +26,16 @@ class EncoderPipeline(
     private val fps: Int,
     private val bitrateKbps: Int,
     private val onEncodedFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit,
+    /** ④ 采集出帧 idle 探针（帧间隔>200ms 回调；触摸延迟插桩 5.1，ScreenCapture 消费） */
+    private val onOutputIdleGap: ((gapMs: Long) -> Unit)? = null,
 ) {
     private val running = AtomicBoolean(false)
     private val sequenceGen = AtomicLong(1)
     private val idrRequested = AtomicBoolean(false)
+    private var lastOutputMs = 0L
+
+    /** 触摸链插桩窗口：InputEvent 后 2s 内逐帧打 t5（⑤），窗口外仅 idle 段打点 */
+    @Volatile var inputTraceUntilMs = 0L
 
     private var codec: MediaCodec? = null
     private var inputSurface: Surface? = null
@@ -139,7 +145,11 @@ class EncoderPipeline(
                             buffer.get(out)
                             codec.releaseOutputBuffer(index, false)
                             if (info.size > 0) {
-                                val ptsUs = SystemClock.elapsedRealtimeNanos() / 1000
+                                val nowUs = SystemClock.elapsedRealtimeNanos() / 1000
+                                // info.presentationTimeUs = surface 帧到达编码器的真实时间戳：
+                                // nowUs - pts = 合成→出码排队延迟（触摸延迟分段定位用）
+                                val ptsUs = info.presentationTimeUs.takeIf { it > 0 }
+                                    ?: (nowUs - lastOutputMs * 1000)
                                 val keyframe = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
                                 val seq = sequenceGen.getAndIncrement()
                                 if (keyframe) idrRequested.set(false)
@@ -148,6 +158,19 @@ class EncoderPipeline(
                                 val payload = if (keyframe) (csd ?: ByteArray(0)) + out else out
                                 cloudphone.source.obs.PipelineCounters.encodedFrames.incrementAndGet()
                                 cloudphone.source.obs.PipelineCounters.maybeDumpFrame(seq, keyframe, payload)
+                                // ⑤ 编码出帧打点（触摸延迟插桩 5.1）：输入窗口内逐帧 + idle 段逐帧
+                                val nowMs = SystemClock.elapsedRealtime()
+                                val gapMs = if (lastOutputMs > 0) nowMs - lastOutputMs else 0L
+                                lastOutputMs = nowMs
+                                if (nowMs < inputTraceUntilMs || gapMs > IDLE_GAP_MS) {
+                                    val ptsDeltaMs = (nowUs - ptsUs) / 1000
+                                    android.util.Log.i(
+                                        "cloudphone-touch",
+                                        "t5 enc seq=$seq keyframe=$keyframe bytes=${out.size} gapMs=$gapMs " +
+                                            "idle=${if (gapMs > IDLE_GAP_MS) 1 else 0} ptsDeltaMs=$ptsDeltaMs",
+                                    )
+                                    if (gapMs > IDLE_GAP_MS) onOutputIdleGap?.invoke(gapMs)
+                                }
                                 onEncodedFrame(seq, ptsUs, keyframe, payload)
                             }
                         }
@@ -186,6 +209,11 @@ class EncoderPipeline(
     }
 
     fun isRunning(): Boolean = running.get()
+
+    companion object {
+        /** idle 段判定阈值（5.1：帧间隔>200ms 标记 idle） */
+        const val IDLE_GAP_MS: Long = 200
+    }
 
     fun stop() {
         if (!running.compareAndSet(true, false)) return

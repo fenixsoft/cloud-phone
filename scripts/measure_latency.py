@@ -1,128 +1,166 @@
 #!/usr/bin/env python3
-"""measure_latency.py — M0 端到端延迟测量（白闪 + PTS 差值双口径）。
+"""measure_latency.py — 触摸延迟测量（client-ux-and-input-latency 5.2）。
 
-数据来源（同一源端+客户端模拟器对）：
-1. 白闪口径：客户端注入点击 → loadgen 白闪 120ms → 客户端解码到白帧。
-   以客户端 logcat `cloudphone-latency` 的 touch→first-white 时间差衡量；
-   脚本侧通过 adb 注入点击并时间戳标记（touchmark 行），随后抓取首个
-   `white-frame` 行计算视觉往返延迟。
-2. PTS 差值口径：客户端逐帧 log `frame ... delayMs=<N>`（源端编码 PTS 与
-   客户端渲染时刻差，要求两端时钟同源——同宿主机启动的模拟器族满足）。
+触摸口径：串流静屏下经客户端协议链注入触摸（adb input tap → 客户端 TouchChannel
+① → INPUT_EVENT → 源端 ②接收 ③注入 → ④采集出帧 ⑤编码 → 回传 ⑥客户端渲染），
+匹配 t1（客户端触摸产生）→ t6（同一 seq 帧渲染完成） Wall 时间差（两端模拟器时钟
+同源宿主，logcat -v time 可比），输出 P50/P95（20 次样本）。
 
-用法：
-  python3 scripts/measure_latency.py --client-serial emulator-5556 \
-      [--duration 30] [--samples 20] [--report docs/latency-samples.json]
+用法:
+  python3 scripts/measure_latency.py --touch \
+      --client emulator-5556 --source emulator-5554 --samples 20 \
+      [--x 540 --y 1200] [--out <报告.json>]
 
-输出：P50/P95/均值 + 每样本明细（JSON 存档）。
+前置条件（脚本自动处理）:
+  1. 客户端已连上源端并处于 DecodeRenderActivity（全屏串流）。
+  2. 源端静屏：脚本打开系统设置页 + 开启 pointer_location 叠加层保证每次触摸
+     都产生可捕获的视觉变化（测量结束自动关闭）。
 """
-from __future__ import annotations
-
 import argparse
 import json
 import re
-import statistics
 import subprocess
 import time
 
 
-def adb(serial: str, *args: str, binary: bool = False):
-    cmd = ["adb", "-s", serial, *args]
-    out = subprocess.run(cmd, capture_output=True, check=True)
-    return out.stdout if binary else out.stdout.decode("utf-8", "replace")
+def sh(*args: str) -> str:
+    return subprocess.run(list(args), capture_output=True, text=True).stdout
 
 
-def clear_logcat(serial: str) -> None:
-    subprocess.run(["adb", "-s", serial, "logcat", "-c"], capture_output=True)
+def logcat(serial: str, since_time: str) -> list:
+    """抓取 threadtime 格式的 cloudphone-touch 行（自 since_time 起）"""
+    out = sh("adb", "-s", serial, "logcat", "-d", "-v", "threadtime",
+             "-t", since_time, "-s", "cloudphone-touch")
+    rows = []
+    for line in out.splitlines():
+        m = re.match(r"(\d\d-\d\d)\s+(\d\d:\d\d:\d\d\.\d\d\d)\s+\d+\s+\d+\s+[IWD]\s+cloudphone-touch:\s+(.*)", line)
+        if not m:
+            continue
+        ts = time.strptime(f"2026-{m.group(1)} {m.group(2)[:8]}", "%Y-%m-%d %H:%M:%S")
+        ms = int(m.group(2).split(".")[1]) / 1000.0
+        wall = time.mktime(ts) + ms
+        rows.append((wall, m.group(3)))
+    return rows
 
 
-def collect_latency_lines(serial: str, duration_s: int) -> list[dict]:
-    """抓取 duration 秒内客户端 cloudphone-latency 日志。"""
-    deadline = time.time() + duration_s
-    samples: list[dict] = []
-    proc = subprocess.Popen(
-        ["adb", "-s", serial, "logcat", "-v", "time", "-s", "cloudphone-latency"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        while time.time() < deadline:
-            line = proc.stdout.readline()  # type: ignore[union-attr]
-            if not line:
-                break
-            text = line.decode("utf-8", "replace").strip()
-            m = re.search(r"delayMs=(\d+)", text)
-            if m:
-                samples.append({"kind": "pts-delta", "delayMs": int(m.group(1))})
-                continue
-            m = re.search(r"white-flash Ms=(\d+)", text)
-            if m:
-                samples.append({"kind": "white-flash", "delayMs": int(m.group(1))})
-    finally:
-        proc.terminate()
-    return samples
+def parse_t5_seq(body: str):
+    m = re.search(r"t5 enc seq=(\d+)", body)
+    return int(m.group(1)) if m else None
 
 
-def inject_clicks(serial: str, count: int, interval_s: float) -> None:
-    """在客户端屏幕中心注入点击（经客户端→源端→loadgen 白闪，测量视觉往返）。"""
-    for _ in range(count):
-        adb(serial, "shell", "input", "tap", "540", "960")
-        time.sleep(interval_s)
+def percentile(values: list, p: float) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    idx = min(len(s) - 1, max(0, round(p * (len(s) - 1))))
+    return s[idx]
 
 
-def summarize(samples: list[dict]) -> dict:
-    def pct(values: list[int], p: float) -> int:
-        if not values:
-            return -1
-        s = sorted(values)
-        return s[min(len(s) - 1, int(len(s) * p))]
+def run_touch(args):
+    client, source = args.client, args.source
+    n = args.samples
 
-    pts = [s["delayMs"] for s in samples if s["kind"] == "pts-delta"]
-    flash = [s["delayMs"] for s in samples if s["kind"] == "white-flash"]
-    return {
-        "ptsDelta": {
-            "count": len(pts),
-            "p50Ms": pct(pts, 0.50),
-            "p95Ms": pct(pts, 0.95),
-            "meanMs": round(statistics.fmean(pts), 1) if pts else -1,
-        },
-        "whiteFlash": {
-            "count": len(flash),
-            "p50Ms": pct(flash, 0.50),
-            "p95Ms": pct(flash, 0.95),
-            "meanMs": round(statistics.fmean(flash), 1) if flash else -1,
-        },
+    # 前置：源端静屏 + pointer_location（测量结束后恢复）
+    sh("adb", "-s", source, "shell", "am", "start", "-n",
+       "com.android.settings/.Settings")
+    sh("adb", "-s", source, "shell", "settings", "put", "system",
+       "pointer_location", "1")
+    time.sleep(3)
+
+    # 清空两端缓冲区（拿干净起点）
+    sh("adb", "-s", client, "logcat", "-c")
+    sh("adb", "-s", source, "logcat", "-c")
+    since = time.strftime("%m-%d %H:%M:%S.000")
+
+    # 以 300ms 间隔注入 20 次（触摸链并发段：静屏下帧稀疏，seq 匹配仍唯一）
+    for i in range(n):
+        sh("adb", "-s", client, "shell", "input", "tap", str(args.x), str(args.y))
+        time.sleep(0.3)
+    # 收尾窗口：等最后一帧回传渲染
+    time.sleep(4)
+
+    c_rows = logcat(client, since)
+    s_rows = logcat(source, since)
+
+    # t1（客户端，仅 DOWN）按时间排序；t3（源端注入完成，仅 DOWN）→ 之后首个 t5 seq → t6
+    t1s = [(w, b) for w, b in c_rows if b.startswith("t1 action=0 ")]
+    t3s = [(w, b) for w, b in s_rows if b.startswith("t3 inject done display=0 action=0")]
+    t5s = [(w, parse_t5_seq(b)) for w, b in s_rows if b.startswith("t5 ")]
+    t6_by_seq = {}
+    for w, b in c_rows:
+        if b.startswith("t6 "):
+            ms = re.search(r"seq=(\d+)", b)
+            if ms:
+                t6_by_seq[int(ms.group(1))] = w
+
+    latencies = []
+    segments = []  # 每样本分段：(t3-t1, t5-t3, t6-t5)
+    t5_idx = 0
+    # 时钟自校准：两端模拟器时钟偏差 ~±150ms 且随宿主同步漂移 → 先按最近邻粗配，
+    # 取中位数偏差为钟差，再按 ±150ms 窗口精配（300ms 触摸间隔下无歧义）
+    raw_pairs = []
+    for t3w, _ in t3s:
+        best_w = min((w for w, _ in t1s), key=lambda x: abs(x - t3w), default=None)
+        if best_w is not None:
+            raw_pairs.append((t3w, best_w, best_w - t3w))
+    if not raw_pairs:
+        print(json.dumps({"mode": "touch", "error": "no touch pairs found"}))
+        return None
+    offsets = sorted(p[2] for p in raw_pairs)
+    median_off = offsets[len(offsets) // 2]
+    pairs = [(t3w, t1w) for t3w, t1w, off in raw_pairs if abs(off - median_off) <= 0.350]
+    for t3w, t1w in pairs:
+        # 注入完成后首个编码帧
+        while t5_idx < len(t5s) and t5s[t5_idx][0] < t3w:
+            t5_idx += 1
+        if t5_idx >= len(t5s):
+            continue
+        t5w, seq = t5s[t5_idx]
+        t5_idx += 1
+        t6w = t6_by_seq.get(seq)
+        if t6w is None:
+            continue
+        latencies.append((t6w - t1w) * 1000)
+        segments.append({
+            "input_ms": round((t3w - t1w) * 1000, 1),
+            "capture_enc_ms": round((t5w - t3w) * 1000, 1),
+            "net_render_ms": round((t6w - t5w) * 1000, 1),
+            "seq": seq,
+        })
+
+    result = {
+        "mode": "touch",
+        "samples_requested": n,
+        "samples_matched": len(latencies),
+        "p50_ms": round(percentile(latencies, 0.50), 1),
+        "p95_ms": round(percentile(latencies, 0.95), 1),
+        "max_ms": round(max(latencies), 1) if latencies else 0,
+        "min_ms": round(min(latencies), 1) if latencies else 0,
+        "segments": segments[:10],
     }
+    # 恢复 pointer_location
+    sh("adb", "-s", source, "shell", "settings", "put", "system", "pointer_location", "0")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if args.out:
+        with open(args.out, "w") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+    return result
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="M0 端到端延迟测量（白闪+PTS 差值）")
-    ap.add_argument("--client-serial", required=True, help="客户端模拟器 serial（如 emulator-5556）")
-    ap.add_argument("--duration", type=int, default=30, help="采集窗口秒数")
-    ap.add_argument("--clicks", type=int, default=5, help="注入点击次数（白闪样本）")
-    ap.add_argument("--report", default="docs/latency-samples.json", help="样本 JSON 存档路径")
+def main():
+    ap = argparse.ArgumentParser(description="触摸/视觉延迟测量")
+    ap.add_argument("--touch", action="store_true", help="触摸口径（t1→t6）")
+    ap.add_argument("--client", default="emulator-5556")
+    ap.add_argument("--source", default="emulator-5554")
+    ap.add_argument("--samples", type=int, default=20)
+    ap.add_argument("--x", type=int, default=540)
+    ap.add_argument("--y", type=int, default=1200)
+    ap.add_argument("--out", default=None, help="报告 JSON 输出路径")
     args = ap.parse_args()
-
-    clear_logcat(args.client_serial)
-    print(f"[measure_latency] 采集窗口 {args.duration}s，注入 {args.clicks} 次点击…")
-    # 后台注入点击（白闪标记），前台并行抓日志
-    import threading
-
-    clicker = threading.Thread(
-        target=inject_clicks, args=(args.client_serial, args.clicks, max(2.0, args.duration / (args.clicks + 1)))
-    )
-    clicker.start()
-    samples = collect_latency_lines(args.client_serial, args.duration)
-    clicker.join()
-
-    summary = summarize(samples)
-    result = {"clientSerial": args.client_serial, "samples": samples, "summary": summary}
-    with open(args.report, "w", encoding="utf-8") as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    print(f"[measure_latency] 样本已存档 → {args.report}")
-    ok = summary["ptsDelta"]["count"] > 0
-    return 0 if ok else 1
+    if not args.touch:
+        ap.error("当前仅支持 --touch 触摸口径（视觉变化口径见 SPEC 5.2 说明）")
+    run_touch(args)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

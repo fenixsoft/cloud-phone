@@ -71,6 +71,10 @@ object ClientSession {
     @Volatile var lastError = ""
         private set
 
+    /** 最近一次 InputEvent 发出时刻（elapsedRealtime ms；触摸延迟插桩 ⑥ sinceTouchMs 依据） */
+    @Volatile var lastInputSentAtMs: Long = 0
+        private set
+
     var backend: TransportBackend? = null
         private set
     private var config: Config? = null
@@ -98,7 +102,12 @@ object ClientSession {
             config = cfg
             currentMode = mode
             currentPackage = packageName
-            return connectOnce() && handshake(mode, packageName)
+            val ok = connectOnce() && handshake(mode, packageName)
+            if (ok) {
+                lastPongAtMs = SystemClock.elapsedRealtime()
+                startControlWatchdog()
+            }
+            return ok
         } finally {
             connecting.set(false)
         }
@@ -225,6 +234,10 @@ object ClientSession {
     }
 
     fun sendControl(message: ControlMessage) {
+        if (message is ControlMessage.InputEvent) {
+            // 触摸链插桩：记录最近触摸发出时刻（⑥ sinceTouchMs 依据）
+            lastInputSentAtMs = SystemClock.elapsedRealtime()
+        }
         try {
             backend?.sendControl(encodeControlMessage(message))
         } catch (_: Exception) {
@@ -250,6 +263,7 @@ object ClientSession {
             }
             is ControlMessage.Ping -> sendControl(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
             is ControlMessage.Pong -> {
+                lastPongAtMs = SystemClock.elapsedRealtime()
                 val rtt = (nowUs() - msg.senderUs) / 1000
                 if (rtt in 0..10000) android.util.Log.i("cloudphone-latency", "rtt Ms=$rtt")
             }
@@ -260,6 +274,38 @@ object ClientSession {
     }
 
     // ── 断线重连 ≤1s ──
+
+    // 控制通道保活看门狗：静默 TCP 死亡检测。实测 adb forward 半开连接下客户端写入
+    // 0ms 完成但对端永不到达（无 FIN/RST 可感知，InputEvent 全部黑洞化），
+    // 复用 PING/PONG：>6s 无应答即掐死重连（resume 语义恢复挂机）
+    @Volatile private var lastPongAtMs = 0L
+    @Volatile private var lastPingSentAtMs = 0L
+    private val watchdogStarted = AtomicBoolean(false)
+
+    private fun startControlWatchdog() {
+        if (!watchdogStarted.compareAndSet(false, true)) return
+        Thread({
+            while (true) {
+                Thread.sleep(2000)
+                if (!connected) continue
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastPingSentAtMs >= 2000) {
+                    lastPingSentAtMs = now
+                    sendControl(ControlMessage.Ping(nonce = now, senderUs = nowUs()))
+                }
+                if (lastPongAtMs > 0 && now - lastPongAtMs > 6000) {
+                    android.util.Log.w(
+                        "cloudphone-client",
+                        "控制通道 >6s 无 Pong（静默失活）→ 掐死重连",
+                    )
+                    lastPongAtMs = now // 防抖：同一死通道只触发一次重连
+                    backend?.close()
+                    connected = false
+                    scheduleReconnect()
+                }
+            }
+        }, "client-keepalive").apply { isDaemon = true; start() }
+    }
 
     private fun scheduleReconnect() {
         if (!reconnecting.compareAndSet(false, true)) return
