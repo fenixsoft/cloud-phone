@@ -65,9 +65,41 @@ class ScreenCapture(
     }
 
     private fun buildPipeline(
-        p: EncoderPipeline.SessionParams,
+        requested: EncoderPipeline.SessionParams,
         onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit,
     ) {
+        // 宽高比精确化：VD 固定尺寸镜像会非等比拉伸主屏内容（20:9 屏被压进 16:9 → 画面扭曲）。
+        // 按主屏真实分辨率等比缩放（短边=请求档位短边），16 对齐后作为编码与 VD 尺寸。
+        val p = run {
+            val d = (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+                .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            val metrics = android.util.DisplayMetrics()
+            if (d == null) {
+                requested
+            } else {
+                d.getRealMetrics(metrics)
+                val dw = metrics.widthPixels
+                val dh = metrics.heightPixels
+                if (dw <= 0 || dh <= 0) {
+                    requested
+                } else {
+                    val shortTarget = minOf(requested.width, requested.height)
+                    val scale = shortTarget.toDouble() / minOf(dw, dh)
+                    fun align16(v: Double) = ((v / 16).toInt() * 16).coerceAtLeast(16)
+                    val w = align16(dw * scale)
+                    val h = align16(dh * scale)
+                    if (w == requested.width && h == requested.height) {
+                        requested
+                    } else {
+                        android.util.Log.i(
+                            "cloudphone-source",
+                            "capture: aspect-exact ${dw}x${dh} -> ${w}x${h} (tier short=$shortTarget)",
+                        )
+                        EncoderPipeline.SessionParams.normalized(w, h, requested.fps, requested.bitrateKbps)
+                    }
+                }
+            }
+        }
         val enc = EncoderPipeline(p.width, p.height, p.fps, p.bitrateKbps) { seq, pts, kf, data ->
             PipelineCounters.sentFrames.incrementAndGet()
             onFrame(seq, pts, kf, data)

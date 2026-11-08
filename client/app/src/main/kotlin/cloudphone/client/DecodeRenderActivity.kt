@@ -44,13 +44,22 @@ class DecodeRenderActivity : android.app.Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         val root = FrameLayout(this)
-        surfaceView = SurfaceView(this)
+        surfaceView = AspectFitSurfaceView(this)
+        // 触摸挂接（真机修复：此前 TouchChannel 从未接线，全屏触摸不可用）
+        surfaceView.setOnTouchListener(
+            cloudphone.client.input.TouchChannel(
+                sessionIdProvider = { ClientSession.currentSessionId },
+                send = { ClientSession.sendControl(it) },
+            )
+        )
         root.addView(
             surfaceView,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT,
+                android.view.Gravity.CENTER,
             ),
         )
         // 白闪底：首帧渲染前全白（测量基准）
@@ -145,6 +154,17 @@ class DecodeRenderActivity : android.app.Activity() {
                 continue
             }
             index = codec.dequeueOutputBuffer(info, 20_000)
+            if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                // 真实视频尺寸到达：更新 letterbox 视口（触控归一化基于该视口）
+                val f = codec.outputFormat
+                val vw = runCatching { f.getInteger(MediaFormat.KEY_WIDTH) }.getOrDefault(0)
+                val vh = runCatching { f.getInteger(MediaFormat.KEY_HEIGHT) }.getOrDefault(0)
+                if (vw > 0 && vh > 0) {
+                    (surfaceView as AspectFitSurfaceView).setVideoSize(vw, vh)
+                    android.util.Log.i("cloudphone-client", "video size $vw x $vh")
+                }
+                continue
+            }
             if (index >= 0) {
                 codec.releaseOutputBuffer(index, true) // 渲染到 Surface
                 onFrameRendered(frame, info)
@@ -222,6 +242,40 @@ class DecodeRenderActivity : android.app.Activity() {
             if (delaySamplesMs.isEmpty()) return null
             val sorted = delaySamplesMs.sorted()
             return sorted[sorted.size / 2] to sorted[((sorted.size - 1) * 95) / 100]
+        }
+    }
+
+    /**
+     * 按视频宽高比 letterbox 的 SurfaceView：onMeasure 使自身 laid-out 尺寸 = 视频显示区
+     * （居中于父容器，黑边由父容器白底/黑底承载）；TouchChannel 归一化基于该 View 尺寸，
+     * 故视口=触控区，坐标语义与源端真实屏幕一一对应。
+     */
+    inner class AspectFitSurfaceView(context: android.content.Context) : SurfaceView(context) {
+        private var videoW = 0
+        private var videoH = 0
+
+        fun setVideoSize(w: Int, h: Int) {
+            if (w == videoW && h == videoH) return
+            videoW = w
+            videoH = h
+            post { requestLayout() }
+        }
+
+        override fun onMeasure(wSpec: Int, hSpec: Int) {
+            if (videoW <= 0 || videoH <= 0) {
+                super.onMeasure(wSpec, hSpec)
+                return
+            }
+            val pw = android.view.View.MeasureSpec.getSize(wSpec)
+            val ph = android.view.View.MeasureSpec.getSize(hSpec)
+            val videoAspect = videoW.toDouble() / videoH
+            val parentAspect = pw.toDouble() / ph
+            val (w, h) = if (videoAspect > parentAspect) {
+                pw to (pw / videoAspect).toInt()
+            } else {
+                (ph * videoAspect).toInt() to ph
+            }
+            setMeasuredDimension(w.coerceAtLeast(1), h.coerceAtLeast(1))
         }
     }
 }

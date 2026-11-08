@@ -84,6 +84,9 @@ public final class ShellHelper {
 
     private static final Map<Integer, VdSession> sessions = new ConcurrentHashMap<>();
 
+    /** 主屏 DOWN 时间戳（display 0 无 VdSession 时的触摸起点） */
+    private static long mainDownTimeMs = 0;
+
     public static void main(String[] args) throws Exception {
         android.os.Looper.prepare(); // system context 创建需要主线程 Looper
         // system context（scrcpy 同款反射路径；多路径降级）
@@ -383,10 +386,26 @@ public final class ShellHelper {
             return "ERR injection unavailable on this image";
         }
         VdSession s = sessions.get(displayId);
-        if (s == null) return "ERR no such display";
+        int w, h;
+        if (s != null) {
+            w = s.width;
+            h = s.height;
+        } else if (displayId == android.view.Display.DEFAULT_DISPLAY) {
+            // 全屏主屏：无 VdSession（单应用 CREATE 才注册），实时取真实分辨率；
+            // 旋转/分辨率变化自动跟随，无需重建会话
+            android.view.Display d = displayManager.getDisplay(android.view.Display.DEFAULT_DISPLAY);
+            if (d == null) return "ERR no such display";
+            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
+            d.getRealMetrics(dm);
+            w = dm.widthPixels;
+            h = dm.heightPixels;
+            if (w <= 0 || h <= 0) return "ERR no such display";
+        } else {
+            return "ERR no such display";
+        }
         try {
-            float x = nx * s.width / 65535f;
-            float y = ny * s.height / 65535f;
+            float x = nx * w / 65535f;
+            float y = ny * h / 65535f;
             long now = android.os.SystemClock.uptimeMillis();
             InputEvent ev;
             if (action == 3) { // 远端 back 键
@@ -398,8 +417,10 @@ public final class ShellHelper {
                 injectMethod.invoke(inputManager, up, 0);
                 return "OK";
             }
-            if (action == 0) s.downTimeMs = now; // DOWN 起始新触摸
-            MotionEvent ev2 = MotionEvent.obtain(s.downTimeMs, now, action, x, y, 0);
+            if (action == 0) mainDownTimeMs = now; // DOWN 起始新触摸
+            MotionEvent ev2 = MotionEvent.obtain(
+                displayId == android.view.Display.DEFAULT_DISPLAY ? mainDownTimeMs : s.downTimeMs,
+                now, action, x, y, 0);
             setDisplayIdMethod.invoke(ev2, displayId);
             injectMethod.invoke(inputManager, ev2, 0);
             ev2.recycle();
