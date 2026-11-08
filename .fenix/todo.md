@@ -53,3 +53,8 @@
   - 证据：judge_attribution.json 中 regression-matrix-12-combos 判 env『swiftshader 软渲染确定性天花板（两轮 37.4/38.6）』；但 /tmp/admin-load-sample.txt 显示 load1 5.07~17.60 波动期间该组合 fps 恒定 36.2~37.5、源端 CPU 恒定 285~288%，历史两轮同宿主 1080p 51.8~59.1 PASS（git 21fefb6/07a7ee6），且 judge 历史 smoke 探针全部为 720p（planner-judge-1794160702 转录 7 次 --only lan-direct,game,720p）。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：env 归因必须引用可复核的环境量测（负载/CPU/温度/驱动版本）并要求验证窗口外的对照样本；无对照的 env 结论降级为 inconclusive 并自动进 recheck，不得直接进豁免握手。
+- **[arbiter:client-u] 实现自验以 --only 720p 子集替代验收全矩阵**
+  - 影响：本 spec 的 1080p 性能回归在实现阶段漏检，直到首轮验证（18:12）才暴露，随后连续 2+ 轮 warning 升级、链上消耗两段 run。
+  - 证据：commit 7006cc8（任务 6.1『矩阵实跑』）只执行 `--only lan-direct,game,720p`；impl-result.json 的 18 项 completed_tasks 无 12 组合全跑记录；而验收场景 test_scenarios.json#regression-matrix-12-combos 要求 12 条 passed=true（含 1080p）。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：impl 收工门：当 spec 验收含全量矩阵/长场景时，impl-result 必须附该验收场景原命令的完整产物（12/12 或带归因的失败），否则不允许勾 6.x 收工；或把矩阵子集跑标注为 partial 并在 verify 前置拦截。
