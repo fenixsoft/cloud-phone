@@ -203,9 +203,41 @@ class StreamService : Service() {
             }
             is ControlMessage.Ping -> send(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
             is ControlMessage.StatsMessage -> Unit // 客户端统计：M0 源端仅消费 RTT（后端已自测）
+            is ControlMessage.AppListRequest -> handleAppListRequest(msg)
             is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话（协议要求）
             else -> Unit
         }
+    }
+
+    /**
+     * APP_LIST 请求-应答（client-ux-and-input-latency 3.2）：
+     * - 会话在线才应答（请求-应答制：老客户端不发该消息即零影响，无 BREAKING）；
+     * - PackageManager 枚举 MAIN+LAUNCHER 可启动应用，排除源端 App 自身，其余不过滤
+     *   （含负载/第三方/系统应用，spec app-shortcuts Requirement 1）；
+     * - 枚举 + label 解析在控制线程内完成（实测 <100ms，1s 应答 SLA 足够）。
+     */
+    private fun handleAppListRequest(msg: ControlMessage.AppListRequest) {
+        if (currentSession == null) {
+            android.util.Log.i("cloudphone-source", "app list request req=${msg.requestId} ignored (no active session)")
+            return
+        }
+        val pm = packageManager
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val self = packageName
+        val byPackage = LinkedHashMap<String, String>()
+        for (info in pm.queryIntentActivities(launcher, 0)) {
+            val pkg = info.activityInfo.packageName
+            if (pkg == self) continue
+            if (byPackage.containsKey(pkg)) continue
+            val label = runCatching { info.loadLabel(pm).toString() }.getOrDefault(pkg)
+            byPackage[pkg] = label
+        }
+        val apps = byPackage.entries.map { cloudphone.protocol.AppEntry(it.key, it.value) }
+        android.util.Log.i(
+            "cloudphone-source",
+            "app list response req=${msg.requestId} count=${apps.size} first=${apps.firstOrNull()?.packageName ?: "-"}",
+        )
+        send(ControlMessage.AppListMessage(msg.requestId, apps))
     }
 
     private fun handleHello(msg: ControlMessage.Hello) {
