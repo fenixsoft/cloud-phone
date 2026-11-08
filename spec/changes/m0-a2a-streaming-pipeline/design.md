@@ -1,6 +1,6 @@
 ## Context
 
-全新仓库 `/root/cloud-phone`（Apache-2.0 开源，master 分支已 init，fenix 框架已挂）。产品愿景与既有调研结论（scrcpy/云游戏/CRTR 延迟预算、双档传输、两级权限、三级网络瀑布、会话挂机语义）见 `docs/`（随本 SPEC 补齐协议与验证文档）。本 SPEC 为 M0 里程碑：双模拟器走通安卓→安卓全链路。
+全新仓库 `/root/cloud-phone`（Apache-2.0 开源，master 分支已 init，fenix 框架已挂）。产品愿景与立项调研结论（scrcpy/云游戏/CRTR 延迟预算、双档传输、两级权限、三级网络瀑布、会话挂机语义）在立项讨论中形成、不以既有仓库文件存在；本 SPEC 随交付将协议与验证文档落入 `docs/`。本 SPEC 为 M0 里程碑：双模拟器走通安卓→安卓全链路。
 
 环境事实（立项时已验证）：
 - 本机 = 作者家庭服务器：Ubuntu 22.04，24 核 62G，KVM 开启，磁盘余 28G；`/opt/android-sdk`（SDK 34 + emulator 37.2）与 AVD `src`/`client`（pixel_6）就绪，常驻 emulator-5554(emulator-5556 见 adb)。
@@ -25,7 +25,7 @@
 1. **自研轻量二进制协议，不用 RTSP/WebRTC**：依赖重、鸿蒙端复刻成本高；协议文档独立成篇是开源卖点。控制通道走可靠流（TCP/frp-TCP），视频通道 UDP + sequence + NACK 重传（frp/TCP 模式下降级为 TCP 承载视频）；字段布局 C 兼容对齐（M1 直接 C++ 化不破坏格式）。备选 WebRTC 否决理由：引入 libwebrtc 体积/复杂度失控，且整屏/虚拟屏采集定制困难。
 2. **编码 H.264（video/avc）而非 H.265**：模拟器编解码器兼容性最稳（c2.android.avc 软编兜底、真机硬编全覆盖）；H.265 8-20Mbps 游戏档参数留 M1 真机启用。帧内嵌源端单调时钟时间戳用于端到端延迟测量。
 3. **单应用模式用虚拟屏 + shell bootstrap**：`DisplayManager.createVirtualDisplay` + `am start --display <id>`；模拟器上以 adb root + `app_process` 启动 shell 助手进程执行 privileged 命令（scrcpy/Dioxamine 同款范式，即"增强级权限"的 M0 替身）；真机路径（Shizuku/无线调试）M1 接入，两级权限产品语义不变。
-4. **TransportBackend 统一抽象三后端**：`lan-direct`=源端端口经 `adb forward` 暴露到主机环回（模拟器拓扑下"局域网"= 同主机一跳，RTT≤5ms 量级）；`p2p`=双端 STUN（Cloudflare 优先，多节点列表可配）取 SRFLX，信令复用 frp-TCP 22333 通道交换 offer/answer，UDP 双向同发打洞，5s 未成自动回落 `frp`（cone NAT 已验证可行，但对端对称型时必须能优雅降级）；`frp`=客户端直连 112.74.85.74:22333(TCP)/22334(UDP) 真实公网回环。备选"只用 TCP 单通道"否决理由：UDP 是 P2P 与低延迟的根基，M0 必须把 UDP 路径跑通。
+4. **TransportBackend 统一抽象三后端**：`lan-direct`=源端端口经 `adb forward` 暴露到主机环回（模拟器拓扑下"局域网"= 同主机一跳，RTT≤5ms 量级）；frp-UDP 路径因 adb forward/reverse 仅支持 TCP，主机侧经 `scripts/udp_relay.py` 将环回 127.0.0.1:22334 的 UDP 中继进源端模拟器；`p2p`=双端 STUN（Cloudflare 优先，多节点列表可配）取 SRFLX，信令复用 frp-TCP 22333 通道交换 offer/answer，UDP 双向同发打洞，5s 未成自动回落 `frp`（cone NAT 已验证可行，但对端对称型时必须能优雅降级）；`frp`=客户端直连 112.74.85.74:22333(TCP)/22334(UDP) 真实公网回环。备选"只用 TCP 单通道"否决理由：UDP 是 P2P 与低延迟的根基，M0 必须把 UDP 路径跑通。
 5. **会话生命周期 > 连接生命周期**：源端前台服务内 SessionManager 持有虚拟屏与 App；断开只停编码器/传输；重连同 token 立即 `IDR_REQUEST` 秒回画面。MediaProjection 授权在模拟器上用 uiautomator 自动点击弹窗。
 6. **验证矩阵一键化**：`scripts/run_matrix.py` 编排 adb/emulator：12 组合各跑 60s，采集 fps 均值/P95 帧间隔/端到端延迟（PTS 差值 + 白闪像素检测校准一次）/码率/丢包，产出 `docs/validation-report.md`。可用线：游戏档平均 fps≥45 且延迟 P95≤200ms、frp 路径 60s 不断流、触摸往返 P95≤200ms（软渲染放宽值，真机目标 80ms 在 M1 复核）、应用档静止码率≤1Mbps。
 7. **仓库布局**：`source/`、`client/`、`protocol/`（Gradle composite build 共享模块：消息+传输后端+统计，两端纯 Kotlin 共用）、`docs/`、`scripts/`；Gradle wrapper distributionUrl 用腾讯镜像（国内网络）；version catalog 统一依赖版本。

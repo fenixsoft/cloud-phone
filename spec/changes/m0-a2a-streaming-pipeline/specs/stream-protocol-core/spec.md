@@ -33,7 +33,7 @@
 客户端连接建立、重连或发生持续丢包时发送 IDR_REQUEST，源端 MUST 在 200ms 内产生一个 IDR 关键帧。
 
 #### Scenario: 重连秒回画面
-- **WHEN** 客户端断开后 10s 内以相同 token 重连
+- **WHEN** 客户端断开 30s 内以相同 token 重连
 - **THEN** 源端 200ms 内发出 IDR，客户端 1s 内恢复可见画面
 
 ### Requirement: 协议文档与常量单一定义

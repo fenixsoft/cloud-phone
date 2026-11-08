@@ -101,6 +101,8 @@
   kind: new
 - path: scripts/measure_latency.py
   kind: new
+- path: scripts/udp_relay.py
+  kind: new
 - path: scripts/nat_check.py
   kind: modify
 ```
@@ -140,8 +142,8 @@
 ## 5. 负载生成与测量工具
 
 - [ ] 5.1 实现负载 App（source/loadgen/app/build.gradle.kts、AndroidManifest.xml）：GameLoadActivity.kt（恒定 60fps 动画 + 帧计数 overlay + 可点击按钮）、StaticAppActivity.kt（静态列表页），安装到源端模拟器可独立启动
-- [ ] 5.2 实现 scripts/measure_latency.py：PTS 差值法统计端到端延迟（P50/P95）+ 白闪校准（源端白帧、客户端像素检测）输出校准差值
-- [ ] 5.3 实现 scripts/bootstrap_adb.sh：双模拟器健康检查、四 APK 安装（source/client/loadgen）、adb root/forward、MediaProjection 授权弹窗 uiautomator 自动点击（3 次重试+截图存档）
+- [ ] 5.2 实现 scripts/measure_latency.py：PTS 差值法统计端到端延迟（P50/P95）+ 白闪校准（源端白帧、客户端像素检测）输出校准差值 + 触摸往返延迟（负载 App 点击后 overlay 帧计数/颜色变化回执，客户端检测触摸发出→画面变化差值，输出 P50/P95）
+- [ ] 5.3 实现 scripts/bootstrap_adb.sh：双模拟器健康检查、四 APK 安装（source/client/loadgen）、adb root/forward、主机侧 UDP 中继（启动 scripts/udp_relay.py：127.0.0.1:22334 ↔ 源端模拟器 UDP 端口，adb 不支持 UDP 转发）、MediaProjection 授权弹窗 uiautomator 自动点击（3 次重试+截图存档）
 
 ## 6. 矩阵验收与文档
 
