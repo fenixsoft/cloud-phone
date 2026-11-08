@@ -80,3 +80,8 @@
   - 证据：21fefb6 与 07a7ee6 的 docs/validation-report.md.progress.json 仅记 resolution 标签「1080p」与 fps，不记 VD/编码尺寸；cb0536b 后实际为 1072x2400（/tmp/admin-src-logcat.txt：capture: vd=... 1072x2400@30），旧管道为 1920x1080；两轮被当作同一组合直接比较（55.7 vs 36.2fps）。；触发 run_id=arbiter-client-ux-and-input-latency-1794163410（签名 client-ux-and-input-latency::warning_stale_triage，来源 escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：progress JSON 每条组合增记 vdW/vdH/encW/encH/requestedW/H、pipeline commit 与 gpu 模式；报告 markdown 增列实际几何列；跨轮比较按几何分组或显式标注「不可比」。
+- **[arbiter:client-u] 人工裁定落位后升级告警仍回派（human disposition 吸收窗缺失）**
+  - 影响：冻结后由人工以 commit/报告落位终审的 spec 会被升级告警自环回派 Arbiter，每轮消耗一个 run 预算；本次为同签名第二次自环（前次 18:43→18:47 已由 arbiter todo 记录），若 Arbiter 未识别裁定会重复升级空转。
+  - 证据：commit 20e3690 于 2026-11-08T21:29:33Z 落盘（verification-report.md 人工裁定「验收通过、SPEC 收口」）；同签名告警 7c3ed1bd8e67 仍于 21:30:50.970Z 由上一轮 Arbiter 基于裁定前快照生成，框架随即于 21:30:51.119Z 以 source=escalation-alert 回派本 run（fenixd.log）；框架代码 grep 'human disposition' 无消费点（/root/fenixd 全量），人工裁定仅以 commit/报告文本存在。；触发 run_id=arbiter-client-ux-and-input-latency-1794173451（签名 client-ux-and-input-latency::judge_rerun_cap，来源 escalation-alert）
+  - 调查评估：触发信号 judge_rerun_cap（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：升级告警回派前检查 spec 的 verification-report 是否含人工裁定/最近 human disposition commit；或把人工裁定登记为一等状态（STATE 字段/台账），供升级链入队前短路；或在 Arbiter 触发快照中固定采集 git log 最近 human disposition commit 供裁决复用。
