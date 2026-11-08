@@ -36,12 +36,12 @@
 ## 1. 源端档案持久化（source-profiles）
 
 - [x] 1.1 实现 SourceProfiles.kt：SourceProfile(name/host/tcpPort/udpPort/backend/token/lastConnectedAt) 模型与 SharedPreferences(MODE_PRIVATE) JSON 数组存取（upsert 键=host+tcpPort+backend、list、delete、无日志泄漏 token）
-- [ ] 1.2 ConnectActivity.kt 集成档案：连接页顶部「已保存源端」Spinner（选中自动填充全部字段）、删除入口、连接成功（START_SESSION ACCEPTED）自动 upsert 档案与 lastConnectedAt；AndroidManifest.xml 将 allowBackup 改为 true（档案 prefs 纳入系统自动备份支撑重装恢复路径，device-notes 记录无备份传输环境的降级口径）
+- [x] 1.2 ConnectActivity.kt 集成档案：连接页顶部「已保存源端」Spinner（选中自动填充全部字段）、删除入口、连接成功（START_SESSION ACCEPTED）自动 upsert 档案与 lastConnectedAt；AndroidManifest.xml 将 allowBackup 改为 true（档案 prefs 纳入系统自动备份支撑重装恢复路径，device-notes 记录无备份传输环境的降级口径）
 - [ ] 1.3 模拟器端到端自验：首次连接成功→重启 App 档案在列且回填正确；同源端连 3 次仅 1 条；删除后不再出现（日志截图或 logcat 摘录入验证记录）
 
 ## 2. 分辨率/帧率/码率传递（resolution-passthrough）
 
-- [ ] 2.1 ConnectActivity.kt 新增档位 UI：分辨率 Spinner（跟随本机=真实屏幕尺寸默认档/720p/1080p/自定义宽高对话框，本地校验 width 320–2560、height 240–2560，对齐源端 EncoderPipeline 钳制区间）、帧率 Spinner(30/60 默认60)、码率 Spinner(4/8/16/20Mbps 默认8)；选定值随 START_SESSION width/height/fps/bitrateKbps 下发
+- [x] 2.1 ConnectActivity.kt 新增档位 UI：分辨率 Spinner（跟随本机=真实屏幕尺寸默认档/720p/1080p/自定义宽高对话框，本地校验 width 320–2560、height 240–2560，对齐源端 EncoderPipeline 钳制区间）、帧率 Spinner(30/60 默认60)、码率 Spinner(4/8/16/20Mbps 默认8)；选定值随 START_SESSION width/height/fps/bitrateKbps 下发
 - [ ] 2.2 适配验证：请求 1080x2400（同比例源屏）源端 aspect-exact 日志 ≈1080x2400；请求 720p 于 20:9 源屏得 720x1600 且客户端 letterbox 无扭曲（复用现有 AspectFitSurfaceView）
 - [x] 2.3 docs/protocol.md 补「目标档位语义」段：客户端传目标档位，源端保证短边吻合+源屏宽高比（含 /16 对齐偏差说明）
 
@@ -53,8 +53,8 @@
 
 ## 4. 客户端应用列表与桌面快捷方式（app-shortcuts 前端半）
 
-- [ ] 4.1 实现 SourceAppsActivity.kt：会话在线拉取 AppListMessage 展示（标签+包名），每项「打开」（SINGLE_APP StartSession 直进串流）与「加到桌面」（requestPinShortcut，id=launch-<host>-<port>-<pkg哈希>）；3s 无应答展示重试；钉选被拒 Toast 降级
-- [ ] 4.2 ConnectActivity.kt 支持 cloudphone://launch deeplink（host/tcpPort/udpPort/backend/token/pkg 参数）：自动填充+落档案+静默连接+SINGLE_APP 直达，失败带原因回连接页；AndroidManifest.xml 加 scheme intent-filter 与 SourceAppsActivity 注册；SessionDrawerActivity.kt 加「源端应用」入口
+- [x] 4.1 实现 SourceAppsActivity.kt：会话在线拉取 AppListMessage 展示（标签+包名），每项「打开」（SINGLE_APP StartSession 直进串流）与「加到桌面」（requestPinShortcut，id=launch-<host>-<port>-<pkg哈希>）；3s 无应答展示重试；钉选被拒 Toast 降级
+- [x] 4.2 ConnectActivity.kt 支持 cloudphone://launch deeplink（host/tcpPort/udpPort/backend/token/pkg 参数）：自动填充+落档案+静默连接+SINGLE_APP 直达，失败带原因回连接页；AndroidManifest.xml 加 scheme intent-filter 与 SourceAppsActivity 注册；SessionDrawerActivity.kt 加「源端应用」入口
 - [ ] 4.3 模拟器端到端验证：创建快捷方式→桌面点击图标→自动连接直达（单应用在模拟器被镜像级拒绝时验证「失败带原因回连接页」路径；「打开」按钮同口径验证）；静默连接成功路径用全屏模式旁路验证 UI 自动化不回归
 
 ## 5. 触摸响应插桩与修复（touch-latency-fix）

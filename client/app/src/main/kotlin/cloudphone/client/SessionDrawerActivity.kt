@@ -47,6 +47,11 @@ class SessionDrawerActivity : Activity() {
         })
 
         root.addView(Button(this).apply {
+            text = "源端应用（打开/加到桌面）"
+            setOnClickListener { startActivity(Intent(this@SessionDrawerActivity, SourceAppsActivity::class.java)) }
+        })
+
+        root.addView(Button(this).apply {
             text = "断开当前观看（源端挂机）"
             setOnClickListener { detachCurrent() }
         })

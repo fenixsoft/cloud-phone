@@ -60,6 +60,8 @@ object ClientSession {
     @Volatile var onConnectionLost: (() -> Unit)? = null
     @Volatile var onStats: ((ControlMessage.StatsMessage) -> Unit)? = null
     @Volatile var onHelloAck: ((ControlMessage.HelloAck) -> Unit)? = null
+    /** APP_LIST 应答分发（应用列表页消费；3.1/4.1） */
+    @Volatile var onAppList: ((ControlMessage.AppListMessage) -> Unit)? = null
 
     @Volatile var currentSessionId = 0
     @Volatile var lastHelloAck: ControlMessage.HelloAck? = null
@@ -72,6 +74,9 @@ object ClientSession {
     var backend: TransportBackend? = null
         private set
     private var config: Config? = null
+
+    /** 当前连接参数读取口（快捷方式构建、档案 upsert 复用；token 字段敏感，勿入日志） */
+    fun currentConfig(): Config? = config
     private var currentMode: WatchMode = WatchMode.FULLSCREEN
     private var currentPackage = ""
     private val reconnecting = AtomicBoolean(false)
@@ -248,6 +253,7 @@ object ClientSession {
                 val rtt = (nowUs() - msg.senderUs) / 1000
                 if (rtt in 0..10000) android.util.Log.i("cloudphone-latency", "rtt Ms=$rtt")
             }
+            is ControlMessage.AppListMessage -> onAppList?.invoke(msg)
             is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话
             else -> Unit
         }
@@ -299,7 +305,15 @@ object ClientSession {
 }
 
 /**
- * 连接设置 Activity（4.3）：目标/凭据/后端/观看模式表单 → 建链握手 → 进入解码渲染。
+ * 连接设置 Activity（M0 4.3 + client-ux-and-input-latency 1.2/2.1/4.2）：
+ * - 「已保存源端」档案下拉（选中回填全部字段）+ 删除入口；连接成功（START_SESSION
+ *   ACCEPTED）自动 upsert 档案与 lastConnectedAt（1.2）；
+ * - 串流档位：分辨率（跟随本机=真实屏幕尺寸默认档 / 720p / 1080p / 自定义宽高对话框，
+ *   本地校验 width 320–2560、height 240–2560）+ 帧率（30/60 默认 60）+ 码率
+ *   （4/8/16/20Mbps 默认 8），选定值随 START_SESSION width/height/fps/bitrateKbps
+ *   下发（2.1）；auto* extras 自动化通道优先级高于 UI 档位（矩阵兼容不变）；
+ * - cloudphone://launch deeplink：host/tcpPort/udpPort/backend/token/pkg → 自动填充 +
+ *   落档案 + 静默连接 + SINGLE_APP 直达，失败带原因留在连接页便于重试（4.2）。
  */
 class ConnectActivity : Activity() {
 
@@ -312,36 +326,61 @@ class ConnectActivity : Activity() {
     private lateinit var packageInput: EditText
     private lateinit var useUdpCheck: CheckBox
     private lateinit var statusText: TextView
+    private lateinit var profileSpinner: Spinner
+    private lateinit var resolutionSpinner: Spinner
+    private lateinit var fpsSpinner: Spinner
+    private lateinit var bitrateSpinner: Spinner
+
+    private val profiles by lazy { SourceProfiles(this) }
+    /** 自定义宽高（对话框确认后生效；0 = 未设置） */
+    private var customWidth = 0
+    private var customHeight = 0
+    /** 程序性 setSelection 期间抑制 onItemSelected 回填 */
+    private var suppressProfileFill = false
+
+    private val resolutionItems = arrayOf("跟随本机", "720p", "1080p", "自定义宽高…")
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
+        val sv = android.widget.ScrollView(this).apply { root.addView(this) }
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; sv.addView(this) }
 
-        root.addView(TextView(this).apply { text = "连接源端" })
-        root.addView(TextView(this).apply { text = "源端地址（模拟器宿主环回 10.0.2.2 / 局域网 IP）" })
+        content.addView(TextView(this).apply { text = "连接源端" })
+
+        // ── 已保存源端（1.2：顶部档案下拉 + 删除）──
+        content.addView(TextView(this).apply { text = "已保存源端（选中自动填充）" })
+        profileSpinner = Spinner(this)
+        content.addView(profileSpinner)
+        content.addView(Button(this).apply {
+            text = "删除选中档案"
+            setOnClickListener { deleteSelectedProfile() }
+        })
+
+        content.addView(TextView(this).apply { text = "源端地址（模拟器宿主环回 10.0.2.2 / 局域网 IP）" })
         hostInput = EditText(this).apply { setText("10.0.2.2") }
-        root.addView(hostInput)
+        content.addView(hostInput)
 
-        root.addView(TextView(this).apply { text = "配对 token" })
+        content.addView(TextView(this).apply { text = "配对 token" })
         tokenInput = EditText(this).apply { setText("cloudphone-m0") }
-        root.addView(tokenInput)
+        content.addView(tokenInput)
 
-        root.addView(TextView(this).apply { text = "TCP 端口" })
+        content.addView(TextView(this).apply { text = "TCP 端口" })
         tcpPortInput = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             setText("22333")
         }
-        root.addView(tcpPortInput)
+        content.addView(tcpPortInput)
 
-        root.addView(TextView(this).apply { text = "UDP 端口" })
+        content.addView(TextView(this).apply { text = "UDP 端口" })
         udpPortInput = EditText(this).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             setText("22334")
         }
-        root.addView(udpPortInput)
+        content.addView(udpPortInput)
 
-        root.addView(TextView(this).apply { text = "传输后端" })
+        content.addView(TextView(this).apply { text = "传输后端" })
         backendSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@ConnectActivity,
@@ -349,9 +388,46 @@ class ConnectActivity : Activity() {
                 arrayOf("lan-direct", "p2p", "frp"),
             )
         }
-        root.addView(backendSpinner)
+        content.addView(backendSpinner)
 
-        root.addView(TextView(this).apply { text = "观看模式" })
+        // ── 串流档位（2.1）──
+        content.addView(TextView(this).apply { text = "分辨率（跟随本机 = 真实屏幕尺寸）" })
+        resolutionSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@ConnectActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                resolutionItems,
+            )
+            onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                    if (position == 3) showCustomResolutionDialog()
+                }
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+            }
+        }
+        content.addView(resolutionSpinner)
+
+        content.addView(TextView(this).apply { text = "帧率" })
+        fpsSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@ConnectActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                arrayOf("60", "30"),
+            )
+        }
+        content.addView(fpsSpinner)
+
+        content.addView(TextView(this).apply { text = "码率" })
+        bitrateSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@ConnectActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                arrayOf("8 Mbps", "4 Mbps", "16 Mbps", "20 Mbps"),
+            )
+        }
+        content.addView(bitrateSpinner)
+
+        content.addView(TextView(this).apply { text = "观看模式" })
         modeSpinner = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@ConnectActivity,
@@ -359,56 +435,287 @@ class ConnectActivity : Activity() {
                 arrayOf("整屏", "单应用"),
             )
         }
-        root.addView(modeSpinner)
+        content.addView(modeSpinner)
 
-        root.addView(TextView(this).apply { text = "单应用包名" })
+        content.addView(TextView(this).apply { text = "单应用包名" })
         packageInput = EditText(this).apply { setText("cloudphone.loadgen") }
-        root.addView(packageInput)
+        content.addView(packageInput)
 
         useUdpCheck = CheckBox(this).apply { text = "UDP 视频通道（lan 直连默认关闭）"; isChecked = false }
-        root.addView(useUdpCheck)
+        content.addView(useUdpCheck)
 
         val connectButton = Button(this).apply {
             text = "连接并观看"
             setOnClickListener { connectAndWatch() }
         }
-        root.addView(connectButton)
+        content.addView(connectButton)
 
         val drawerButton = Button(this).apply {
             text = "会话抽屉（挂机/切换）"
             setOnClickListener { startActivity(Intent(this@ConnectActivity, SessionDrawerActivity::class.java)) }
         }
-        root.addView(drawerButton)
+        content.addView(drawerButton)
 
         statusText = TextView(this)
-        root.addView(statusText)
+        content.addView(statusText)
         setContentView(root)
 
-        // 矩阵自动化入口（run_matrix.py 经 am extras 下发，直接连接并观看）
-        val autoHost = intent.getStringExtra("autoHost")
-        if (autoHost != null) {
-            hostInput.setText(autoHost)
-            intent.getStringExtra("autoBackend")?.let { b ->
-                (0 until backendSpinner.adapter.count)
-                    .firstOrNull { backendSpinner.adapter.getItem(it) == b }
-                    ?.let { backendSpinner.setSelection(it) }
-            }
-            intent.getStringExtra("autoPackage")?.let { packageInput.setText(it) }
-            autoWidth = intent.getIntExtra("autoWidth", 0)
-            autoHeight = intent.getIntExtra("autoHeight", 0)
-            autoFps = intent.getIntExtra("autoFps", 0)
-            autoBitrate = intent.getIntExtra("autoBitrate", 0)
-            connectAndWatch()
+        refreshProfileSpinner()
+
+        // deeplink 优先（4.2），auto* extras 其次（矩阵自动化）
+        if (!handleDeeplink(intent)) {
+            handleAutoExtras(intent)
         }
     }
 
-    private var autoWidth = 0
-    private var autoHeight = 0
-    private var autoFps = 0
-    private var autoBitrate = 0
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (!handleDeeplink(intent)) handleAutoExtras(intent)
+    }
 
-    private fun connectAndWatch() {
+    // ── 档案（1.2）──
+
+    private fun refreshProfileSpinner() {
+        val list = profiles.list()
+        val items = ArrayList<String>(list.size + 1)
+        items.add("手动输入")
+        list.forEach { items.add(it.displayName) }
+        suppressProfileFill = true
+        profileSpinner.adapter = ArrayAdapter(
+            this, android.R.layout.simple_spinner_dropdown_item, items,
+        )
+        profileSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                if (suppressProfileFill) return
+                if (position <= 0) return
+                val p = profiles.list().getOrNull(position - 1) ?: return
+                fillFromProfile(p)
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+        }
+        profileSpinner.setSelection(0, false)
+        suppressProfileFill = false
+    }
+
+    private fun fillFromProfile(p: SourceProfile) {
+        hostInput.setText(p.host)
+        tokenInput.setText(p.token)
+        tcpPortInput.setText(p.tcpPort.toString())
+        udpPortInput.setText(p.udpPort.toString())
+        val idx = (0 until backendSpinner.adapter.count)
+            .firstOrNull { backendSpinner.adapter.getItem(it) == p.backend } ?: 0
+        backendSpinner.setSelection(idx)
+        statusText.text = "已回填档案：$p"
+    }
+
+    private fun deleteSelectedProfile() {
+        val pos = profileSpinner.selectedItemPosition
+        if (pos <= 0) {
+            Toast.makeText(this, "先选择要删除的档案", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val p = profiles.list().getOrNull(pos - 1) ?: return
+        profiles.delete(p.host, p.tcpPort, p.backend)
+        refreshProfileSpinner()
+        statusText.text = "已删除档案：${p.displayName}"
+    }
+
+    /** 连接成功（START_SESSION ACCEPTED）后 upsert 档案（同键更新 lastConnectedAt） */
+    private fun saveProfileFromFields() {
+        val host = hostInput.text.toString().ifBlank { return }
+        val tcp = tcpPortInput.text.toString().toIntOrNull() ?: return
+        profiles.upsert(
+            SourceProfile(
+                name = "",
+                host = host,
+                tcpPort = tcp,
+                udpPort = udpPortInput.text.toString().toIntOrNull() ?: 22334,
+                backend = backendSpinner.selectedItem?.toString() ?: "lan-direct",
+                token = tokenInput.text.toString(),
+                lastConnectedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    // ── 档位（2.1）──
+
+    /** 客户端当前真实屏幕尺寸（API30+ maximumWindowMetrics，降级 realDisplayMetrics） */
+    private fun localScreenSize(): Pair<Int, Int> =
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            val b = windowManager.maximumWindowMetrics.bounds
+            b.width() to b.height()
+        } else {
+            @Suppress("DEPRECATION")
+            val m = android.util.DisplayMetrics().also { windowManager.defaultDisplay.getRealMetrics(it) }
+            m.widthPixels to m.heightPixels
+        }
+
+    /** 档位短边尺寸按当前朝向映射（720p/1080p 档） */
+    private fun tierSize(shortSide: Int): Pair<Int, Int> {
+        val longSide = when (shortSide) {
+            720 -> 1280
+            else -> 1920
+        }
+        val portrait = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+        return if (portrait) shortSide to longSide else longSide to shortSide
+    }
+
+    /** 解析 UI 档位为 (width,height)；自定义档非法输入返回 null 并提示 */
+    private fun resolveTierUi(): Pair<Int, Int>? {
+        return when (resolutionSpinner.selectedItemPosition) {
+            1 -> tierSize(720)
+            2 -> tierSize(1080)
+            3 -> {
+                val w = customWidth
+                val h = customHeight
+                if (!validCustom(w, h)) {
+                    Toast.makeText(this, "自定义分辨率非法：需 width 320–2560、height 240–2560", Toast.LENGTH_LONG).show()
+                    null
+                } else {
+                    w to h
+                }
+            }
+            else -> localScreenSize() // 默认「跟随本机」
+        }
+    }
+
+    private fun validCustom(w: Int, h: Int): Boolean = w in 320..2560 && h in 240..2560
+
+    private fun showCustomResolutionDialog() {
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(pad, pad, pad, pad)
+        }
+        val wInput = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "宽 320–2560"
+            if (customWidth > 0) setText(customWidth.toString())
+        }
+        val hInput = EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = "高 240–2560"
+            if (customHeight > 0) setText(customHeight.toString())
+        }
+        box.addView(TextView(this).apply { text = "宽×高 = " })
+        box.addView(wInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        box.addView(TextView(this).apply { text = " × " })
+        box.addView(hInput, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        android.app.AlertDialog.Builder(this)
+            .setTitle("自定义分辨率（范围 width 320–2560、height 240–2560）")
+            .setView(box)
+            .setPositiveButton("确定") { d, _ ->
+                val w = wInput.text.toString().toIntOrNull() ?: 0
+                val h = hInput.text.toString().toIntOrNull() ?: 0
+                if (validCustom(w, h)) {
+                    customWidth = w
+                    customHeight = h
+                    resolutionItems[3] = "自定义 ${w}×$h"
+                    (resolutionSpinner.adapter as ArrayAdapter<*>).notifyDataSetChanged()
+                    Toast.makeText(this, "已设置自定义 ${w}×$h", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "非法输入（width 320–2560、height 240–2560），已回退跟随本机", Toast.LENGTH_LONG).show()
+                    resolutionSpinner.setSelection(0)
+                }
+                d.dismiss()
+            }
+            .setNegativeButton("取消") { d, _ ->
+                resolutionSpinner.setSelection(if (customWidth > 0) 3 else 0)
+                d.dismiss()
+            }
+            .setOnCancelListener {
+                resolutionSpinner.setSelection(if (customWidth > 0) 3 else 0)
+            }
+            .show()
+    }
+
+    // ── 连接流程 ──
+
+    /** 矩阵自动化入口（run_matrix.py 经 am extras 下发，直接连接并观看） */
+    private fun handleAutoExtras(intent: Intent?) {
+        val autoHost = intent?.getStringExtra("autoHost") ?: return
+        hostInput.setText(autoHost)
+        intent.getStringExtra("autoBackend")?.let { b ->
+            (0 until backendSpinner.adapter.count)
+                .firstOrNull { backendSpinner.adapter.getItem(it) == b }
+                ?.let { backendSpinner.setSelection(it) }
+        }
+        intent.getStringExtra("autoPackage")?.let { packageInput.setText(it) }
+        connectAndWatch(
+            autoWidth = intent.getIntExtra("autoWidth", 0),
+            autoHeight = intent.getIntExtra("autoHeight", 0),
+            autoFps = intent.getIntExtra("autoFps", 0),
+            autoBitrate = intent.getIntExtra("autoBitrate", 0),
+        )
+    }
+
+    /**
+     * cloudphone://launch?host=&tcpPort=&udpPort=&backend=&token=&pkg=（4.2）：
+     * 自动填充 + 落档案 + 静默连接 SINGLE_APP 直达；失败带原因留在连接页。
+     * 返回 true 表示本 intent 是 launch deeplink 且已接管。
+     */
+    private fun handleDeeplink(intent: Intent?): Boolean {
+        val uri = intent?.data ?: return false
+        if (uri.scheme != "cloudphone" || uri.host != "launch") return false
+        val host = uri.getQueryParameter("host")
+        if (host.isNullOrBlank()) {
+            statusText.text = "直达失败：deeplink 缺 host 参数"
+            return true
+        }
+        val tcp = uri.getQueryParameter("tcpPort")?.toIntOrNull() ?: 22333
+        val udp = uri.getQueryParameter("udpPort")?.toIntOrNull() ?: 22334
+        val backend = uri.getQueryParameter("backend") ?: "lan-direct"
+        val token = uri.getQueryParameter("token") ?: ""
+        val pkg = uri.getQueryParameter("pkg") ?: ""
+        // 自动填充
+        hostInput.setText(host)
+        tokenInput.setText(token)
+        tcpPortInput.setText(tcp.toString())
+        udpPortInput.setText(udp.toString())
+        (0 until backendSpinner.adapter.count)
+            .firstOrNull { backendSpinner.adapter.getItem(it) == backend }
+            ?.let { backendSpinner.setSelection(it) }
+        if (pkg.isNotBlank()) packageInput.setText(pkg)
+        // 落档案（连接失败也保留字段便于重试：spec「源端不可达」Scenario）
+        profiles.upsert(
+            SourceProfile("", host, tcp, udp, backend, token, System.currentTimeMillis()),
+        )
+        refreshProfileSpinner()
+        // 静默连接 + SINGLE_APP 直达
+        connectAndWatch(mode = WatchMode.SINGLE_APP, packageName = pkg, silent = true)
+        return true
+    }
+
+    /**
+     * 连接 → START_SESSION → 进渲染页。
+     * 全部网络 I/O 在工作线程（主线程发网络抛 NetworkOnMainThreadException，见 device-notes §3）。
+     */
+    private fun connectAndWatch(
+        mode: WatchMode? = null,
+        packageName: String? = null,
+        silent: Boolean = false,
+        autoWidth: Int = 0,
+        autoHeight: Int = 0,
+        autoFps: Int = 0,
+        autoBitrate: Int = 0,
+    ) {
         statusText.text = "连接中…"
+        val watchMode = mode ?: if (modeSpinner.selectedItem.toString() == "单应用") WatchMode.SINGLE_APP else WatchMode.FULLSCREEN
+        val pkg = packageName ?: packageInput.text.toString()
+        // 档位解析：auto*（矩阵通道）> UI 档位
+        var w = autoWidth
+        var h = autoHeight
+        if (w <= 0 || h <= 0) {
+            val tier = resolveTierUi() ?: run {
+                statusText.text = "连接已拦截：自定义分辨率非法（width 320–2560、height 240–2560）"
+                return
+            }
+            if (w <= 0) w = tier.first
+            if (h <= 0) h = tier.second
+        }
+        val fps = if (autoFps > 0) autoFps else fpsSpinner.selectedItem.toString().toIntOrNull() ?: 60
+        val bitrate = if (autoBitrate > 0) autoBitrate else (bitrateSpinner.selectedItem.toString().split(" ")[0].toIntOrNull() ?: 8) * 1000
         val cfg = ClientSession.Config(
             host = hostInput.text.toString().ifBlank { "10.0.2.2" },
             tcpPort = tcpPortInput.text.toString().toIntOrNull() ?: 22333,
@@ -421,27 +728,29 @@ class ConnectActivity : Activity() {
             token = tokenInput.text.toString().ifBlank { "cloudphone-m0" },
             useUdpVideo = useUdpCheck.isChecked,
         )
-        val mode = if (modeSpinner.selectedItem.toString() == "单应用") WatchMode.SINGLE_APP else WatchMode.FULLSCREEN
         Thread({
-            val ok = ClientSession.connect(cfg, mode, packageInput.text.toString())
+            val ok = ClientSession.connect(cfg, watchMode, pkg)
             if (!ok) {
                 runOnUiThread {
-                    statusText.text = "失败：${ClientSession.lastError}"
-                    Toast.makeText(this, ClientSession.lastError, Toast.LENGTH_LONG).show()
+                    statusText.text = if (silent) "直达失败：${ClientSession.lastError}（目标应用 $pkg）" else "失败：${ClientSession.lastError}"
+                    Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
                 }
                 return@Thread
             }
-            // 全屏模式需先发起会话（单应用同理）；p2p 回答已在握手中触发打洞
-            // 注意：全部网络 I/O 保持在本工作线程（主线程发网络会抛 NetworkOnMainThreadException）
-            val ack = ClientSession.startSession(
-                mode, packageInput.text.toString(), 0,
-                autoWidth, autoHeight, autoFps, autoBitrate,
-            )
+            val ack = ClientSession.startSession(watchMode, pkg, 0, w, h, fps, bitrate)
             runOnUiThread {
                 if (ack == null || ack.status != HelloStatus.ACCEPTED) {
-                    statusText.text = "会话发起失败：${ack?.reason ?: ClientSession.lastError}"
+                    statusText.text = if (silent) {
+                        "直达失败：${ack?.reason ?: ClientSession.lastError}（目标应用 $pkg）"
+                    } else {
+                        "会话发起失败：${ack?.reason ?: ClientSession.lastError}"
+                    }
+                    Toast.makeText(this, statusText.text, Toast.LENGTH_LONG).show()
                     return@runOnUiThread
                 }
+                // 连接成功（START_SESSION ACCEPTED）→ 档案 upsert（1.2）
+                saveProfileFromFields()
+                refreshProfileSpinner()
                 startActivity(Intent(this@ConnectActivity, DecodeRenderActivity::class.java))
             }
         }, "connect-ui").apply { start() }

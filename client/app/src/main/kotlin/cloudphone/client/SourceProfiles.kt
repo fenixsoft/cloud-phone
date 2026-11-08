@@ -90,7 +90,7 @@ class SourceProfiles(context: Context) {
 
     /** 删除指定键档案；返回是否确实删除了一条 */
     fun delete(host: String, tcpPort: Int, backend: String): Boolean {
-        val key = keyOf(host, tcpPort, backend)
+        val key = SourceProfile.keyOf(host, tcpPort, backend)
         val current = list()
         val next = current.filterNot { it.key == key }
         if (next.size == current.size) return false
@@ -101,7 +101,7 @@ class SourceProfiles(context: Context) {
     fun count(): Int = list().size
 
     fun findByKey(host: String, tcpPort: Int, backend: String): SourceProfile? =
-        list().firstOrNull { it.key == keyOf(host, tcpPort, backend) }
+        list().firstOrNull { it.key == SourceProfile.keyOf(host, tcpPort, backend) }
 
     private fun persist(profiles: List<SourceProfile>) {
         val arr = JSONArray()
