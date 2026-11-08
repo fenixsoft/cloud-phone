@@ -67,4 +67,4 @@
 ## 6. 回归与收尾
 
 - [x] 6.1 全量回归：3 后端（lan-direct/frp/p2p）全屏模式连接+60fps 冒烟、矩阵关键组合（lan game 720p）复跑通过，确认新 UI 未破坏既有自动化 extras 通道（auto* 参数路径）
-- [ ] 6.2 提交与文档收口：docs/device-notes.md 快捷方式 Launcher 兼容性说明与真机人工验证清单（含单应用快捷方式真机步骤）、验证记录汇总（各 Scenario 证据指针）
+- [x] 6.2 提交与文档收口：docs/device-notes.md 快捷方式 Launcher 兼容性说明与真机人工验证清单（含单应用快捷方式真机步骤）、验证记录汇总（各 Scenario 证据指针）
