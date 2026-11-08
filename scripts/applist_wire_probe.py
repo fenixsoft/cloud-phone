@@ -62,6 +62,9 @@ def read_records(sock, window_s: float) -> list:
             buf += chunk
         except socket.timeout:
             continue
+        except OSError as e:
+            print(f"[!] 连接异常中断（疑似对端重置/崩溃）: {e}")
+            break
         while len(buf) >= 5:
             rtype = buf[0]
             (plen,) = struct.unpack(">I", buf[1:5])
@@ -76,23 +79,44 @@ def read_records(sock, window_s: float) -> list:
 
 def parse_hello_ack(payload: bytes):
     # status u8, reason str, sessionId i32
-    status = payload[0]
+    if len(payload) < 3:
+        print("[x] 响应截断/格式非法（HELLO_ACK 过短）")
+        return None
     (slen,) = struct.unpack(">H", payload[1:3])
+    if len(payload) < 3 + slen + 4:
+        print("[x] 响应截断/格式非法（HELLO_ACK 字段不完整）")
+        return None
+    status = payload[0]
     reason = payload[3:3 + slen].decode("utf-8", "replace")
     (sid,) = struct.unpack(">i", payload[3 + slen:7 + slen])
     return status, reason, sid
 
 
 def parse_app_list(payload: bytes):
+    if len(payload) < 6:
+        print("[x] 响应截断/格式非法（APP_LIST 过短）")
+        return None
     (req_id,) = struct.unpack(">i", payload[0:4])
     (count,) = struct.unpack(">H", payload[4:6])
     off = 6
     apps = []
     for _ in range(count):
+        if len(payload) < off + 2:
+            print("[x] 响应截断/格式非法（APP_LIST 条目不完整）")
+            return None
         (plen,) = struct.unpack(">H", payload[off:off + 2])
+        if len(payload) < off + 2 + plen:
+            print("[x] 响应截断/格式非法（APP_LIST 条目不完整）")
+            return None
         pkg = payload[off + 2:off + 2 + plen].decode("utf-8", "replace")
         off += 2 + plen
+        if len(payload) < off + 2:
+            print("[x] 响应截断/格式非法（APP_LIST 条目不完整）")
+            return None
         (llen,) = struct.unpack(">H", payload[off:off + 2])
+        if len(payload) < off + 2 + llen:
+            print("[x] 响应截断/格式非法（APP_LIST 条目不完整）")
+            return None
         label = payload[off + 2:off + 2 + llen].decode("utf-8", "replace")
         off += 2 + llen
         apps.append((pkg, label))
@@ -105,9 +129,19 @@ def scenario_a():
     sock.sendall(hello())
     acks = read_records(sock, 2.0)
     ack = next((p for t, p in acks if t == MSG_HELLO_ACK), None)
-    assert ack is not None, "HELLO 无应答"
-    status, reason, _ = parse_hello_ack(ack)
-    assert status == 0, f"HELLO 被拒: {reason}"
+    if ack is None:
+        print("[A] FAIL: HELLO 无应答")
+        sock.close()
+        return False
+    parsed = parse_hello_ack(ack)
+    if parsed is None:
+        sock.close()
+        return False
+    status, reason, _ = parsed
+    if status != 0:
+        print(f"[A] FAIL: HELLO 被拒: {reason}")
+        sock.close()
+        return False
     print("[A] HELLO ACCEPTED（无会话）")
     t0 = time.time()
     sock.sendall(rec(MSG_APP_LIST_REQUEST, struct.pack(">i", 777)))
@@ -126,13 +160,26 @@ def scenario_b():
     sock.sendall(hello())
     acks = read_records(sock, 2.0)
     ack = next((p for t, p in acks if t == MSG_HELLO_ACK), None)
-    assert ack is not None, "HELLO 无应答"
+    if ack is None:
+        print("[B] FAIL: HELLO 无应答")
+        sock.close()
+        return False
     sock.sendall(start_session(720, 1280))
     acks = read_records(sock, 3.0)
     ack = next((p for t, p in acks if t == MSG_HELLO_ACK), None)
-    assert ack is not None, "START_SESSION 无应答"
-    status, reason, sid = parse_hello_ack(ack)
-    assert status == 0, f"START_SESSION 被拒: {reason}"
+    if ack is None:
+        print("[B] FAIL: START_SESSION 无应答")
+        sock.close()
+        return False
+    parsed = parse_hello_ack(ack)
+    if parsed is None:
+        sock.close()
+        return False
+    status, reason, sid = parsed
+    if status != 0:
+        print(f"[B] FAIL: START_SESSION 被拒: {reason}")
+        sock.close()
+        return False
     print(f"[B] START_SESSION ACCEPTED sid={sid}")
     # 未知消息类型（老客户端兼容：忽略且不中断会话）
     sock.sendall(bytes([0x01]) + struct.pack(">I", 5) + bytes([0x0C, 1, 2, 3, 4]))
@@ -151,6 +198,9 @@ def scenario_b():
             buf += chunk
         except socket.timeout:
             continue
+        except OSError as e:
+            print(f"[!] 连接异常中断（疑似对端重置/崩溃）: {e}")
+            break
         while len(buf) >= 5:
             rtype = buf[0]
             (plen,) = struct.unpack(">I", buf[1:5])
@@ -168,7 +218,11 @@ def scenario_b():
         print("[B] FAIL: 未收到 APP_LIST")
         sock.close()
         return False
-    req_id, apps = parse_app_list(got)
+    parsed = parse_app_list(got)
+    if parsed is None:
+        sock.close()
+        return False
+    req_id, apps = parsed
     pkgs = [a[0] for a in apps]
     has_loadgen = "cloudphone.loadgen" in pkgs
     print(f"[B] APP_LIST req={req_id} n={len(apps)} elapsed={elapsed*1000:.0f}ms "

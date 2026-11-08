@@ -22,6 +22,7 @@ import os
 import re
 import statistics
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field, asdict
 
@@ -68,11 +69,15 @@ def collect_combo(client_serial: str, seconds: int) -> dict:
     samples = {"delays": [], "fps": [], "bitrate": [], "loss": [], "frameGapsMs": [], "disconnects": 0}
     last_frame_epoch = None
     deadline = time.time() + seconds
-    try:
+
+    def _drain() -> None:
+        # 读线程：readline 在客户端崩溃/断流无新行时会无限阻塞，但只困在本线程；
+        # 主线程按 deadline 收尾并 terminate 回收，整轮矩阵不被单个组合挂死
+        nonlocal last_frame_epoch
         while time.time() < deadline:
             line = proc.stdout.readline()  # type: ignore[union-attr]
             if not line:
-                break
+                return
             text = line.decode("utf-8", "replace").strip()
             try:
                 epoch = float(text.split()[0])
@@ -94,8 +99,18 @@ def collect_combo(client_serial: str, seconds: int) -> dict:
                 continue
             if "DISCONNECT" in text or "重连" in text:
                 samples["disconnects"] += 1
+
+    reader = threading.Thread(target=_drain, daemon=True)
+    reader.start()
+    try:
+        reader.join(timeout=max(0.0, deadline - time.time()))
     finally:
         proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
     return samples
 
 
@@ -122,12 +137,15 @@ def judge(r: ComboResult) -> tuple[bool, str]:
 
 def _send_capture(source_serial: str, w: int, h: int, fps: int, kbps: int) -> None:
     """经服务 intent extras 下发采集参数（幂等：同参时服务打 ready (unchanged)）"""
-    subprocess.run(["adb", "-s", source_serial, "shell", "am", "start-foreground-service",
-                    "-n", "cloudphone.source/.StreamService",
-                    "-a", "cloudphone.source.START_CAPTURE",
-                    "--ei", "width", str(w), "--ei", "height", str(h),
-                    "--ei", "fps", str(fps), "--ei", "bitrateKbps", str(kbps)],
-                   capture_output=True, timeout=30)
+    try:
+        subprocess.run(["adb", "-s", source_serial, "shell", "am", "start-foreground-service",
+                        "-n", "cloudphone.source/.StreamService",
+                        "-a", "cloudphone.source.START_CAPTURE",
+                        "--ei", "width", str(w), "--ei", "height", str(h),
+                        "--ei", "fps", str(fps), "--ei", "bitrateKbps", str(kbps)],
+                       capture_output=True, timeout=30)
+    except subprocess.TimeoutExpired:
+        print(f"[run_matrix] [warn] 采集参数下发超时（{w}x{h}@{fps}/{kbps}），按未就绪处理")
 
 
 def _wait_ready(source_serial: str, timeout: int) -> bool:
@@ -144,7 +162,6 @@ def ensure_pipeline(source_serial: str, w: int, h: int, fps: int, kbps: int, sta
     """共享采集管线参数对齐（一授权一 VD 的镜像约束）：
     1) 先直接下发参数——服务侧参数已对齐则幂等返回 ready（不浪费一次授权、不动活管线）；
     2) 未就绪才重授权（新凭据）并再次下发重建。"""
-    import subprocess as _sp
     params = {"width": w, "height": h, "fps": fps, "bitrateKbps": kbps}
     if state.get("params") == params:
         return True
@@ -153,8 +170,12 @@ def ensure_pipeline(source_serial: str, w: int, h: int, fps: int, kbps: int, sta
         state["params"] = params
         return True
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _sp.run(["bash", os.path.join(root, "scripts", "bootstrap_adb.sh"), "grant"],
-            capture_output=True, timeout=90)
+    try:
+        subprocess.run(["bash", os.path.join(root, "scripts", "bootstrap_adb.sh"), "grant"],
+                       capture_output=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        print("[run_matrix] [warn] bootstrap_adb.sh grant 超时（90s），按授权重建失败处理")
+        return False
     # 新授权会使旧投影停止（Android 14 本镜像实测），等旧管线 onStop 回调落地再重建
     time.sleep(2)
     _send_capture(source_serial, w, h, fps, kbps)
@@ -240,12 +261,15 @@ def main() -> int:
 
     # 屏幕常亮：虚拟显示镜像依赖宿主屏持续合成，自动熄屏会让编码器断粮（实测 fps=0.0 根因）
     for s in (source_serial, client_serial):
-        subprocess.run(["adb", "-s", s, "shell", "svc", "power", "stayon", "true"],
-                       capture_output=True, timeout=15)
-        subprocess.run(["adb", "-s", s, "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
-                       capture_output=True, timeout=15)
-        subprocess.run(["adb", "-s", s, "shell", "wm", "dismiss-keyguard"],
-                       capture_output=True, timeout=15)
+        try:
+            subprocess.run(["adb", "-s", s, "shell", "svc", "power", "stayon", "true"],
+                           capture_output=True, timeout=15)
+            subprocess.run(["adb", "-s", s, "shell", "input", "keyevent", "KEYCODE_WAKEUP"],
+                           capture_output=True, timeout=15)
+            subprocess.run(["adb", "-s", s, "shell", "wm", "dismiss-keyguard"],
+                           capture_output=True, timeout=15)
+        except subprocess.TimeoutExpired:
+            print(f"[run_matrix] [warn] {s} 屏幕常亮设置超时，跳过（熄屏会让编码器断粮）")
 
     combos = []
     for backend in BACKENDS:
@@ -255,6 +279,11 @@ def main() -> int:
     if args.only:
         keys = args.only.split(",")
         combos = [c for c in combos if all(k in c for k in keys)]
+        if not combos:
+            print(f"[run_matrix] --only {args.only!r} 未命中任何组合，拒绝空跑"
+                  f"（0/0 PASS 会误报全绿）。可用键：backend ∈ {BACKENDS}，"
+                  f"load ∈ {[n for n, _ in LOADS]}，res ∈ {[r[0] for r in RESOLUTIONS]}")
+            return 2
 
     results: list[ComboResult] = []
     pipeline_state: dict = {}  # 当前共享采集管线参数（避免同参重复授权）
@@ -263,7 +292,7 @@ def main() -> int:
         r = run_combo(source_serial, client_serial, backend, load, activity, res, w, h, fps, kbps, args.seconds, pipeline_state)
         print(f"[run_matrix] → {'PASS' if r.passed else 'FAIL'} ({r.reason})")
         results.append(r)
-        # 每组合落盘（中断可续）
+        # 每组合落盘（中断可查：仅进度快照，不支持续跑）
         with open(args.report + ".progress.json", "w", encoding="utf-8") as f:
             json.dump([asdict(x) for x in results], f, ensure_ascii=False, indent=1)
 
