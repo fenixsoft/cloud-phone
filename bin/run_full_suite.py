@@ -125,7 +125,7 @@ def main():
             Phase("matrix-lan-game-720p",
                   ["bash", "-c",
                    f"python3 scripts/run_matrix.py --serials {args.source_serial},{args.client_serial} "
-                   "--only lan,game,720 2>&1 | tail -20"],
+                   "--only lan-direct,game,720p 2>&1 | tail -20"],
                   ROOT, per_phase),
             Phase("smoke-frp",
                   ["bash", "-c",
