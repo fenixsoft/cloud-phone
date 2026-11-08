@@ -37,7 +37,7 @@
 
 - [x] 1.1 实现 SourceProfiles.kt：SourceProfile(name/host/tcpPort/udpPort/backend/token/lastConnectedAt) 模型与 SharedPreferences(MODE_PRIVATE) JSON 数组存取（upsert 键=host+tcpPort+backend、list、delete、无日志泄漏 token）
 - [x] 1.2 ConnectActivity.kt 集成档案：连接页顶部「已保存源端」Spinner（选中自动填充全部字段）、删除入口、连接成功（START_SESSION ACCEPTED）自动 upsert 档案与 lastConnectedAt；AndroidManifest.xml 将 allowBackup 改为 true（档案 prefs 纳入系统自动备份支撑重装恢复路径，device-notes 记录无备份传输环境的降级口径）
-- [ ] 1.3 模拟器端到端自验：首次连接成功→重启 App 档案在列且回填正确；同源端连 3 次仅 1 条；删除后不再出现（日志截图或 logcat 摘录入验证记录）
+- [x] 1.3 模拟器端到端自验：首次连接成功→重启 App 档案在列且回填正确；同源端连 3 次仅 1 条；删除后不再出现（日志截图或 logcat 摘录入验证记录）
 
 ## 2. 分辨率/帧率/码率传递（resolution-passthrough）
 
