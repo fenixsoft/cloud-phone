@@ -162,7 +162,7 @@
 | Scenario（specs/） | 结论 | 证据 |
 |---|---|---|
 | source-profiles（3.1-3.3） | PASS | `applist_wire_probe.txt`（A 无会话静默忽略/B 在线 5ms 应答+未知 0x0C 容忍）；档案去重/持久化 logcat 摘录见 tasks.md 1.3 已勾记录 |
-| resolution-passthrough（2.1-2.3） | PASS（2.3） | 720x1280 请求 → 源端 720x1600 出画（EncoderPipeline 钳制区间语义），logcat `cloudphone-source` 会话参数；2.2（1080x2400 变体）另行复测 |
+| resolution-passthrough（2.1-2.3） | PASS | `resolution_passthrough_22.md`：1080x2400→1072x2400 aspect-exact（/16 对齐）+ 进程内切换 720x1600 letterbox 无扭曲；附 FULLSCREEN 挂接忽略请求参数缺陷的修复记录 |
 | app-shortcuts（4.1-4.3） | PASS | `appshortcuts_e2e.md`（深链→SINGLE_APP→出画）、`launcher_with_shortcut.png`（桌面快捷方式）、失败路径=伪造包名/不可达端口均得「直达失败」并落盘 |
 | touch-latency-fix（5.1-5.4） | PASS | `touch_baseline.json`（P50=651/P95=3104）→ `touch_fixed.json`（P50=266/P95=575 ≤800）→ `touch_fixed_60fps.json`（P50=1/P95=43 ≤300，帧率 52-59 不回退）；`touch_latency_summary.md` 汇总；device-notes §6 口径差异 |
 | 全量回归（6.1） | PASS | `full-suite-report.json`（8/8：协议单测+三模块构建+lan-direct 线级冒烟+矩阵 lan-direct/game/720p 60.3fps+frp 入口+p2p STUN）；`validation-report.md` 矩阵行 |

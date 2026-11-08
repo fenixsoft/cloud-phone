@@ -296,7 +296,10 @@ class StreamService : Service() {
         } else {
             when (msg.mode) {
                 WatchMode.FULLSCREEN -> {
-                    // 整屏会话挂接授权时建好的共享采集管线（VD/编码器常驻，见 ensureSharedCapture）
+                    // 整屏会话挂接授权时建好的共享采集管线（VD/编码器常驻，见 ensureSharedCapture）；
+                    // 请求档位与现行管线不同时按请求重建（2.2：档位必须生效，旧实现 attachFullscreen
+                    // 静默沿用旧参，分辨率/码率变更需重启源端进程）
+                    ensureSharedCapture(params(msg))
                     if (sharedCapture != null) {
                         manager.attachFullscreen(params(msg))
                     } else {
