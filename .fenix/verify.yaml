@@ -15,12 +15,12 @@
 # 当下全通），实现完成后每轮验证对全部模块 fresh 构建，构建失败非零退出 =
 # 验证环境错误（唯一环境门，走 infra-retry 廉价重试车道）。
 #
-# 【regression 段：省略】
-# 项目尚无可运行测试体系（协议模块 FramingTest.kt 仍在 tasks 未落地；无
-# package.json / pytest / go.mod），探测不出可证实产出 JUnit XML 的命令，
-# 按规则不臆造。测试体系落地后可经 verify_regression_missing 车道补段：
-# gradle test 产 XML 于 <module>/build/test-results/test/（每类一文件），
-# 需合并为单一 XML 供 output 解析。
+# 【regression 段】
+# 起草时（2026-11-08）测试体系尚未落地故合法省略；protocol 纯 JVM 单测落地
+# 后经 verify_regression_missing 车道补段（Administrator 2026-11-09）：5 个
+# Kotlin 测试类（protocol/src/test/kotlin/，JUnit 4，39 例），gradle test
+# 产每类一份 XML 于 protocol/build/test-results/test/，cmd 内合并为单一
+# <testsuites> XML 供 output 解析（产物目录在 .fenix/* ignore 规则内，不入库）。
 #
 # 【环境事实与预检边界】（立项侦察 + 2026-11-08 复核）
 # /opt/android-sdk 已装齐（SDK 34 + emulator 37.2）；双模拟器
@@ -75,3 +75,43 @@ prepare:
 # 注入 FENIX_VERIFY_BASE_URL / FENIX_VERIFY_PORT（无实例形态下为无害空操作）。
 
 # evidence_dir: .fenix/verify-evidence/<spec>/   # 缺省即此值，无需显式声明
+
+# =============================================================================
+# regression 段（verify_regression_missing 车道补段，Administrator 2026-11-09）
+# ——全量回归声明（design D1/D2）：protocol 模块纯 JVM 单测（5 类 39 例，实测
+# 数秒；代码变更即重跑，UP-TO-DATE 时复用上次全绿结果）。gradle 每类产一份
+# TEST-*.xml，此处合并为单一 <testsuites> XML 供框架解析（core/regression.py
+# 宽松递归遍历 testcase，多 <testsuite> 子元素可解析）。gradle 失败/无 XML 时
+# cmd 非零退出且不产出新 XML（runner 先清旧产物 + mtime 新鲜度守卫）→
+# fail-closed，不臆造绿结果。
+# =============================================================================
+regression:
+  cmd: |
+    set -e
+    (cd protocol && chmod +x gradlew && ./gradlew --no-daemon --console=plain test)
+    mkdir -p .fenix/regression
+    python3 - <<'PYEOF'
+    import glob
+    import xml.etree.ElementTree as ET
+    files = sorted(glob.glob("protocol/build/test-results/test/TEST-*.xml"))
+    if not files:
+        raise SystemExit("gradle test 未产出 JUnit XML: protocol/build/test-results/test/TEST-*.xml")
+    suites = ET.Element("testsuites")
+    for f in files:
+        node = ET.parse(f).getroot()
+        if node.tag == "testsuite":
+            suites.append(node)
+        else:
+            suites.extend(node.findall("testsuite"))
+    totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+    for s in suites:
+        for k in totals:
+            totals[k] += int(s.get(k, 0))
+    for k, v in totals.items():
+        suites.set(k, str(v))
+    ET.ElementTree(suites).write(".fenix/regression/junit.xml", encoding="utf-8", xml_declaration=True)
+    print(f"[regression] merged {len(files)} XML -> .fenix/regression/junit.xml: {totals}")
+    PYEOF
+  output: .fenix/regression/junit.xml
+  timeout_seconds: 600
+  format: junit
