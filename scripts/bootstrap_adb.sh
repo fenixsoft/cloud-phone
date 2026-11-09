@@ -76,7 +76,25 @@ start_shell_helper() {
   fi
 }
 
-# ── 5. MediaProjection 授权自动化（uiautomator 找"开始/START NOW"按钮，3 次重试+截图）──
+# ── 5. 云剪贴板输入法启用（M3 aux-channels-m3：ime enable/set + 状态自检）──────────
+# 剪贴板双向与中文输入（TEXT_INPUT commitText）的合法焦点代理；未启用时源端走降级路径
+# （ASCII 兜底 input text / 错误回执），客户端按钮置灰提示。
+setup_ime() {
+  need_adb
+  local ime_id="cloudphone.source/.ime.CloudImeService"
+  adb -s "$SOURCE_SERIAL" shell ime list -s 2>/dev/null | grep -q "CloudImeService" || \
+    adb -s "$SOURCE_SERIAL" shell ime enable "$ime_id" 2>/dev/null || \
+    say "（ime enable 失败——源端 APK 可能未含 IME 组件，重新安装 APK 后重试）"
+  adb -s "$SOURCE_SERIAL" shell ime set "$ime_id" 2>/dev/null || \
+    say "（ime set 失败——保持系统默认输入法，剪贴板反向/中文注入不可用）"
+  if adb -s "$SOURCE_SERIAL" shell ime list -s 2>/dev/null | grep -q "CloudImeService"; then
+    say "云剪贴板输入法已启用（$ime_id）"
+  else
+    say "（云剪贴板输入法未启用——剪贴板/中文输入将降级；无 adb 时经源端设置页手动启用）"
+  fi
+}
+
+# ── 6. MediaProjection 授权自动化（uiautomator 找"开始/START NOW"按钮，3 次重试+截图）──
 # 解析 uiautomator dump 中匹配文本节点的中心坐标（python 实现，输出 "x y" 或空）
 center_of_text() { # $1=xml路径 $2=正则
   python3 - "$1" "$2" <<'PYEOF'
@@ -133,6 +151,7 @@ case "${1:-all}" in
     build_and_install
     setup_forwarding
     start_shell_helper
+    setup_ime
     # 屏幕常亮：虚拟显示镜像依赖宿主屏持续合成，熄屏会让编码器断粮
     adb -s "$SOURCE_SERIAL" shell svc power stayon true >/dev/null
     adb -s "$CLIENT_SERIAL" shell svc power stayon true >/dev/null
@@ -150,6 +169,7 @@ case "${1:-all}" in
   install) health_check && build_and_install ;;
   forward) setup_forwarding ;;
   helper) start_shell_helper ;;
+  ime) setup_ime ;;
   grant) grant_projection ;;
-  *) echo "用法: $0 [all|health|install|forward|helper|grant]" >&2; exit 2 ;;
+  *) echo "用法: $0 [all|health|install|forward|helper|ime|grant]" >&2; exit 2 ;;
 esac

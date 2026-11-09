@@ -18,5 +18,9 @@
         <activity
             android:name="cloudphone.loadgen.StaticAppActivity"
             android:exported="true" />
+
+        <activity
+            android:name="cloudphone.loadgen.AudioToneActivity"
+            android:exported="true" />
     </application>
 </manifest>

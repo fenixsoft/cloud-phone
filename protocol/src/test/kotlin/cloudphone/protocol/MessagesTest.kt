@@ -77,6 +77,101 @@ class MessagesTest {
     }
 
     @Test
+    fun `unknown type with undefined msgtype stays unknown`() {
+        // 手工构造 msgType=0x30（未定义）载荷：必须按 Unknown 忽略且不抛（连接不受影响语义）
+        val payload = byteArrayOf(0x30, 0x00, 0x00, 0x00, 0x01)
+        val msg = decodeControlMessage(payload)
+        assertTrue(msg is ControlMessage.Unknown)
+        assertEquals(0x30, (msg as ControlMessage.Unknown).unknownType)
+    }
+
+    @Test
+    fun `all aux msg types roundtrip symmetrically`() {
+        // 0x0D–0x11 编解码往返对称（aux-channels-m3 任务 1.1/1.2；原规划 0x0C–0x10，
+        // 0x0C 已被 P2P_MIGRATE 占用，收编时重编号为 0x0D–0x11）
+        val audio = roundtrip(
+            ControlMessage.AudioChunk(ptsUs = 123_456_789L, seq = 7, payload = byteArrayOf(0xFF.toByte(), 0x56, 0x00, 0x13.toByte(), 0x7F)),
+        ) as ControlMessage.AudioChunk
+        assertEquals(123_456_789L, audio.ptsUs)
+        assertEquals(7, audio.seq)
+        assertTrue(audio.payload.contentEquals(byteArrayOf(0xFF.toByte(), 0x56, 0x00, 0x13.toByte(), 0x7F)))
+
+        val set = roundtrip(ControlMessage.ClipboardSet("剪贴板文本 📋 space")) as ControlMessage.ClipboardSet
+        assertEquals("剪贴板文本 📋 space", set.text)
+
+        assertTrue(roundtrip(ControlMessage.ClipboardGet()) is ControlMessage.ClipboardGet)
+
+        val text = roundtrip(ControlMessage.ClipboardText("复制的中文内容 ✂️")) as ControlMessage.ClipboardText
+        assertEquals("复制的中文内容 ✂️", text.text)
+
+        val notice = roundtrip(ControlMessage.AuxNotice(AuxChannel.CLIPBOARD, "无焦点")) as ControlMessage.AuxNotice
+        assertEquals(AuxChannel.CLIPBOARD, notice.channel)
+        assertEquals("无焦点", notice.reason)
+
+        val input = roundtrip(ControlMessage.TextInput(seq = 42, text = "中文输入 OK 🎮")) as ControlMessage.TextInput
+        assertEquals(42, input.seq)
+        assertEquals("中文输入 OK 🎮", input.text)
+
+        val ok = roundtrip(ControlMessage.TextInputAck(seq = 42, ok = true, reason = "")) as ControlMessage.TextInputAck
+        assertEquals(42, ok.seq)
+        assertTrue(ok.ok)
+
+        val fail = roundtrip(ControlMessage.TextInputAck(seq = 43, ok = false, reason = "需启用云剪贴板输入法")) as ControlMessage.TextInputAck
+        assertEquals(43, fail.seq)
+        assertEquals(false, fail.ok)
+        assertEquals("需启用云剪贴板输入法", fail.reason)
+    }
+
+    @Test
+    fun `aux notice roundtrip carries channel and reason`() {
+        for (ch in listOf(
+            cloudphone.protocol.AuxChannel.AUDIO,
+            cloudphone.protocol.AuxChannel.CLIPBOARD,
+            cloudphone.protocol.AuxChannel.TEXT_INPUT,
+        )) {
+            val out = roundtrip(ControlMessage.AuxNotice(ch, "无焦点")) as ControlMessage.AuxNotice
+            assertEquals(ch, out.channel)
+            assertEquals("无焦点", out.reason)
+        }
+    }
+
+    @Test
+    fun `undefined types interleaved with aux traffic keep connection semantics`() {
+        // 未定义类型（含 aux 邻域外的值；0x0C–0x11 均已定义故取 0x12 起与更低未定义段）整段丢弃不误处理：Unknown 载荷保留原始字节
+        for (t in intArrayOf(0x00, 0x12, 0x20, 0x7F, 0xFF)) {
+            val payload = byteArrayOf(t.toByte(), 0x01, 0x02, 0x03)
+            val msg = decodeControlMessage(payload)
+            assertTrue("type ${"0x%02X".format(t)} should be Unknown", msg is ControlMessage.Unknown)
+            val u = msg as ControlMessage.Unknown
+            assertEquals(t, u.unknownType)
+            assertTrue(u.payload.contentEquals(byteArrayOf(0x01, 0x02, 0x03)))
+        }
+        // 紧随其后的已定义消息仍可正常解析（连接/会话不受未知记录影响）
+        val next = decodeControlMessage(encodeControlMessage(ControlMessage.ClipboardGet()))
+        assertTrue(next is ControlMessage.ClipboardGet)
+    }
+
+    @Test
+    fun `aux messages travel through framing channel`() {
+        // 控制记录通道复用：AUDIO_CHUNK 与 TEXT_INPUT 经 Framing 往返
+        val audio = ControlMessage.AudioChunk(987_654_321L, 11, ByteArray(64) { (it * 7).toByte() })
+        val input = ControlMessage.TextInput(5, "多行\n文本")
+        val out = java.io.ByteArrayOutputStream()
+        Framing.writeRecord(out, Framing.RECORD_CONTROL, encodeControlMessage(audio))
+        Framing.writeRecord(out, Framing.RECORD_CONTROL, encodeControlMessage(input))
+        val reader = Framing.StreamRecordReader(java.io.ByteArrayInputStream(out.toByteArray()))
+        val r1 = reader.read()!!
+        val a1 = decodeControlMessage(r1.payload) as ControlMessage.AudioChunk
+        assertEquals(987_654_321L, a1.ptsUs)
+        assertEquals(11, a1.seq)
+        assertEquals(64, a1.payload.size)
+        val r2 = reader.read()!!
+        val t1 = decodeControlMessage(r2.payload) as ControlMessage.TextInput
+        assertEquals(5, t1.seq)
+        assertEquals("多行\n文本", t1.text)
+    }
+
+    @Test
     fun `framed app list travels through framing channel`() {
         // 通用记录通道复用：控制记录 [0x01][len][payload] 承载 APP_LIST 往返
         val msg = ControlMessage.AppListMessage(9, listOf(AppEntry("a.b", "Ab")))

@@ -10,6 +10,7 @@ import android.view.Surface
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import cloudphone.protocol.ControlMessage
 import cloudphone.protocol.encodeControlMessage
 import java.util.concurrent.LinkedBlockingQueue
@@ -40,13 +41,29 @@ class DecodeRenderActivity : android.app.Activity() {
     private var renderThread: Thread? = null
     private var watchThread: Thread? = null
 
+    // ── M3 aux-channels-m3（任务 4.3）：会话控制条 ──
+    private lateinit var aux: AuxChannelClient
+    private lateinit var statusLine: android.widget.TextView
+    private lateinit var btnKeyboard: android.widget.Button
+    private lateinit var btnPaste: android.widget.Button
+    private lateinit var btnCopy: android.widget.Button
+    private lateinit var btnMute: android.widget.Button
+    /** 降级原因（AuxNotice 驱动）：输入法未启用→键盘/粘贴/复制灰；无获焦输入框→键盘/复制灰 */
+    private var imeReason: String? = null
+    private var focusReason: String? = null
+    private var audioReason: String? = null
+    /** 白闪底视频区引用（首帧渲染撤白） */
+    private lateinit var videoArea: FrameLayout
+
     /** 延迟采样（PTS 差值，ms）——最近 100 帧滚动窗口，供 StatsView/日志导出 */
     val delaySamplesMs = ArrayDeque<Long>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        val root = FrameLayout(this)
+        // 视频区 + 底部控制条（M3 任务 4.3）+ 状态行
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        videoArea = FrameLayout(this)
         surfaceView = AspectFitSurfaceView(this)
         // 触摸挂接（真机修复：此前 TouchChannel 从未接线，全屏触摸不可用）
         surfaceView.setOnTouchListener(
@@ -55,7 +72,7 @@ class DecodeRenderActivity : android.app.Activity() {
                 send = { ClientSession.sendControl(it) },
             )
         )
-        root.addView(
+        videoArea.addView(
             surfaceView,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -64,7 +81,14 @@ class DecodeRenderActivity : android.app.Activity() {
             ),
         )
         // 白闪底：首帧渲染前全白（测量基准）
-        root.setBackgroundColor(0xFFFFFFFF.toInt())
+        videoArea.setBackgroundColor(0xFFFFFFFF.toInt())
+        root.addView(
+            videoArea,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f,
+            ),
+        )
+        buildControlBar(root)
         setContentView(root)
         surfaceView.holder.addCallback(object : SurfaceHolder.Callback {
             override fun surfaceCreated(holder: SurfaceHolder) = startPipeline(holder.surface)
@@ -74,7 +98,7 @@ class DecodeRenderActivity : android.app.Activity() {
         ClientSession.onFrame = { frame -> onTransportFrame(frame) }
         ClientSession.onConnectionLost = {
             runOnUiThread {
-                root.setBackgroundColor(0xFFFFFFFF.toInt())
+                videoArea.setBackgroundColor(0xFFFFFFFF.toInt())
                 firstFrameRenderedMs.set(-1)
                 // 重连退避期间 DISCONNECTED 会多次触发，toast 节流 ≥3s 防止刷屏
                 val now = android.os.SystemClock.elapsedRealtime()
@@ -86,7 +110,175 @@ class DecodeRenderActivity : android.app.Activity() {
                 }
             }
         }
+        // M3：辅助通道接线（音频默认开启；静音按钮独立控制）
+        aux = AuxChannelClient()
+        aux.onUiState = { st -> runOnUiThread { onAuxUiState(st) } }
+        ClientSession.onAux = { msg -> aux.handleAux(msg) }
+        aux.startAudio()
+        // 音频通道活性观测：10s 无任何音频帧且无源端通告 → 提示（源端静音/通道未建立）
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!isFinishing && aux.player.framesReceived.get() == 0L && audioReason == null) {
+                audioReason = "音频未收到数据（源端静音、音频通道未建立或源端版本过旧）"
+                refreshStatus()
+            }
+        }, 10_000L)
         connectedAtMs.set(SystemClock.elapsedRealtime())
+    }
+
+    // ── 控制条（任务 4.3：键盘/粘贴/复制 + 音频静音；不可用态置灰与原因文案）──
+
+    private fun buildControlBar(root: LinearLayout) {
+        val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        btnKeyboard = android.widget.Button(this).apply {
+            text = "键盘"
+            setOnClickListener { showTextInputPanel() }
+        }
+        btnPaste = android.widget.Button(this).apply {
+            text = "粘贴"
+            setOnClickListener { onPasteClicked() }
+        }
+        btnCopy = android.widget.Button(this).apply {
+            text = "复制"
+            setOnClickListener { onCopyClicked() }
+        }
+        btnMute = android.widget.Button(this).apply {
+            text = "🔊 开"
+            setOnClickListener { toggleMute() }
+            setOnLongClickListener { showVolumeDialog(); true }
+        }
+        for (b in arrayOf(btnKeyboard, btnPaste, btnCopy, btnMute)) {
+            bar.addView(b, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        root.addView(bar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        statusLine = android.widget.TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xFF888888.toInt())
+        }
+        root.addView(statusLine, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    }
+
+    /** AuxNotice 驱动的可用性更新（原因文案→置灰，禁止静默失败） */
+    private fun onAuxUiState(st: AuxChannelClient.UiState) {
+        (st.audioUnavailableReason ?: st.clipboardUnavailableReason ?: st.keyboardUnavailableReason)?.let { r ->
+            when {
+                r.contains("未启用") && st.audioUnavailableReason == null -> imeReason = r
+                r.contains("无获焦输入框") -> focusReason = r
+                st.audioUnavailableReason != null -> audioReason = r
+                else -> if (st.clipboardUnavailableReason != null) focusReason = r
+            }
+        }
+        refreshStatus()
+    }
+
+    private fun refreshStatus() {
+        statusLine.text = listOfNotNull(
+            audioReason?.let { "音频: $it" },
+            imeReason?.let { "输入法: $it" },
+            focusReason?.let { "焦点: $it" },
+        ).joinToString("；").ifBlank { "辅助通道就绪" }
+        btnKeyboard.isEnabled = imeReason == null && focusReason == null
+        btnPaste.isEnabled = imeReason == null
+        btnCopy.isEnabled = imeReason == null && focusReason == null
+        btnMute.isEnabled = audioReason == null || aux.player.framesReceived.get() > 0
+        btnMute.text = if (aux.player.muted) "🔇 关" else "🔊 开"
+    }
+
+    /** 键盘按钮：多行文本面板（TEXT_INPUT 发送，完整 Unicode 走 IME commitText） */
+    private fun showTextInputPanel() {
+        val input = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            minLines = 3
+            gravity = android.view.Gravity.TOP
+            hint = "输入要注入到源端的文本（支持中文）"
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("文字输入（IME 注入主路径）")
+            .setView(input)
+            .setPositiveButton("发送") { d, _ ->
+                val text = input.text.toString()
+                d.dismiss()
+                if (text.isNotEmpty()) sendTextInput(text)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun sendTextInput(text: String) {
+        statusLine.text = "注入中…"
+        Thread({
+            val (ok, why) = aux.sendText(text)
+            runOnUiThread {
+                statusLine.text = if (ok) "已注入（${text.length} 字符）✓" else "注入失败：$why"
+                if (!ok && why.contains("无获焦输入框")) {
+                    focusReason = why
+                    refreshStatus()
+                }
+            }
+        }, "aux-text-input").apply { isDaemon = true; start() }
+    }
+
+    /** 粘贴按钮：客户端本地剪贴板 → CLIPBOARD_SET → 源端 IME setPrimaryClip */
+    private fun onPasteClicked() {
+        val text = aux.localClipboardText(this)
+        if (text == null) {
+            statusLine.text = "本地剪贴板无文本（先在本机复制内容）"
+            return
+        }
+        Thread({
+            val (ok, v) = aux.sendClipboardSet(text)
+            runOnUiThread {
+                statusLine.text = if (ok) "已粘贴到源端（${text.length} 字符）✓" else "粘贴失败：$v"
+                if (!ok && v.contains("未启用")) {
+                    imeReason = v
+                    refreshStatus()
+                }
+            }
+        }, "aux-clipboard-set").apply { isDaemon = true; start() }
+    }
+
+    /** 复制按钮：CLIPBOARD_GET → 等待 CLIPBOARD_TEXT 回执（10s 超时降级）→ 写本地剪贴板 */
+    private fun onCopyClicked() {
+        statusLine.text = "正在读取源端剪贴板…"
+        Thread({
+            val (ok, v) = aux.requestClipboardGet()
+            runOnUiThread {
+                if (ok) {
+                    aux.setLocalClipboard(this, v)
+                    statusLine.text = "已复制到本机（${v.length} 字符）✓"
+                } else {
+                    statusLine.text = "复制失败：$v"
+                    if (v.contains("未启用")) imeReason = v
+                    if (v.contains("无获焦输入框")) focusReason = v
+                    refreshStatus()
+                }
+            }
+        }, "aux-clipboard-get").apply { isDaemon = true; start() }
+    }
+
+    /** 音频静音开关（会话级独立，不联动视频） */
+    private fun toggleMute() {
+        aux.player.muted = !aux.player.muted
+        refreshStatus()
+    }
+
+    /** 长按音量按钮：独立音量滑条（不联动视频） */
+    private fun showVolumeDialog() {
+        val seek = android.widget.SeekBar(this).apply {
+            max = 100
+            progress = (aux.player.volume * 100).toInt()
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("音频音量（独立于视频）")
+            .setView(seek)
+            .setPositiveButton("确定", null)
+            .show()
+        seek.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                aux.player.volume = progress / 100f
+            }
+            override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
+            override fun onStopTrackingTouch(sb: android.widget.SeekBar?) = Unit
+        })
     }
 
     // ── 传输帧入口 ──
@@ -210,8 +402,8 @@ class DecodeRenderActivity : android.app.Activity() {
             val flashMs = firstFrameRenderedMs.get() - connectedAtMs.get()
             android.util.Log.i("cloudphone-latency", "white-flash Ms=$flashMs")
             runOnUiThread {
-                // 首帧已渲染：撤白闪
-                (findViewById<FrameLayout>(android.R.id.content)).setBackgroundColor(0x00000000)
+                // 首帧已渲染：撤白闪（M3 布局：白底在视频区）
+                videoArea.setBackgroundColor(0x00000000)
             }
         }
     }
@@ -257,6 +449,9 @@ class DecodeRenderActivity : android.app.Activity() {
         stopPipeline()
         ClientSession.onFrame = null
         ClientSession.onConnectionLost = null
+        // M3：辅助通道释放
+        aux.stopAudio()
+        ClientSession.onAux = null
     }
 
     /** 最近延迟统计（P50/P95，供 StatsView） */

@@ -36,5 +36,21 @@
             android:name="cloudphone.source.StreamService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+
+        <!-- 云剪贴板输入法（aux-channels-m3 任务 3.2）：极简焦点代理，无键盘 UI。
+             BIND_INPUT_METHOD 系统权限保护 + android.view.InputMethod intent-filter +
+             xml/method.xml 元数据——Android 10+ 剪贴板读写与中文注入的合法焦点载体 -->
+        <service
+            android:name="cloudphone.source.ime.CloudImeService"
+            android:exported="true"
+            android:label="云剪贴板输入法"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/method" />
+        </service>
     </application>
 </manifest>

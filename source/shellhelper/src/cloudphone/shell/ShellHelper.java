@@ -37,6 +37,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *   START <displayId> <pkg>     → OK <component> | ERR <reason>
  *   STOP  <displayId>           → OK | ERR
  *   INJECT <displayId> <act0..3> <x> <y> → OK | ERR   (归一化 0..65535；3=远端 back)
+ *   TEXT <base64-utf8>          → OK | ERR   (执行 `input text`，M3 ASCII 文字输入兜底；
+ *                                             base64 规避行协议空格/特殊字符歧义，空格经 %s 转义)
+ *   TONE <ms> [hz]              → OK | ERR   (播放 <ms>ms 正弦波，usage MEDIA——M3 音频捕获
+ *                                             通道的可捕获负载源，loadgen 同款测试基建)
  *   IDR <displayId>             → OK | ERR
  *   CAPS                        → OK <描述>
  *
@@ -207,6 +211,26 @@ public final class ShellHelper {
                     int nx = Integer.parseInt(p[3]);
                     int ny = Integer.parseInt(p[4]);
                     return inject(displayId, action, nx, ny);
+                }
+                case "TEXT": {
+                    // M3 aux-channels-m3：`input text` ASCII 兜底（仅 shell uid 可执行 input 命令）。
+                    // 参数 base64(UTF-8) 传输规避行协议分割歧义；空格转 %s（input 工具约定）
+                    String decoded = new String(
+                        java.util.Base64.getDecoder().decode(p[1]), java.nio.charset.StandardCharsets.UTF_8);
+                    String escaped = decoded.replace(" ", "%s");
+                    ProcessBuilder pb = new ProcessBuilder("input", "text", escaped);
+                    pb.redirectErrorStream(true);
+                    Process proc = pb.start();
+                    String out = readAll(proc.getInputStream());
+                    try { proc.waitFor(); } catch (InterruptedException ignored) {}
+                    return out.contains("Error") || out.contains("Exception")
+                        ? "ERR " + firstLine(out) : "OK";
+                }
+                case "TONE": {
+                    // M3 音频捕获负载：usage MEDIA 正弦波（AudioPlaybackCapture 匹配 usage 可捕获）
+                    int ms = Integer.parseInt(p[1]);
+                    int hz = p.length > 2 ? Integer.parseInt(p[2]) : 440;
+                    return playTone(ms, hz);
                 }
                 default:
                     return "ERR unknown command " + p[0];
@@ -427,6 +451,44 @@ public final class ShellHelper {
             return "OK";
         } catch (Exception e) {
             return "ERR inject: " + e.getMessage();
+        }
+    }
+
+    /** usage MEDIA 正弦波播放（阻塞至播完；48kHz mono PCM16）——音频捕获通道测试负载 */
+    private static String playTone(int ms, int hz) {
+        try {
+            int sampleRate = 48000;
+            int frames = sampleRate * ms / 1000;
+            short[] pcm = new short[frames];
+            for (int i = 0; i < frames; i++) {
+                pcm[i] = (short) (Math.sin(2 * Math.PI * hz * i / sampleRate) * 12000);
+            }
+            byte[] bytes = new byte[frames * 2];
+            for (int i = 0; i < frames; i++) {
+                bytes[2 * i] = (byte) (pcm[i] & 0xFF);
+                bytes[2 * i + 1] = (byte) ((pcm[i] >> 8) & 0xFF);
+            }
+            android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build();
+            android.media.AudioFormat fmt = new android.media.AudioFormat.Builder()
+                .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(sampleRate)
+                .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                .build();
+            android.media.AudioTrack track = new android.media.AudioTrack(
+                attrs, fmt, bytes.length,
+                android.media.AudioTrack.MODE_STATIC,
+                android.media.AudioManager.AUDIO_SESSION_ID_GENERATE);
+            track.write(bytes, 0, bytes.length);
+            track.play();
+            Thread.sleep(ms + 120); // 阻塞至播完（MODE_STATIC 循环关闭，播完即静音）
+            track.stop();
+            track.release();
+            return "OK tone " + ms + "ms " + hz + "Hz";
+        } catch (Exception e) {
+            return "ERR tone: " + e.getMessage();
         }
     }
 

@@ -119,6 +119,15 @@ class ShellBootstrap(
 
     fun requestKeyframe(displayId: Int): ShellResult = command("IDR $displayId")
 
+    /**
+     * `input text` ASCII 文字注入兜底（M3 aux-channels-m3 任务 3.3）：
+     * 文本 base64(UTF-8) 传输规避行协议空格歧义；助手侧转 %s 后执行 `input text`。
+     */
+    fun inputText(text: String): ShellResult {
+        val b64 = java.util.Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
+        return command("TEXT $b64")
+    }
+
     fun capabilities(): ShellResult = command("CAPS")
 
     /** 连接指定 display 的帧流（22341，首行 displayId）；返回记录读取器 */
