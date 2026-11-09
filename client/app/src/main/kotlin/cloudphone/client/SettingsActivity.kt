@@ -107,18 +107,17 @@ class SettingsActivity : Activity() {
         }
     }
 
-    /** 分段控件选中态切换（与 ManualConnectSheet 同构，零依赖实现） */
+    /** 分段控件选中态切换（与 ManualConnectSheet 同构，零依赖实现；跳过 Space 分隔） */
     private fun wireSeg(container: LinearLayout, onPick: (Int) -> Unit) {
-        for (i in 0 until container.childCount) {
-            val idx = i
-            container.getChildAt(i).setOnClickListener {
-                for (j in 0 until container.childCount) {
-                    val c = container.getChildAt(j)
+        val items = (0 until container.childCount).map { container.getChildAt(it) }.filterIsInstance<TextView>()
+        items.forEachIndexed { idx, _ ->
+            container.getChildAt(container.indexOfChild(items[idx])).setOnClickListener {
+                items.forEachIndexed { j, c ->
                     val selected = j == idx
                     c.setBackgroundResource(
                         if (selected) R.drawable.bg_seg_selected else R.drawable.bg_seg_normal,
                     )
-                    (c as TextView).setTextColor(
+                    c.setTextColor(
                         if (selected) 0xFF04101F.toInt() else 0xFF94A3B8.toInt(),
                     )
                 }
@@ -128,7 +127,10 @@ class SettingsActivity : Activity() {
     }
 
     private fun selectSeg(container: LinearLayout, index: Int) {
-        container.getChildAt(index).performClick()
+        (0 until container.childCount).map { container.getChildAt(it) }
+            .filterIsInstance<TextView>()
+            .getOrNull(index)
+            ?.performClick()
     }
 
     companion object {

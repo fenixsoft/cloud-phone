@@ -448,6 +448,9 @@ object ClientSession {
  * - 连接成功（START_SESSION ACCEPTED）自动 upsert 档案（source-profiles 既有规则）。
  * LAUNCHER 入口（MainActivity 退役，状态总览职责并入首页/控制台）。
  */
+/** 既有默认配对 token（源端默认值，与旧连接页表单预填一致；空 token 连接时回退它） */
+private const val DEFAULT_TOKEN = "cloudphone-m0"
+
 class ConnectActivity : Activity() {
 
     private lateinit var netBadge: TextView
@@ -740,8 +743,10 @@ class ConnectActivity : Activity() {
         }
         connStatus.visibility = android.view.View.VISIBLE
         connStatus.text = "连接中…"
+        // 档案/新发现源端 token 为空 → 按既有默认 token 规则连接（spec「档案无 token 时按既有规则处理」）
+        val effectiveCfg = if (cfg.token.isBlank()) cfg.copy(token = DEFAULT_TOKEN) else cfg
         Thread({
-            val ok = ClientSession.connect(cfg, mode, pkg)
+            val ok = ClientSession.connect(effectiveCfg, mode, pkg)
             if (!ok) {
                 runOnUiThread {
                     connectInFlight.set(false)
@@ -750,6 +755,8 @@ class ConnectActivity : Activity() {
                 }
                 return@Thread
             }
+            // 应用列表入口（spec 2.2「单应用」）也需先建会话：源端对无活跃会话的 AppListRequest
+            // 直接忽略（StreamService.handleAppListRequest currentSession==null 即丢），既有行为如此
             val tier = defaultTier()
             val w = if (autoW > 0) autoW else tier.first
             val h = if (autoH > 0) autoH else tier.second

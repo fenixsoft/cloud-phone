@@ -505,11 +505,12 @@ class DecodeRenderActivity : Activity() {
 
     /** 旋转 = 本地切换客户端横竖屏呈现（MUST NOT 改源端） */
     private fun toggleRotation() {
+        // 显式横/竖切换（非 SENSOR_*：模拟器镜像无有效加速度计时 SENSOR_* 不生效，真机行为一致）
         requestedOrientation =
             if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT) {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
             } else {
-                ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             }
     }
 
