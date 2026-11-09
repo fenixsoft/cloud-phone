@@ -124,8 +124,52 @@ resolve_paths() {
   rm -rf "$STAGE_DIR"; mkdir -p "$STAGE_DIR"
 }
 
-# ── 段实现（后续任务填充）─────────────────────────────────────────────
-stage_push()   { stage_end skip "（待实现）"; return 0; }   # 1.2
+# ── 1.2 PUSH 段：构建 + 幂等推送 ──────────────────────────────────────
+LOCAL_DEX="$ROOT/source/shellhelper/build/shellhelper.dex"
+stage_push() {
+  # probe-only：只探不改，直接用设备侧现有 dex
+  if [[ "$MODE" == "probe-only" ]]; then
+    if [[ "$(adb_q "[ -f $DEV_DEX ] && echo yes")" == "yes" ]]; then
+      stage_end skip "probe-only：使用设备侧现有 dex（$DEV_DEX）"
+      return 0
+    fi
+    stage_end fail "probe-only：设备侧无 dex（$DEV_DEX 不存在）——去掉 --probe-only 重跑"
+    VERDICT_EVIDENCE+=("PUSH: --probe-only 且设备侧无 dex，探针无法继续")
+    return 1
+  fi
+  # full：强制重走构建；auto：本地无产物才构建
+  if [[ "$MODE" == "full" || ! -f "$LOCAL_DEX" ]]; then
+    say "构建 shellhelper.dex（scripts/build_shell_helper.sh，产物 hash 幂等）…"
+    if ! timeout 300 bash "$ROOT/scripts/build_shell_helper.sh" >"$STAGE_DIR/build.log" 2>&1; then
+      stage_end fail "构建失败（日志 $STAGE_DIR/build.log）"
+      VERDICT_EVIDENCE+=("PUSH: 构建失败，尾 3 行: $(tail -3 "$STAGE_DIR/build.log" 2>/dev/null | tr '\n' '|')")
+      return 1
+    fi
+  fi
+  [[ -f "$LOCAL_DEX" ]] || { stage_end fail "本地 dex 缺失（$LOCAL_DEX）"; VERDICT_EVIDENCE+=("PUSH: 本地 dex 缺失"); return 1; }
+  local lmd5 dmd5
+  lmd5="$(md5sum "$LOCAL_DEX" | awk '{print $1}')"
+  adb_q "mkdir -p $DEV_DEX_DIR" >/dev/null
+  dmd5="$(adb_q "md5sum $DEV_DEX 2>/dev/null" | awk '{print $1}')"
+  if [[ -n "$dmd5" && "$dmd5" == "$lmd5" ]]; then
+    stage_end skip "设备侧 dex hash 一致（md5=$lmd5），跳过重推（幂等）"
+    return 0
+  fi
+  say "推送 dex → $DEV_DEX（local_md5=$lmd5，device_md5=${dmd5:-无}）…"
+  if ! timeout "$T_PUSH" adb -s "$SERIAL" push "$LOCAL_DEX" "$DEV_DEX" >"$STAGE_DIR/push.log" 2>&1; then
+    stage_end fail "adb push 失败（日志 $STAGE_DIR/push.log）"
+    VERDICT_EVIDENCE+=("PUSH: adb push 失败: $(tail -2 "$STAGE_DIR/push.log" 2>/dev/null | tr '\n' '|')")
+    return 1
+  fi
+  dmd5="$(adb_q "md5sum $DEV_DEX 2>/dev/null" | awk '{print $1}')"
+  if [[ "$dmd5" != "$lmd5" ]]; then
+    stage_end fail "推送后 hash 校验不一致（local=$lmd5 device=${dmd5:-无}）"
+    VERDICT_EVIDENCE+=("PUSH: 推送后 hash 不一致")
+    return 1
+  fi
+  stage_end pass "推送完成（md5=$lmd5）"
+  return 0
+}
 stage_spawn()  { stage_end skip "（待实现）"; return 0; }   # 2.1
 stage_ping()   { stage_end skip "（待实现）"; return 0; }   # 2.1
 stage_create() { stage_end skip "（待实现）"; return 0; }   # 2.2
