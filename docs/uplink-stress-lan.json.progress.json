@@ -1,0 +1,33 @@
+[
+ {
+  "backend": "lan-direct",
+  "tier": "mid",
+  "duration": 120,
+  "kind": "stress",
+  "target_kbps": 10000,
+  "sustained_kbps": 4474.21655,
+  "fps_mean": 25.5399673,
+  "fps_recv": 25.783333333333335,
+  "loss_mean": 0.0,
+  "loss_max": 0.0,
+  "rtt_mean": 0.0,
+  "delay_p50": 0,
+  "delay_p95": 3,
+  "enc_out_mbps": 4.456245333333333,
+  "enc_fps": 25.45,
+  "enc_max_gap_ms": 83,
+  "rtt_baseline": 0.0,
+  "rtt_inflate_ms": 12.066666666666666,
+  "rtt_client_mean": 13.066666666666666,
+  "rtt_client_baseline": 1.0,
+  "rtt_client_inflate": 12.066666666666666,
+  "transport_endpoint": "endpoint-seen:10.0.2.2",
+  "baseline_kbps": 0.0,
+  "disconnects": 0,
+  "encoder_capped": true,
+  "network_pass": null,
+  "verdict": "REFERENCE",
+  "attribution": "参照路径：编码器段 ENCODER_CAPPED，传输 4474kbps ≈ 编码器 4.46Mbps，丢片 0.00%，客户端RTT膨胀 12.1ms [endpoint-seen:10.0.2.2]",
+  "samples": 60
+ }
+]
