@@ -166,3 +166,63 @@
 | app-shortcuts（4.1-4.3） | PASS | `appshortcuts_e2e.md`（深链→SINGLE_APP→出画）、`launcher_with_shortcut.png`（桌面快捷方式）、失败路径=伪造包名/不可达端口均得「直达失败」并落盘 |
 | touch-latency-fix（5.1-5.4） | PASS | `touch_baseline.json`（P50=651/P95=3104）→ `touch_fixed.json`（P50=266/P95=575 ≤800）→ `touch_fixed_60fps.json`（P50=1/P95=43 ≤300，帧率 52-59 不回退）；`touch_latency_summary.md` 汇总；device-notes §6 口径差异 |
 | 全量回归（6.1） | PASS | `full-suite-report.json`（8/8：协议单测+三模块构建+lan-direct 线级冒烟+矩阵 lan-direct/game/720p 60.3fps+frp 入口+p2p STUN）；`validation-report.md` 矩阵行 |
+
+## 9. 真机游戏上行体验（gaming-uplink-1080p SPEC 3.2）
+
+> 模拟器软编 1080p60 编码吞吐上限 ≈4Mbps@12fps（docs/uplink-report.md 附录 A），高熵负载的
+> 码率/帧率结论在模拟器上「编码器即天花板」，**最终判定必须真机硬编复核**。本章为真机人工体验
+> 手册：每步可直接执行，判定全部数值化（非主观「感觉流畅」）。
+
+### 9.1 家庭上行基线测定（iperf3 对公网 VPS 单跑）
+
+先行测定——它是后续所有「码率不达标」归因的参照（家庭上行 vs VPS 中转两因素，uplink-report §frp 归因）。
+
+```bash
+# VPS 侧（112.74.85.74，或现有 frp 所在 VPS；先安装 iperf3：apt install -y iperf3）
+iperf3 -s -p 5201                      # 服务端常驻（防火墙放行 TCP/UDP 5201-5202）
+
+# 家庭侧（源端所在主机，即模拟器宿主机）
+iperf3 -c 112.74.85.74 -p 5201 -t 30 -P 4        # 上行带宽（4 并发，30s，取 SUM 行 Mbps）
+iperf3 -c 112.74.85.74 -p 5201 -t 30 -R          # 下行带宽（家庭下载方向）
+iperf3 -c 112.74.85.74 -p 5201 -t 30 -u -b 100M  # UDP 上行（Jitter/丢包列）
+```
+
+记录表：
+
+| 指标 | 实测值 | 判定 |
+|---|---|---|
+| TCP 上行 Mbps（SUM，30s） | ______ | ≥15Mbps 才够游戏档 1080p（设计区间 8–15Mbps + 头部余量） |
+| UDP 上行 Mbps / Jitter ms / 丢包 % | ______ | 丢包 <0.5% 为网络段 PASS 参照 |
+| RTT 基线（`ping -c 20 112.74.85.74` 取 avg） | ______ ms | 与压测期 RTT 对比算膨胀 |
+
+### 9.2 loadgen 高熵 App 步骤（串流链真机复测）
+
+1. 真机装源端与 loadgen：`adb -s <真机serial> install -r source/app/build/outputs/apk/debug/app-debug.apk source/loadgen/app/build/outputs/apk/debug/app-debug.apk`；完成投影授权（`scripts/bootstrap_adb.sh grant`，顺序铁律见 §2）。
+2. 启动高熵负载：`adb shell am start -S -n cloudphone.loadgen/.GameLoadActivity --es entropy mid`（三档 low/mid/high；档位定义=编码器实际输出，见 uplink-report 附录 A）。
+3. 客户端连真机源端（frp 路径），会话参数 1080p60 / 10000kbps。
+4. 每 2 分钟记录 StatsView（抽屉内）：fps / 码率 kbps / RTT ms / 丢包 %，连续 ≥10 分钟 → 填 §9.4 表。
+
+### 9.3 真实游戏步骤（最终判定）
+
+1. 真机源端装 1–2 款自选真实游戏（x86 兼容性自担，不做自动化——用户已确认）。
+2. 串流游戏档 1080p60（码率目标 ≥10000kbps），实际游玩（战斗/加载/转场均覆盖）≥10 分钟。
+3. 每 2 分钟记录一次 StatsView 四项 + 主观评分（1=不可接受 … 5=与本地无差异），填 §9.4 表。
+4. 网络段异常时补充：`adb -s <客户端serial> shell ss -tn` 截图（对端归属）+ 客户端 logcat `cloudphone-latency` 尾迹。
+
+### 9.4 记录表（每 2 分钟一档，≥10 分钟 = ≥5 行）
+
+| 时刻 | 内容 | fps | 码率(kbps) | RTT(ms) | 丢包(%) | 主观(1–5) |
+|---|---|---|---|---|---|---|
+| 0–2min | | | | | | |
+| 2–4min | | | | | | |
+| 4–6min | | | | | | |
+| 6–8min | | | | | | |
+| 8–10min | | | | | | |
+
+### 9.5 量化判定（全部满足才算真机 PASS）
+
+- 稳态 fps ≥50（60fps 会话）；
+- 稳态码率 ≥8Mbps（若码率 <8Mbps 且 StatsView fps 满 60：编码器受限 → ENCODER_CAPPED-真机复核不成立，按 §9.1 基线与 RTT 膨胀判网络段）；
+- 丢片率 <0.5%；RTT 膨胀 ≤ max(20ms, 2×§9.1 基线)；
+- 主观评分 ≥4 且无可感知卡顿记录；
+- 任一不达标：按 uplink-report §三段链式归因口径定位段（编码器/传输/网络），证据（StatsView 照片 + §9.1 数据）留档。
