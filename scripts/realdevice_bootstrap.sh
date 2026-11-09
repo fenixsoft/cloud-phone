@@ -464,8 +464,28 @@ print_report() {
   echo "════════ 报告结束 ════════"
 }
 
-# ── 3.3 user/userdebug 分叉提示（待实现）──────────────────────────────
-build_type_notes() { : ; }
+# ── 3.3 user/userdebug 分叉提示（design D3）───────────────────────────
+build_type_notes() {
+  case "$ENV_TYPE" in
+    userdebug*)
+      cat <<'NOTE'
+预期（userdebug 真机）: app_process 机制与模拟器同源可用——重点验证 CREATE 段
+  （DisplayManager.createVirtualDisplay + MediaCodec 初始化是否被镜像策略/SELinux 拦截）。
+  CREATE 失败时脚本自动抓 dmesg AVC + logcat am_kill，结论落 MIRROR_LIMIT / SELINUX_DENIED。
+NOTE
+      ;;
+    user*)
+      cat <<'NOTE'
+预期（user 版真机）: scrcpy 依赖同一 app_process 机制在量产 user 机可用（业界实证）。
+  若 SPAWN 段失败（SHELL_UNAVAILABLE）: 单应用模式不可用 → 保留 FULLSCREEN（MediaProjection）
+  降级路径；把诊断包（logcat/dmesg/getenforce/props）附到 issue 并回写 device-notes §2.1。
+NOTE
+      ;;
+    *)
+      echo "预期（build=$ENV_TYPE）: 非标准构建形态——按 userdebug 口径验证，结论证据人工复核。"
+      ;;
+  esac
+}
 # ── 4.1 网络通路指引（待实现）────────────────────────────────────────
 network_guidance() { : ; }
 
