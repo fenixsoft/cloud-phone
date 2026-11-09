@@ -27,6 +27,9 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
     private var udp: UdpVideoChannel? = null
     private var listener: TcpLink.Listener? = null
 
+    /** SOURCE 角色：已 accept 但尚未开口（无控制记录）的连接——不参与现役通道竞争 */
+    private val pendingChannels = java.util.concurrent.CopyOnWriteArrayList<TcpStreamChannel>()
+
     @Volatile private var udpActive = false
     private var sourceSawClient = false
 
@@ -71,37 +74,92 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
     }
 
     private fun installChannel(socket: Socket, restored: Boolean) {
+        if (config.role == Role.CLIENT) {
+            installClientChannel(socket)
+            return
+        }
+        // SOURCE：新连接先挂 pending，绝不立刻替换现役通道。
+        // 背景：任何裸 TCP 连接（端口探针/扫描器/运维探测/健康检查）都会在 accept 后
+        // 立即 retire 现役通道，真机会话被无声掐死——表现为 HELLO 正常、START_SESSION
+        // 应答已发出，客户端却在 ~2-3s 内超时重连，形成连接风暴。只有当新连接真正
+        // 说出第一条控制记录（即携带合法 HELLO 的真客户端）才晋升为现役通道。
+        val plumbing = ChannelPlumbing()
+        val ch = TcpStreamChannel(socket, stats, plumbing, onError = { reason ->
+            plumbing.ch?.let { onChannelDead(it, reason) }
+        })
+        plumbing.ch = ch
+        pendingChannels.add(ch)
+        ch.startReading("lan")
+    }
+
+    /** CLIENT 角色：单通道语义，重连即替换（保留原行为） */
+    private fun installClientChannel(socket: Socket) {
         // 旧通道延迟关闭：新连接立即掐死旧通道曾吞掉在途控制应答
         // （两端重连竞态时 START_SESSION ack 写出后旧 socket 即关，客户端永远收不到）
         val old = channel
-        channel = TcpStreamChannel(socket, stats, this, onError = { reason ->
-            if (!closed.get()) {
-                stats.onBadEvent(TransportStats.BadEvent.DISCONNECT, reason.message ?: "io")
-                onStreamEvent?.onEvent(StreamEvent.DISCONNECTED, reason.message ?: "io")
+        val plumbing = ChannelPlumbing()
+        val ch = TcpStreamChannel(socket, stats, plumbing, onError = { reason ->
+            plumbing.ch?.let { onChannelDead(it, reason) }
+        })
+        plumbing.ch = ch
+        channel = ch
+        ch.startReading("lan")
+        if (old != null) retireChannel(old)
+        onStreamEvent?.onEvent(StreamEvent.CONNECTED, "lan-direct ${socket.inetAddress?.hostAddress}:${socket.port}")
+    }
+
+    /** pending 通道首条控制记录：晋升为现役通道（last-HELLO-wins），旧通道延迟退役 */
+    private fun onChannelControl(ch: TcpStreamChannel, payload: ByteArray) {
+        if (pendingChannels.remove(ch)) {
+            val wasActive: Boolean
+            synchronized(this) {
+                val old = channel
+                channel = ch
+                wasActive = old != null
+                if (old != null && old !== ch) retireChannel(old)
             }
-        }).also { ch ->
-            ch.startReading("lan")
+            val restored = wasActive || sourceSawClient
+            sourceSawClient = true
+            if (wasActive) stats.onBadEvent(TransportStats.BadEvent.RECONNECT, "lan client re-connected")
+            onStreamEvent?.onEvent(
+                if (restored) StreamEvent.RESTORED else StreamEvent.CONNECTED,
+                "lan-direct promote",
+            )
         }
-        if (old != null) {
-            old.retire() // 退役通道静默关闭：读泵不再把回收时的 SocketException 误报为断开
-            Thread({
-                try {
-                    Thread.sleep(3000)
-                } catch (_: InterruptedException) {
-                }
-                try {
-                    old.close()
-                } catch (_: IOException) {
-                }
-            }, "lan-old-channel-reap").apply { isDaemon = true; start() }
+        onControl?.onControl(payload)
+    }
+
+    /** 通道断开：现役通道死亡才向全局报 DISCONNECTED；pending/退役通道静默清理 */
+    private fun onChannelDead(ch: TcpStreamChannel, reason: IOException) {
+        if (pendingChannels.remove(ch)) return
+        val active = synchronized(this) { channel }
+        if (ch === active && !closed.get()) {
+            stats.onBadEvent(TransportStats.BadEvent.DISCONNECT, reason.message ?: "io")
+            onStreamEvent?.onEvent(StreamEvent.DISCONNECTED, reason.message ?: "io")
         }
-        if (restored) {
-            stats.onBadEvent(TransportStats.BadEvent.RECONNECT, "lan client re-connected")
+    }
+
+    private fun retireChannel(old: TcpStreamChannel) {
+        old.retire() // 退役通道静默关闭：读泵不再把回收时的 SocketException 误报为断开
+        Thread({
+            try {
+                Thread.sleep(3000)
+            } catch (_: InterruptedException) {
+            }
+            try {
+                old.close()
+            } catch (_: IOException) {
+            }
+        }, "lan-old-channel-reap").apply { isDaemon = true; start() }
+    }
+
+    /** 每通道回调包装：把控制记录路由到晋升逻辑，视频照旧上抛 */
+    private inner class ChannelPlumbing : ChannelCallbacks {
+        var ch: TcpStreamChannel? = null
+        override fun controlSink(): ControlSink? = ControlSink { payload ->
+            ch?.let { onChannelControl(it, payload) }
         }
-        onStreamEvent?.onEvent(
-            if (restored) StreamEvent.RESTORED else StreamEvent.CONNECTED,
-            "lan-direct ${socket.inetAddress?.hostAddress}:${socket.port}",
-        )
+        override fun videoSink(): VideoSink? = this@LanDirectBackend.videoSink()
     }
 
     private fun openUdp() {
@@ -170,6 +228,8 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         channel?.close()
+        pendingChannels.forEach { it.close() }
+        pendingChannels.clear()
         udp?.close()
         listener?.close()
     }

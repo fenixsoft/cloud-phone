@@ -36,6 +36,13 @@
 - 参数变更（如矩阵的 720p30/1080p30 切换）必须**重新授权**后用新凭据重建管线：
   `run_matrix.ensure_pipeline` 在参数变化时自动重走授权 + `am start-foreground-service -a
   cloudphone.source.START_CAPTURE --ei width … --ei bitrateKbps …`。
+- **（2026-11-09 起，上述重新授权约束已被零令牌自适应取代）** 任意客户端档位（分辨率/
+  帧率/码率）即插即连，不再需要后台重新授权：`ScreenCapture.adaptTo()` 换编码器 surface
+  （`VirtualDisplay.setSurface` + 失败兜底 `vd.resize`），同一投影实例零令牌完成切档并即时
+  IDR；`ensureSharedCapture` 异参先 adapt、失败则保留现行管线照常挂接（HelloAck 回实际
+  尺寸，客户端 letterbox 兼容）。协议线格式未改，客户端 APK 无需更新。
+  实证：`scripts/test_adaptive_client.py` 两轮异参（1080x1920@30/5000 → 720x1280@24/3000）
+  经 127.0.0.1 与公网 112.74.85.74:22333 均 PASS（HelloAck ACCEPTED + adaptTo 日志 + 出帧）。
 - 顺序铁律：**必须先启动 `mediaProjection` 型前台服务，再调 `getMediaProjection`**
   （Android 14 要求授权时 FGS 已在运行，否则令牌无效）。`bootstrap_adb.sh` 与
   `MainActivity.requestProjection()` 均已保证该顺序。
@@ -226,3 +233,6 @@ iperf3 -c 112.74.85.74 -p 5201 -t 30 -u -b 100M  # UDP 上行（Jitter/丢包列
 - 丢片率 <0.5%；RTT 膨胀 ≤ max(20ms, 2×§9.1 基线)；
 - 主观评分 ≥4 且无可感知卡顿记录；
 - 任一不达标：按 uplink-report §三段链式归因口径定位段（编码器/传输/网络），证据（StatsView 照片 + §9.1 数据）留档。
+
+### 2.3 源端通道晋升语义（2026-11-09）
+LanDirectBackend SOURCE 角色自本日起为 **pending→promote** 两段式：accept 的新连接先挂 pending，收到其第一条控制记录（合法 HELLO）才晋升为现役通道并退役旧通道（last-HELLO-wins）。裸 TCP 连接（探针/扫描器/健康检查）不再踢会话。同一时间仍只支持一个活跃客户端——后连接的真客户端会踢掉前者（`installChannel`/`onChannelControl`）。配套：`adb-forward-keepalive.service`（5s 自检，重建消失的 forward 规则，脚本 scripts/adb_forward_keepalive.sh）。

@@ -87,6 +87,11 @@ object ClientSession {
     // 单飞守卫：connect 主流程与 scheduleReconnect 竞态曾造成双 TCP 连接并存，
     // 两侧共享同一 ackQueue 互吃对方应答（HELLO ack timeout 竟发生在收到 ack 之后）
     private val connecting = AtomicBoolean(false)
+    // 最近一次被接受的会话档位（重连 resume 失败时按原参数重开）
+    @Volatile var lastAcceptedWidth = 0
+    @Volatile var lastAcceptedHeight = 0
+    @Volatile var lastAcceptedFps = 0
+    @Volatile var lastAcceptedKbps = 0
     // 有界缓冲（避免 SynchronousQueue 无阻塞 offer 在 poll 未就绪时丢 ack 的竞态）
     private val ackQueue = java.util.concurrent.LinkedBlockingQueue<ControlMessage.HelloAck>(8)
 
@@ -223,7 +228,16 @@ object ClientSession {
         onHelloAck?.invoke(ack)
         if (ack.status == HelloStatus.ACCEPTED && ack.sessionId != 0) {
             currentSessionId = ack.sessionId
-            if (sessionId == 0) currentMode = mode
+            if (sessionId == 0) {
+                currentMode = mode
+                // 记录最近一次被接受的真实档位：resume 被拒时用原参数重开全新会话
+                if (width > 0) {
+                    lastAcceptedWidth = width
+                    lastAcceptedHeight = height
+                    lastAcceptedFps = fps
+                    lastAcceptedKbps = bitrateKbps
+                }
+            }
         }
         return ack
     }
@@ -301,7 +315,8 @@ object ClientSession {
                     lastPongAtMs = now // 防抖：同一死通道只触发一次重连
                     backend?.close()
                     connected = false
-                    scheduleReconnect()
+                    // 退避重连已在跑时不重复触发（重连成功会刷新 lastPongAtMs）
+                    if (!reconnecting.get()) scheduleReconnect()
                 }
             }
         }, "client-keepalive").apply { isDaemon = true; start() }
@@ -318,16 +333,34 @@ object ClientSession {
             try {
                 val target = currentSessionId
                 var attempt = 0
-                while (!connected && attempt < 5) {
-                    Thread.sleep(200L)
+                while (!connected && attempt < 12) {
+                    // 指数退避（1s→2s→4s→6s cap，±20% 抖动）：0.2s 连发曾自我放大成
+                    // 连接风暴，把 frp 隧道/模拟器 accept 打僵后重连全部落空
+                    val base = longArrayOf(1000, 2000, 4000, 6000)[attempt.coerceAtMost(3)]
+                    val jitter = (base * (8 + (0..4).random())) / 10
+                    Thread.sleep(jitter)
                     if (connectOnce()) {
                         if (handshake(currentMode, currentPackage)) {
                             // attach 恢复挂机会话（源端 resume + IDR ≤1s 出画）
-                            startSession(
+                            val ack = startSession(
                                 currentMode, currentPackage,
                                 sessionId = target, width = 0, height = 0, fps = 0, bitrateKbps = 0,
                             )
-                            return@Thread
+                            if (ack?.status == HelloStatus.ACCEPTED) {
+                                lastPongAtMs = SystemClock.elapsedRealtime() // 防止 watchdog 对新通道误判再重连一轮
+                                return@Thread
+                            }
+                            // resume 被拒（会话已被源端回收等）→ 带原参数开全新会话兜底
+                            val fresh = startSession(
+                                currentMode, currentPackage,
+                                sessionId = 0,
+                                width = lastAcceptedWidth, height = lastAcceptedHeight,
+                                fps = lastAcceptedFps, bitrateKbps = lastAcceptedKbps,
+                            )
+                            if (fresh?.status == HelloStatus.ACCEPTED) {
+                                lastPongAtMs = SystemClock.elapsedRealtime() // 同上
+                                return@Thread
+                            }
                         }
                     }
                     attempt++

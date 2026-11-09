@@ -35,6 +35,7 @@ class DecodeRenderActivity : android.app.Activity() {
     private val lastOutputAtMs = AtomicLong(0)
     private val connectedAtMs = AtomicLong(0)
     private val firstFrameRenderedMs = AtomicLong(-1)
+    private var lastLostToastAtMs = 0L
     private val idrInFlight = AtomicBoolean(false)
     private var renderThread: Thread? = null
     private var watchThread: Thread? = null
@@ -75,9 +76,14 @@ class DecodeRenderActivity : android.app.Activity() {
             runOnUiThread {
                 root.setBackgroundColor(0xFFFFFFFF.toInt())
                 firstFrameRenderedMs.set(-1)
-                android.widget.Toast.makeText(
-                    this, "连接断开，正在重连（≤1s）…", android.widget.Toast.LENGTH_SHORT,
-                ).show()
+                // 重连退避期间 DISCONNECTED 会多次触发，toast 节流 ≥3s 防止刷屏
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastLostToastAtMs > 3000) {
+                    lastLostToastAtMs = now
+                    android.widget.Toast.makeText(
+                        this, "连接断开，正在重连…", android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
             }
         }
         connectedAtMs.set(SystemClock.elapsedRealtime())
@@ -210,12 +216,17 @@ class DecodeRenderActivity : android.app.Activity() {
         }
     }
 
-    /** 黑屏看守：>1s 无输出帧 → 请求 IDR（≤200ms 恢复） */
+    /** 黑屏看守：>1s 无输出帧 → 请求 IDR（≤200ms 恢复；静屏无输入时每 2s 重试） */
     private fun blackScreenWatch() {
+        var lastIdrRequestAtMs = 0L
         while (running.get()) {
             Thread.sleep(300)
             val idleMs = SystemClock.elapsedRealtime() - lastOutputAtMs.get()
-            if (idleMs > 1000 && idrInFlight.compareAndSet(false, true)) {
+            // 源端编码器为 surface 输入：静屏时无新帧进编码器，sync-frame 请求要等下次
+            // 重绘才兑现——单次 CAS 只发一次会让白屏等到天荒地老，改为 2s 持续重试
+            val now = SystemClock.elapsedRealtime()
+            if (idleMs > 1000 && now - lastIdrRequestAtMs > 2000) {
+                lastIdrRequestAtMs = now
                 ClientSession.sendControl(
                     ControlMessage.IdrRequest(sessionId = ClientSession.currentSessionId),
                 )

@@ -28,7 +28,8 @@ interface CaptureSource {
 class ScreenCapture(
     private val context: Context,
     private val projection: MediaProjection,
-    private val params: EncoderPipeline.SessionParams,
+    /** aspect-exact 后的实际编码参数；adaptTo 成功后更新 */
+    private var params: EncoderPipeline.SessionParams,
     /** 授权丢失（用户从状态栏停止投影）时回调 */
     private val onProjectionLost: () -> Unit,
 ) : CaptureSource {
@@ -40,6 +41,17 @@ class ScreenCapture(
     private val mainHandler = Handler(Looper.getMainLooper())
     private var displayListener: DisplayManager.DisplayListener? = null
     private val stopped = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 现行编码参数（aspect-exact 后的实际值；adaptTo 成功后随参数更新） */
+    val currentParams: EncoderPipeline.SessionParams get() = params
+
+    private fun frameSink(
+        onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit,
+    ): (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit =
+        { seq, pts, kf, data ->
+            PipelineCounters.sentFrames.incrementAndGet()
+            onFrame(seq, pts, kf, data)
+        }
 
     override fun start(onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit): Boolean {
         return try {
@@ -64,46 +76,36 @@ class ScreenCapture(
         }
     }
 
+    /** 宽高比精确化：按主屏真实分辨率等比缩放（短边=请求档位短边），16 对齐后作为编码与 VD 尺寸 */
+    private fun aspectExact(requested: EncoderPipeline.SessionParams): EncoderPipeline.SessionParams {
+        // VD 固定尺寸镜像会非等比拉伸主屏内容（20:9 屏被压进 16:9 → 画面扭曲）
+        val d = (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
+            .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+        val metrics = android.util.DisplayMetrics()
+        if (d == null) return requested
+        d.getRealMetrics(metrics)
+        val dw = metrics.widthPixels
+        val dh = metrics.heightPixels
+        if (dw <= 0 || dh <= 0) return requested
+        val shortTarget = minOf(requested.width, requested.height)
+        val scale = shortTarget.toDouble() / minOf(dw, dh)
+        fun align16(v: Double) = ((v / 16).toInt() * 16).coerceAtLeast(16)
+        val w = align16(dw * scale)
+        val h = align16(dh * scale)
+        if (w == requested.width && h == requested.height) return requested
+        android.util.Log.i(
+            "cloudphone-source",
+            "capture: aspect-exact ${dw}x${dh} -> ${w}x${h} (tier short=$shortTarget)",
+        )
+        return EncoderPipeline.SessionParams.normalized(w, h, requested.fps, requested.bitrateKbps)
+    }
+
     private fun buildPipeline(
         requested: EncoderPipeline.SessionParams,
         onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit,
     ) {
-        // 宽高比精确化：VD 固定尺寸镜像会非等比拉伸主屏内容（20:9 屏被压进 16:9 → 画面扭曲）。
-        // 按主屏真实分辨率等比缩放（短边=请求档位短边），16 对齐后作为编码与 VD 尺寸。
-        val p = run {
-            val d = (context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager)
-                .getDisplay(android.view.Display.DEFAULT_DISPLAY)
-            val metrics = android.util.DisplayMetrics()
-            if (d == null) {
-                requested
-            } else {
-                d.getRealMetrics(metrics)
-                val dw = metrics.widthPixels
-                val dh = metrics.heightPixels
-                if (dw <= 0 || dh <= 0) {
-                    requested
-                } else {
-                    val shortTarget = minOf(requested.width, requested.height)
-                    val scale = shortTarget.toDouble() / minOf(dw, dh)
-                    fun align16(v: Double) = ((v / 16).toInt() * 16).coerceAtLeast(16)
-                    val w = align16(dw * scale)
-                    val h = align16(dh * scale)
-                    if (w == requested.width && h == requested.height) {
-                        requested
-                    } else {
-                        android.util.Log.i(
-                            "cloudphone-source",
-                            "capture: aspect-exact ${dw}x${dh} -> ${w}x${h} (tier short=$shortTarget)",
-                        )
-                        EncoderPipeline.SessionParams.normalized(w, h, requested.fps, requested.bitrateKbps)
-                    }
-                }
-            }
-        }
-        val enc = EncoderPipeline(p.width, p.height, p.fps, p.bitrateKbps, { seq, pts, kf, data ->
-            PipelineCounters.sentFrames.incrementAndGet()
-            onFrame(seq, pts, kf, data)
-        }, { gapMs ->
+        val p = aspectExact(requested)
+        val enc = EncoderPipeline(p.width, p.height, p.fps, p.bitrateKbps, frameSink(onFrame), { gapMs ->
             // ④ 采集出帧 idle 段打点（触摸延迟插桩 5.1：帧间隔>200ms 的静屏段）
             android.util.Log.i("cloudphone-touch", "t4 capture idle gapMs=$gapMs")
         })
@@ -134,6 +136,56 @@ class ScreenCapture(
         PipelineCounters.capturedFrames.incrementAndGet()
     }
 
+    /**
+     * 异参自适应：请求档位与现行管线不同时，换编码器面而不重建投影。
+     * MediaProjection 凭据一次性（Android 14：同 resultData 二次 getMediaProjection /
+     * 同实例二次 createVirtualDisplay 均抛 SecurityException），因此档位切换 MUST 走
+     * 零令牌路径：新建编码器 → VirtualDisplay.setSurface 切换合成目标 → 停旧编码器。
+     * 任意客户端分辨率/帧率/码率即插即连，不再依赖后台重新授权。
+     */
+    fun adaptTo(
+        requested: EncoderPipeline.SessionParams,
+        onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit,
+    ): Boolean = try {
+        synchronized(this) {
+            if (stopped.get()) throw IllegalStateException("capture already stopped")
+            val vd = checkNotNull(virtualDisplay) { "virtual display gone" }
+            val p = aspectExact(requested)
+            val oldEnc = encoder
+            val enc = EncoderPipeline(p.width, p.height, p.fps, p.bitrateKbps, frameSink(onFrame), { gapMs ->
+                android.util.Log.i("cloudphone-touch", "t4 capture idle gapMs=$gapMs")
+            })
+            enc.start()
+            val surface = checkNotNull(enc.surface) { "encoder surface unavailable" }
+            try {
+                vd.setSurface(surface) // 零令牌切换合成目标（MediaProjection 不受影响）
+                try {
+                    vd.resize(p.width, p.height, context.resources.displayMetrics.densityDpi)
+                } catch (e: Exception) {
+                    // 部分镜像不允许运行中 resize：合成器按 surface 几何等比缩放兜底（同宽高比无损）
+                    android.util.Log.i("cloudphone-source", "vd resize unsupported (surface 缩放兜底): ${e.message}")
+                }
+            } catch (e: Exception) {
+                enc.stop() // 新管线上面失败：回收新编码器，旧管线保持可用
+                throw e
+            }
+            oldEnc?.stop()
+            encoder = enc
+            params = p
+            enc.requestIdr() // 切档立即出关键帧（客户端秒出画面）
+            PipelineCounters.capturedFrames.incrementAndGet()
+            android.util.Log.i(
+                "cloudphone-source",
+                "capture adapt -> ${enc.encoderName} ${p.width}x${p.height}@${p.fps}/${p.bitrateKbps}kbps",
+            )
+        }
+        true
+    } catch (e: Exception) {
+        android.util.Log.w("cloudphone-source", "capture adapt failed: ${e.javaClass.simpleName}: ${e.message}")
+        PipelineCounters.onBadEvent(PipelineCounters.BadEvent.CAPTURE_FAILURE, "adapt: ${e.message}")
+        false
+    }
+
     private fun registerDisplayListener(
         onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit,
     ) {
@@ -160,14 +212,9 @@ class ScreenCapture(
 
     private fun rebuild(w: Int, h: Int, dpi: Int, onFrame: (sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) -> Unit) {
         PipelineCounters.onBadEvent(PipelineCounters.BadEvent.DISPLAY_REBUILD, "${w}x$h@$dpi")
-        synchronized(this) {
-            virtualDisplay?.release()
-            virtualDisplay = null
-            encoder?.stop()
-            encoder = null
-            buildPipeline(EncoderPipeline.SessionParams.normalized(w, h, params.fps, params.bitrateKbps), onFrame)
-            encoder?.requestIdr()
-        }
+        // 旋转/分辨率变化：同样走零令牌换面（不再 release + 二次 createVirtualDisplay，
+        // 规避同投影实例二次采集的镜像级限制），换面后 adaptTo 内已即时请求 IDR
+        adaptTo(EncoderPipeline.SessionParams.normalized(w, h, params.fps, params.bitrateKbps), onFrame)
     }
 
     override fun requestIdr() {

@@ -107,8 +107,26 @@ class StreamService : Service() {
             )
             return
         }
-        sharedCapture?.stop()
-        sharedCapture = null
+        sharedCapture?.let { existing ->
+            // 异参自适应：换编码器面（零投影令牌消耗），任意客户端档位即插即连，
+            // 不再依赖后台重新授权（凭据一次性：二次铸造/二次建 VD 均 SecurityException）
+            if (existing.adaptTo(params) { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) }) {
+                captureParams = params
+                android.util.Log.i(
+                    "cloudphone-source",
+                    "shared capture ready ${params.width}x${params.height}@${params.fps}/${params.bitrateKbps}kbps (adapted)",
+                )
+            } else {
+                // 自适应失败：保留现行管线仍可出流，会话照常挂接（HelloAck 回实际尺寸，客户端 letterbox 兼容）
+                captureParams = existing.currentParams
+                android.util.Log.w(
+                    "cloudphone-source",
+                    "capture adapt failed; attach existing pipeline " +
+                        "${existing.currentParams.width}x${existing.currentParams.height}@${existing.currentParams.fps}",
+                )
+            }
+            return
+        }
         val projection = acquireProjection(this)
         if (projection == null) {
             lastStartError = "需要 MediaProjection 授权（先在源端 App 授予）"
@@ -213,7 +231,11 @@ class StreamService : Service() {
             is ControlMessage.Ping -> send(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
             is ControlMessage.StatsMessage -> Unit // 客户端统计：M0 源端仅消费 RTT（后端已自测）
             is ControlMessage.AppListRequest -> handleAppListRequest(msg)
-            is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话（协议要求）
+            is ControlMessage.Unknown -> // 未知消息忽略且不中断会话（协议要求）；记录类型字节以诊断旧版客户端方言
+                android.util.Log.w(
+                    "cloudphone-source",
+                    "recv Unknown type=0x${Integer.toHexString(msg.unknownType)} len=${msg.payload.size} head=${msg.payload.take(12).joinToString("") { "%02x".format(it) }}",
+                )
             else -> Unit
         }
     }
@@ -332,10 +354,22 @@ class StreamService : Service() {
         }
         // 已挂机或新建会话 → 恢复/续帧 + IDR 秒回
         if (msg.sessionId != 0 && session.hung) {
-            val resumed = manager.resume(
-                session,
-                onFrame = { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) },
-            )
+            val resumed = if (session.mode == WatchMode.FULLSCREEN) {
+                // 整屏会话恢复：共享管线（VD/编码器）断开期间持续运行，无需也不能用已消费的
+                // 投影凭据重建采集（attachFullscreen 的 session.projection 本就为 null）——
+                // 校验共享管线存活并按会话参数对齐即视为恢复。
+                val ok = ensureSharedCapture(session.params) != null && sharedCapture != null
+                if (ok) {
+                    session.hung = false
+                    sharedCapture?.requestIdr() // IDR 秒回，客户端亚秒出画
+                }
+                ok
+            } else {
+                manager.resume(
+                    session,
+                    onFrame = { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) },
+                )
+            }
             if (!resumed) {
                 send(
                     ControlMessage.HelloAck(
@@ -351,15 +385,18 @@ class StreamService : Service() {
             manager.resume(session, onFrame = { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) })
         }
         currentSession = session
+        // 诚实回执：FULLSCREEN 实际出流档位 = 共享管线现行参数（aspect-exact 后可能 ≠ 请求档位），
+        // 客户端按此与真实帧尺寸做 letterbox/触摸坐标换算
+        val actual = if (session.mode == WatchMode.FULLSCREEN) sharedCapture?.currentParams ?: session.params else session.params
         send(
             ControlMessage.HelloAck(
                 status = HelloStatus.ACCEPTED,
                 reason = "",
                 sessionId = session.id,
-                width = session.params.width,
-                height = session.params.height,
-                fps = session.params.fps,
-                bitrateKbps = session.params.bitrateKbps,
+                width = actual.width,
+                height = actual.height,
+                fps = actual.fps,
+                bitrateKbps = actual.bitrateKbps,
                 encoder = "MediaCodec AVC",
                 displayId = session.vdSession?.displayId ?: 0,
                 p2pAnswer = "",
