@@ -143,3 +143,8 @@
   - 证据：fenixd.log 6611-6637：13:04:39.702Z fastlane 判定 eligible=True（三条件全满足）并派发 code-fix run 68fb6e-1794229479；13:04:41.462Z 升级闸门第 3 轮冻结；13:04:42.079Z 击杀在飞 code-fix 子进程（存活 2.4s、0 API 轮、0 工具调用，run 归档 killed_without_cli_result source=frozen）；13:04:42.583Z 回落 full-round 亦 dispatch-failed；fastlane_decision.json streak=2 证明同形态已发生 2 次。；触发 run_id=arbiter-p2p-crossnet-traversal-1794230197（签名 p2p-crossnet-traversal::verify_fail_escalation，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 verify_fail_escalation（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 升级闸门连续失败第 3 轮，已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：冻结评估与 fastlane 派发同锁串行（先撤后冻或先冻后不派）；或升级闸门计数排除「修复 attempt 未执行即被 frozen 击杀（0 turns）」的轮次并在冻结原因中如实标注；或冻结前对在飞 code-fix 给宽限期（等待其完成或显式取消并标记 void）。
+- **[arbiter:p2p-cros] daemon恢复路径绕过修复段直接重验（制造空转重复轮）**
+  - 影响：重启恢复后的重验在零修复前提下逐字复现上轮失败，白烧升级闸门轮次并向 3 轮冻结阈值空转计数；本例 round3 即此形态的直接产物，与 gap1 叠加把可自愈的一行缺陷升级成人工裁决件。
+  - 证据：fenixd.log 12:53:48-12:54:05：Recovering interrupted SPEC p2p-crossnet-traversal (was testing)→Recovery: re-triggering verify→implemented→testing→派发 verifier 全量重验；恢复前预算解冻后无任何 impl/code-fix 修复 run 补跑（09:12:45Z 被保全的修复 run 未续做）；verdict_stability.json 相邻两轮 stamp 恒等、round3 相邻轮 diff 为空——与冻结时「进度已保全，解冻后续做」的承诺语义不一致。；触发 run_id=arbiter-p2p-crossnet-traversal-1794230197（签名 p2p-crossnet-traversal::verify_fail_escalation，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 verify_fail_escalation（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 升级闸门连续失败第 3 轮，已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：恢复重验前检查冻结期是否有被保全未执行的修复 run（_frozen_hold 遗产锚点），先重派修复段再进入验证；或恢复触发的首轮重验标记 recovery-round 不计入升级闸门连续失败计数；或恢复时对上轮冻结原因做归因复读，凡属冻结/恢复类机制打断（非修复失败）即清零连败计数。
