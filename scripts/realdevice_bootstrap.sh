@@ -486,8 +486,26 @@ NOTE
       ;;
   esac
 }
-# ── 4.1 网络通路指引（待实现）────────────────────────────────────────
-network_guidance() { : ; }
+# ── 4.1 网络通路指引（按设备连接形态分叉）──────────────────────────────
+network_guidance() {
+  if [[ "$SERIAL" == emulator-* ]]; then
+    cat <<'NOTE'
+网络通路（模拟器设备）: 本脚本分工=真机接入与诊断；模拟器环境编排（adb forward / adb emu redir /
+  授权链）请使用 scripts/bootstrap_adb.sh，两者互相不调用。
+NOTE
+    return 0
+  fi
+  local ip
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  cat <<NOTE
+网络通路指引（真机 $SERIAL）:
+  - 同网（真机与服务器同一 LAN）→ lan-direct 直连: 客户端 App host 填服务器 IP ${ip:-<服务器IP>}:22333
+    （注意: adb forward 与模拟器控制台 redir 仅模拟器可用，真机不适用；lan-direct 直连源端 IP 即可）
+  - 跨网 → frp 既有隧道: 客户端 host 填公网入口（现部署 112.74.85.74:22333；
+    隧道由宿主 frpc -c frpc.toml 常驻，TCP:22333 控制 + UDP:22334 视频可选）
+  - p2p → 无需端口预约（STUN SRFLX + UDP 打洞），核对 wireKind=P2P（检查表 §9）
+NOTE
+}
 
 cleanup() { [[ -n "$FWD_PORT" ]] && adb -s "$SERIAL" forward --remove "tcp:$FWD_PORT" >/dev/null 2>&1; return 0; }
 
