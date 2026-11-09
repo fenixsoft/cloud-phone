@@ -103,3 +103,8 @@
   - 证据：fenixd.log 08:05:08Z/08:21:12Z「预算计数对账偏差 used=2/3 vs runs 正常收工=1…不自动改数，供人工核查」（本 run fresh 复核 L4939/L5044）× STATE _budget_exempt_runs=4（全来自 01:31–01:40Z 死亡豁免窗，无本 spec 退款锚点）两源互证；05:56:48Z impl-1 interrupted(reason=daemon shutdown) 后 impl-2 派发直接 used=2/4 无退款；触发 run_id=arbiter-p2p-crossnet-traversal-1794216592（签名 p2p-crossnet-traversal::impl_budget_exhausted，来源 escalation-alert）
   - 调查评估：触发信号 impl_budget_exhausted（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：recover_interrupted 对「interrupted reason=daemon shutdown 且无 run-result 事件」的 run 调 refund_dead_run_once（锚点幂等原语已在）；或 _reconcile_impl_budget 对可从转录证明的关停死亡自动退款；至低给对账偏差告警附一键退款/豁免动作面
+- **[arbiter:p2p-cros] code-fix fastlane 修复 commit 停留侧分支，主树不落位且无台账跟踪合回**
+  - 影响：唯一剩余验证缺陷的修复不进任何后续基线，重修 run 自 master 切出仍 644、重验必复失败，修复工作悬空浪费、spec 收敛被无谓拉长；同形态可复现于任何 bug-found→fastlane 修复→spec 冻结/回退时序交错
+  - 证据：commit d94a5dd（scripts/natlab_run.py mode-only 修复）仅存在于分支 fenix/p2p-crossnet-traversal-1794215453；master b325b72 ls-tree 该文件=100644、主树工作区实测 -rw-r--r--、重修 worktree 基线同 100644（git 两源互证，本 run fresh 复核）；.fenix/code-review/fix-progress.json 无本批跟踪条目；触发 run_id=arbiter-p2p-crossnet-traversal-1794216592（签名 p2p-crossnet-traversal::impl_budget_exhausted，来源 escalation-alert）
+  - 调查评估：触发信号 impl_budget_exhausted（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：fastlane 修复成功后登记 tracked pending-merge 条目（unfreeze/下一 checkpoint 幂等消费合回）；或重验/rework 派发基线自动并载对应未合回修复分支；合回被 WIP 门/frozen 阻断时在 STATE 面留可见注记
