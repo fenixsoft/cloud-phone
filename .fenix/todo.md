@@ -138,3 +138,8 @@
   - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
   > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：修复落 master 后由框架置 pending-restart 标记并单发告警（关联标注受影响的在飞冻结签名），人工/运维按提示重启；或对关键处置面（state_machine/queue）引入版本指纹自检，运行面与 HEAD 不一致时在处置回执中降级为『需重启后重试』而非成功语义
+- **[arbiter:p2p-cros] 升级闸门冻结与code-fix-fastlane派发竞态（0工作量修复轮计入失败轮）**
+  - 影响：任何 spec 第 N 轮验证失败恰逢 fastlane 派发时，最后一次自动修复机会被静默清零；「连续失败 N 轮」计数把 0 工作量的修复轮计为真实失败轮，直接制造本例第 3 轮冻结——升级闸门对人工的陈述（自动修复连续失败）与事实（自动修复从未运行）背离，误导裁决。
+  - 证据：fenixd.log 6611-6637：13:04:39.702Z fastlane 判定 eligible=True（三条件全满足）并派发 code-fix run 68fb6e-1794229479；13:04:41.462Z 升级闸门第 3 轮冻结；13:04:42.079Z 击杀在飞 code-fix 子进程（存活 2.4s、0 API 轮、0 工具调用，run 归档 killed_without_cli_result source=frozen）；13:04:42.583Z 回落 full-round 亦 dispatch-failed；fastlane_decision.json streak=2 证明同形态已发生 2 次。；触发 run_id=arbiter-p2p-crossnet-traversal-1794230197（签名 p2p-crossnet-traversal::verify_fail_escalation，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 verify_fail_escalation（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 升级闸门连续失败第 3 轮，已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：冻结评估与 fastlane 派发同锁串行（先撤后冻或先冻后不派）；或升级闸门计数排除「修复 attempt 未执行即被 frozen 击杀（0 turns）」的轮次并在冻结原因中如实标注；或冻结前对在飞 code-fix 给宽限期（等待其完成或显式取消并标记 void）。
