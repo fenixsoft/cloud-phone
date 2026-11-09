@@ -16,6 +16,7 @@ import android.widget.LinearLayout
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import cloudphone.source.ime.ImeBridge
 import cloudphone.source.obs.PipelineCounters
 import cloudphone.source.shell.ShellBootstrap
 
@@ -39,6 +40,7 @@ class MainActivity : Activity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var projectionButton: Button
+    private lateinit var imeButton: Button
 
     private val bootstrap = ShellBootstrap()
     private val handler = Handler(Looper.getMainLooper())
@@ -111,6 +113,18 @@ class MainActivity : Activity() {
         }
         root.addView(stopButton)
 
+        // M3 aux-channels-m3 任务 3.4：云剪贴板输入法启用引导（无 adb 环境的兜底入口）。
+        // 检测 IME 未启用时显示；跳系统输入法设置（ACTION_INPUT_METHOD_SETTINGS）
+        imeButton = Button(this)
+        imeButton.setOnClickListener {
+            try {
+                startActivity(Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS))
+            } catch (e: Exception) {
+                Toast.makeText(this, "无法打开输入法设置: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+        root.addView(imeButton)
+
         statusText = TextView(this)
         root.addView(statusText)
         countersText = TextView(this)
@@ -134,6 +148,26 @@ class MainActivity : Activity() {
                 }
             }
         }.start()
+    }
+
+    /**
+     * 云剪贴板输入法状态检测（M3 任务 3.4）：未启用时显示启用入口按钮，
+     * 已启用隐藏（剪贴板/中文输入通道可用）。onResume 复检（从系统设置返回即刷新）。
+     */
+    private fun refreshImeStatus() {
+        Thread {
+            val enabled = runCatching { ImeBridge.isEnabled(this) }.getOrDefault(false)
+            handler.post {
+                if (isFinishing) return@post
+                imeButton.visibility = if (enabled) View.GONE else View.VISIBLE
+                imeButton.text = "启用云剪贴板输入法（剪贴板/中文输入必需）→"
+            }
+        }.start()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshImeStatus()
     }
 
     private fun requestProjection() {

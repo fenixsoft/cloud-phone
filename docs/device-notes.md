@@ -321,3 +321,84 @@ LanDirectBackend SOURCE 角色自本日起为 **pending→promote** 两段式：
 - 矩阵结论的**有效范围**：协议栈逻辑正确性（多候选汇总、symmetric 判定、预测装配、
   迁移恢复、FRP 兜底不阻塞），而非「某类真实 NAT 下命中率 X%」；
 - 真机口径请按 §10.1 步骤实测，成功判定以 StatsView transport 显示为准。
+## 11. M3 辅助通道平台限制与真机复核（m3-audio-clipboard-textinput SPEC）
+
+### 11.1 音频下行平台限制（如实呈现，非缺陷）
+
+- **capture 是拷贝不是重定向**：AudioPlaybackCapture 捕获的是远端 App 音频输出的
+  **拷贝**，源端本地照常外放（无法静音源端扬声器/听筒）。串流时源端与客户端同时出声
+  是平台行为；源端消音需用户自行在源端设备调低媒体音量（不影响捕获流）。
+- **API 门槛**：AudioPlaybackCapture 需 **Android 10（API 29）+**。API<29 源端
+  音频通道不建立，源端会话激活时下发 AuxNotice（协议 0x10 kind=1），客户端状态行
+  明示「源端系统不支持音频捕获」，非静默无声。
+- **usage 匹配**：仅捕获 usage=GAME/MEDIA 的播放流（设计 D1）；通话/告警等系统音
+  不在捕获范围（隐私边界，平台如此）。
+- **静音零流量**：源端 RMS 持续 3s 低于阈值后仅保 1 帧/s keepalive；游戏 loading/
+  文字界面基本零音频流量。
+- **模拟器注意**：捕获可用性依镜像而定；若 `AudioRecord` 初始化失败（state 未就绪），
+  源端按「镜像禁用 AudioPlaybackCapture」降级并通告，真机复核以 §11.4 为准。
+
+### 11.2 剪贴板方向性限制（Android 10+ 规则内）
+
+| 方向 | 通路 | 可用条件 | 不可用时表现 |
+|---|---|---|---|
+| 客户端 → 源端（粘贴） | CLIPBOARD_SET → IME setPrimaryClip | 源端已启用 CloudImeService（全版本可用） | AuxNotice「输入法未启用」，客户端粘贴按钮置灰 |
+| 源端 → 客户端（复制） | CLIPBOARD_GET → IME getPrimaryClip → CLIPBOARD_TEXT | IME 活跃（源端有获焦输入框）或源端 App 前台 | AuxNotice「无获焦输入框」，复制按钮置灰+原因 |
+
+- **反向读取是受控能力**：Android 10+ 后台剪贴板读取需焦点，IME 是唯一合法焦点
+  代理——源端无获焦输入框时复制不可用是平台规则，UI 明示原因（非静默失败/超时）。
+- **启用引导**：有 adb 走 `scripts/bootstrap_adb.sh ime`（ime enable/set + 自检）；
+  无 adb 环境走源端设置页「启用云剪贴板输入法」按钮（跳系统输入法设置）。
+
+### 11.3 文字输入路径表（TEXT_INPUT{seq,utf8}）
+
+| 条件 | 路径 | 结果 |
+|---|---|---|
+| CloudImeService 已启用且有获焦输入框 | IME `commitText`（主路径） | 完整 Unicode（中文/emoji）注入成功，ACK{seq,ok=1} |
+| IME 已启用但无获焦输入框 | — | ACK{seq,ok=0,「源端无获焦输入框」}（明确报错不丢字） |
+| IME 未启用且文本纯 ASCII（含空格） | shellhelper `input text`（空格转 %s，TEXT 命令 base64 传输） | 注入成功，ACK ok=1 |
+| IME 未启用且文本含非 ASCII | — | ACK{seq,ok=0,「需启用云剪贴板输入法」}（明确报错不静默丢字） |
+
+- seq 重复投递去重（LRU 64 条）；每条 TEXT_INPUT 必有 ACK 回执（成功/失败原因）。
+- 硬键键盘映射（INPUT_EVENT 按键通道）保留不动，TEXT_INPUT 是组合文本补充。
+
+### 11.4 真机复核步骤（三通道，模拟器通过后逐项过）
+
+1. **环境**：真机源端装源端 APK（bootstrap_adb.sh install 可复用）；`bash
+   scripts/bootstrap_adb.sh ime` 启用云剪贴板输入法（或真机设置页手动启用）。
+2. **音频捕获**：源端播放带声视频/游戏 ≥30s；客户端观察：状态行无音频降级提示、
+   logcat `AudioTrack` 持续消费、听得到声音且 ≤500ms 起播；源端静音 3s 后
+   `logcat cloudphone-source` 应见 keepalive（1 帧/s）而非常规 50 帧/s。
+3. **粘贴往返**：本机复制任意中文 → 客户端「粘贴」→ 源端设备打开任意输入框粘贴，
+   应得本机文本；客户端状态行「已粘贴到源端 ✓」。
+4. **中文输入**：源端打开任意输入框（获焦）→ 客户端「键盘」面板输入中文发送 →
+   源端输入框出现完整中文、客户端「已注入 ✓」；IME 未启用时重复应得「需启用云
+   剪贴板输入法」错误回执（不静默丢字）。
+5. **复制反向**：源端输入框获焦状态下长选文本复制 → 客户端「复制」→ 本机粘贴应得
+   源端文本；源端无获焦输入框时客户端「复制」应置灰并显示「需源端输入框获焦」。
+6. **音频拷贝语义确认**：串流中源端扬声器仍出声（capture 是拷贝，见 §11.1）——
+   记录为预期行为，不算缺陷。
+
+### 11.5 模拟器全链路验证结论（2026-11-09，双模拟器 5554/5556）
+
+12 场景线级探针 12/12 PASS（`docs/m3-aux-channels-verification-report.md` §1，
+证据 `.fenix/verify-evidence/m3-audio-clipboard-textinput/`）；音频端到端
+（捕获→ADTS 线传→客户端解码→AudioTrack 播放）已打通。复核新增平台事实：
+
+- **捕获豁免按 uid**：root/shell-uid 播放（shellhelper `TONE`，USAGE_MEDIA）
+  **不可捕获**（返回静音→静音门保活）；app-uid 播放（loadgen `AudioToneActivity`）
+  可捕获（47fps 实帧）。真机复核音频必须用 app 进程播放，shell 里 `am` 直发
+  AudioTrack 类工具不产生可捕获音频。
+- **静音门实测**：RMS<100 持续 3s → 263B 保活帧 1 帧/s；响音恢复在保活节拍内
+  即回 47fps 实帧（pump 永不停摆）。低媒体音量（STREAM_MUSIC=2/15）下捕获响度
+  贴近 RMS 阈值，验证时建议先拉满音量。
+- **客户端解码路径（关键）**：`KEY_IS_ADTS=1` ADTS 内嵌模式在本平台
+  c2.android.aac.decoder（C2SoftAacDec）持续 `decoderErr=0x1001` 零输出
+  （帧头/喂入均正常）。实现改走**裸 AAC + 显式 csd-0**（{0x11,0x90}=LC/48k/双声道），
+  feed 侧剥离 7B ADTS 头；线协议不变。真机如遇同类解码器，同路径规避。
+  **不要设置 KEY_AAC_SBR_MODE**：实验中显式置 0 反使该平台编码器整体回落默认参数
+  （44100Hz/单声道/64kbps）；LC profile 下 sbr-mode=auto(3) 不会激活 SBR，保持默认。
+- **网络环境（运维口径，详见报告 §4）**：adb forward 中继连接 ~4-5s 被 adb 侧断开，
+  长会话须用 `adb emu redir add` 控制台重定向（内核级转发不经 adb 中继）；
+  源端监听迁 22399 隔离公共 frp 回程噪声；LanDirectBackend「新连接替换当前通道」
+  语义在公网暴露端口时会被扫描噪声窃取通道（幽灵连接），生产须前置认证网关。

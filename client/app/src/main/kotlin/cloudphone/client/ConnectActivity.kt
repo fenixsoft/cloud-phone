@@ -66,6 +66,8 @@ object ClientSession {
     @Volatile var onHelloAck: ((ControlMessage.HelloAck) -> Unit)? = null
     /** APP_LIST 应答分发（应用列表页消费；3.1/4.1） */
     @Volatile var onAppList: ((ControlMessage.AppListMessage) -> Unit)? = null
+    /** M3 辅助通道分发（AUDIO_CHUNK/CLIPBOARD_TEXT/AuxNotice/TextInputAck → AuxChannelClient 消费） */
+    @Volatile var onAux: ((ControlMessage) -> Unit)? = null
 
     @Volatile var currentSessionId = 0
     @Volatile var lastHelloAck: ControlMessage.HelloAck? = null
@@ -334,6 +336,11 @@ object ClientSession {
                 if (rtt in 0..10000) android.util.Log.i("cloudphone-latency", "rtt Ms=$rtt")
             }
             is ControlMessage.AppListMessage -> onAppList?.invoke(msg)
+            // M3 辅助通道：转发 AuxChannelClient（未注册时 AudioChunk 直接丢弃省 CPU）
+            is ControlMessage.AudioChunk -> onAux?.invoke(msg)
+            is ControlMessage.ClipboardText -> onAux?.invoke(msg)
+            is ControlMessage.AuxNotice -> onAux?.invoke(msg)
+            is ControlMessage.TextInputAck -> onAux?.invoke(msg)
             is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话
             else -> Unit
         }
@@ -774,6 +781,8 @@ class ConnectActivity : Activity() {
     private fun handleAutoExtras(intent: Intent?) {
         val autoHost = intent?.getStringExtra("autoHost") ?: return
         hostInput.setText(autoHost)
+        // autoPort：自动化场景源端监听端口可变（如验证时源端避开公网噪声端口），缺省 22333 兼容矩阵
+        intent.getStringExtra("autoPort")?.toIntOrNull()?.let { tcpPortInput.setText(it.toString()) }
         intent.getStringExtra("autoBackend")?.let { b ->
             (0 until backendSpinner.adapter.count)
                 .firstOrNull { backendSpinner.adapter.getItem(it) == b }

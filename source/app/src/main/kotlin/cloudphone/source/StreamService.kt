@@ -9,12 +9,14 @@ import android.content.Intent
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.IBinder
+import cloudphone.protocol.AuxChannel
 import cloudphone.protocol.ControlMessage
 import cloudphone.protocol.HelloStatus
 import cloudphone.protocol.TransportKind
 import cloudphone.protocol.WatchMode
 import cloudphone.protocol.decodeControlMessage
 import cloudphone.protocol.encodeControlMessage
+import cloudphone.source.ime.ImeBridge
 import cloudphone.transport.BackendKind
 import cloudphone.transport.CryptoAlgo
 import cloudphone.transport.CryptoCodec
@@ -54,6 +56,23 @@ class StreamService : Service() {
     private var statsThread: Thread? = null
     @Volatile private var running = false
     private var token = DEFAULT_TOKEN
+    private var bootstrap: ShellBootstrap? = null
+
+    // ── M3 aux-channels-m3：音频下行（控制 TCP 记录通道）──
+
+    /** 音频捕获（会话激活时建，会话结束释放——任务 2.2） */
+    @Volatile private var audioCapture: AudioCaptureService? = null
+    /** 有界音频下行队列（25 帧 ≈500ms；满丢最旧——积压防护第一层，保视频不阻塞） */
+    private val audioQueue = java.util.concurrent.LinkedBlockingQueue<ControlMessage.AudioChunk>(25)
+    private var audioSenderThread: Thread? = null
+    /** 音频不可用通告（会话激活时下发 AuxNotice，客户端明示降级非静默无声） */
+    @Volatile private var audioNotice: String? = null
+    /** 源端侧 PING/PONG RTT 看门狗：nonce → 发送时刻 us */
+    private val pendingPings = LinkedHashMap<Long, Long>()
+    @Volatile private var smoothedRttMs = 0.0
+
+    // ── M3 aux-channels-m3：文字输入 seq 去重（LRU 64）──
+    private val textSeqSeen = LinkedHashMap<Int, Long>(64)
 
     /** 源端加密开关意图（启动 intent EXTRA_ENCRYPT_ON 下发，缺省开；negotiation 亦要求对端开启） */
     @Volatile private var encryptOn = true
@@ -168,6 +187,7 @@ class StreamService : Service() {
 
     private fun startStreaming(kind: BackendKind, tcpPort: Int, udpPort: Int, useUdp: Boolean) {
         val bootstrap = ShellBootstrap()
+        this.bootstrap = bootstrap
         sessionManager = SessionManager(this, token, bootstrap)
         injector = InputInjector(bootstrap, sessionManager!!)
         // 触摸延迟修复 5.3：输入窗口合成驱动（透明悬窗 5fps；未授权时降级并 WARN）
@@ -193,12 +213,14 @@ class StreamService : Service() {
                     // 断开挂机：只停编码/帧流，虚拟屏与 App 保留
                     currentSession?.let { sessionManager?.hangup(it) }
                     currentSession = null
+                    onSessionReleased() // 断开释放音频捕获
                 }
                 else -> Unit
             }
         }
         running = true // 必须先置位：stats 泵线程 while(running) 依赖读到 true，否则秒退
         startStatsPump()
+        startAudioSender()
         Thread({
             try {
                 b.start()
@@ -217,7 +239,10 @@ class StreamService : Service() {
         try {
             val bytes = encodeControlMessage(msg)
             backend?.sendControl(bytes)
-            android.util.Log.d("cloudphone-source", "sent ${msg.javaClass.simpleName} (${bytes.size}B)")
+            // AUDIO_CHUNK 50 帧/s 不逐条记日志（噪声）；其余消息维持既有调试可见性
+            if (msg !is ControlMessage.AudioChunk) {
+                android.util.Log.d("cloudphone-source", "sent ${msg.javaClass.simpleName} (${bytes.size}B)")
+            }
         } catch (e: Exception) {
             android.util.Log.w("cloudphone-source", "send ${msg.javaClass.simpleName} failed: ${e.message}")
             // 链路瞬断：STATS/应答丢失可容忍（重连后客户端重走握手）
@@ -238,6 +263,7 @@ class StreamService : Service() {
                 if (session != null) {
                     sessionManager?.destroy(session)
                     if (currentSession?.id == msg.sessionId) currentSession = null
+                    onSessionReleased() // 会话结束释放音频捕获（任务 2.2）
                 }
             }
             is ControlMessage.IdrRequest -> sharedCapture?.requestIdr()
@@ -249,8 +275,13 @@ class StreamService : Service() {
                 injector?.inject(msg.sessionId, msg.action, msg.pointerId, msg.x, msg.y)
             }
             is ControlMessage.Ping -> send(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
+            is ControlMessage.Pong -> onPongSample(msg)
             is ControlMessage.StatsMessage -> Unit // 客户端统计：M0 源端仅消费 RTT（后端已自测）
             is ControlMessage.AppListRequest -> handleAppListRequest(msg)
+            // ── M3 aux-channels-m3（任务 3.3）──
+            is ControlMessage.ClipboardSet -> handleClipboardSet(msg)
+            is ControlMessage.ClipboardGet -> handleClipboardGet()
+            is ControlMessage.TextInput -> handleTextInput(msg)
             is ControlMessage.Unknown -> // 未知消息忽略且不中断会话（协议要求）；记录类型字节以诊断旧版客户端方言
                 android.util.Log.w(
                     "cloudphone-source",
@@ -289,6 +320,164 @@ class StreamService : Service() {
             "app list response req=${msg.requestId} count=${apps.size} first=${apps.firstOrNull()?.packageName ?: "-"}",
         )
         send(ControlMessage.AppListMessage(msg.requestId, apps))
+    }
+
+    // ── M3 aux-channels-m3：辅助消息处理（任务 3.3）──
+
+    /**
+     * CLIPBOARD_SET → IME setPrimaryClip（IME 持焦点合法，全版本可用）。
+     * 成功回 CLIPBOARD_TEXT 回显（客户端单飞对账）；未启用/失败回 AuxNotice 明示原因。
+     */
+    private fun handleClipboardSet(msg: ControlMessage.ClipboardSet) {
+        if (!ImeBridge.installed) {
+            send(notice(AuxChannel.CLIPBOARD, "云剪贴板输入法未启用（源端设置页启用，或 adb: ime enable/set）"))
+            return
+        }
+        val ok = ImeBridge.setPrimaryClip(msg.text)
+        if (ok) {
+            android.util.Log.i("cloudphone-source", "clipboard set (${msg.text.length} chars) via IME")
+            send(ControlMessage.ClipboardText(msg.text))
+        } else {
+            send(notice(AuxChannel.CLIPBOARD, "源端剪贴板写入失败（setPrimaryClip 被拒）"))
+        }
+    }
+
+    /**
+     * CLIPBOARD_GET → 读剪贴板回 CLIPBOARD_TEXT。
+     * 无焦点/未启用（Android 10+ 后台剪贴板读取限制）回 AuxNotice 明示原因（非静默失败）。
+     */
+    private fun handleClipboardGet() {
+        if (!ImeBridge.installed) {
+            send(notice(AuxChannel.CLIPBOARD, "云剪贴板输入法未启用（源端设置页启用，或 adb: ime enable/set）"))
+            return
+        }
+        val text = ImeBridge.readPrimaryClip()
+        if (text == null) {
+            send(notice(AuxChannel.CLIPBOARD, "源端无获焦输入框（剪贴板读取需 IME 活跃或源端 App 前台）"))
+        } else {
+            android.util.Log.i("cloudphone-source", "clipboard get (${text.length} chars) via IME")
+            send(ControlMessage.ClipboardText(text))
+        }
+    }
+
+    /**
+     * TEXT_INPUT → IME commitText 主路径（完整 Unicode 含中文）；IME 未启用时纯 ASCII
+     * 兜底 shellhelper `input text`（空格转义）；非 ASCII 且无 IME 明确报错（不静默丢字）。
+     * 每条必有 ACK{seq} 回执；seq 去重（重复投递不重复注入，幂等补发成功回执）。
+     */
+    private fun handleTextInput(msg: ControlMessage.TextInput) {
+        val first = synchronized(textSeqSeen) {
+            if (textSeqSeen.containsKey(msg.seq)) false else {
+                textSeqSeen[msg.seq] = android.os.SystemClock.elapsedRealtime()
+                while (textSeqSeen.size > 64) textSeqSeen.remove(textSeqSeen.keys.first())
+                true
+            }
+        }
+        if (!first) {
+            send(ControlMessage.TextInputAck(msg.seq, true, ""))
+            return
+        }
+        android.util.Log.i("cloudphone-source", "text input seq=${msg.seq} (${msg.text.length} chars, ime=${ImeBridge.installed})")
+        if (ImeBridge.installed) {
+            val ok = ImeBridge.commitText(msg.text)
+            send(
+                if (ok) ControlMessage.TextInputAck(msg.seq, true, "")
+                else ControlMessage.TextInputAck(msg.seq, false, "源端无获焦输入框（commitText 需输入法活跃）"),
+            )
+            return
+        }
+        // IME 未启用：纯 ASCII（含空格）兜底 shellhelper `input text`（空格转义在助手侧）
+        if (msg.text.isNotEmpty() && msg.text.all { it.code in 0x20..0x7E }) {
+            val r = bootstrap?.inputText(msg.text)
+            send(
+                if (r?.ok == true) ControlMessage.TextInputAck(msg.seq, true, "")
+                else ControlMessage.TextInputAck(msg.seq, false, "shell 助手 input text 失败: ${r?.value ?: "助手不可用"}"),
+            )
+        } else {
+            send(ControlMessage.TextInputAck(msg.seq, false, "需启用云剪贴板输入法（非 ASCII 文本必须经输入法注入）"))
+        }
+    }
+
+    private fun notice(channel: AuxChannel, reason: String) =
+        ControlMessage.AuxNotice(channel, reason)
+
+    // ── M3 aux-channels-m3：音频会话生命周期与看门狗（任务 2.2）──
+
+    /** 会话激活（新建/恢复）：启动音频捕获 + 下发不可用通告（如有）。幂等 */
+    private fun onSessionActivated() {
+        if (audioCapture?.isRunning() == true) return
+        val reason = audioNotice
+        if (reason != null) {
+            send(notice(AuxChannel.AUDIO, reason))
+            audioNotice = null
+            return
+        }
+        val capture = AudioCaptureService()
+        val result = capture.start(StreamService.acquireProjection(this)) { ptsUs, seq, data ->
+            enqueueAudio(ptsUs, seq, data)
+        }
+        if (result.ok) {
+            audioCapture = capture
+            android.util.Log.i("cloudphone-source", "audio capture started (AAC-LC 48k stereo 96kbps 20ms)")
+        } else {
+            capture.stop()
+            audioNotice = result.reason
+            send(notice(AuxChannel.AUDIO, result.reason))
+            audioNotice = null
+        }
+    }
+
+    /** 会话释放（STOP/断开挂机/服务销毁）：释放捕获（任务 2.2 字面要求） */
+    private fun onSessionReleased() {
+        audioCapture?.stop()
+        audioCapture = null
+        audioQueue.clear()
+    }
+
+    /** 音频帧入队（编码线程回调）：有界队列满丢最旧（保视频优先，不阻塞编码线程） */
+    private fun enqueueAudio(ptsUs: Long, seq: Int, data: ByteArray) {
+        if (currentSession == null) return
+        val chunk = ControlMessage.AudioChunk(ptsUs, seq, data)
+        while (!audioQueue.offer(chunk)) {
+            audioQueue.poll() // 丢最旧
+            PipelineCounters.droppedFrames.incrementAndGet()
+        }
+    }
+
+    /** 音频下行泵：独立线程消费队列写控制通道（弱网写阻塞不拖累控制线程） */
+    private fun startAudioSender() {
+        audioSenderThread = Thread({
+            while (running) {
+                val chunk = try {
+                    audioQueue.poll(500, java.util.concurrent.TimeUnit.MILLISECONDS) ?: continue
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+                send(chunk)
+            }
+        }, "audio-sender").apply { isDaemon = true; start() }
+    }
+
+    /** 源端侧 PONG 采样：客户端回显我方 nonce → RTT 统计（看门狗积压判据） */
+    private fun onPongSample(msg: ControlMessage.Pong) {
+        val sentUs = synchronized(pendingPings) { pendingPings.remove(msg.nonce) } ?: return
+        val rttMs = (nowUs() - sentUs) / 1000.0
+        if (rttMs in 0.0..60_000.0) {
+            smoothedRttMs = if (smoothedRttMs <= 0.0) rttMs else smoothedRttMs + 0.2 * (rttMs - smoothedRttMs)
+        }
+    }
+
+    /** 控制通道积压防护：RTT 超阈值（TCP 发送缓冲积压）丢全部积压音频帧保视频（jitter 侧 skip 计数） */
+    private fun watchdogBacklogGuard() {
+        if (smoothedRttMs > BACKLOG_RTT_THRESHOLD_MS && audioQueue.isNotEmpty()) {
+            val dropped = audioQueue.size
+            audioQueue.clear()
+            android.util.Log.w(
+                "cloudphone-source",
+                "控制通道积压（rtt=${smoothedRttMs.toInt()}ms > ${BACKLOG_RTT_THRESHOLD_MS}ms）→ 丢 $dropped 帧积压音频保视频",
+            )
+            PipelineCounters.droppedFrames.incrementAndGet()
+        }
     }
 
     private fun handleHello(msg: ControlMessage.Hello) {
@@ -441,6 +630,7 @@ class StreamService : Service() {
         // 诚实回执：FULLSCREEN 实际出流档位 = 共享管线现行参数（aspect-exact 后可能 ≠ 请求档位），
         // 客户端按此与真实帧尺寸做 letterbox/触摸坐标换算
         val actual = if (session.mode == WatchMode.FULLSCREEN) sharedCapture?.currentParams ?: session.params else session.params
+        onSessionActivated() // 音频捕获随会话激活（新建/恢复同路径；不可用即下发 AuxNotice）
         send(
             ControlMessage.HelloAck(
                 status = HelloStatus.ACCEPTED,
@@ -493,6 +683,18 @@ class StreamService : Service() {
                             },
                         ),
                     )
+                    // 看门狗积压监测扩展（任务 2.2）：源端主动 PING 探测控制通道 RTT
+                    // （后端 rttMs 无生产采样源，源端侧自测是唯一可信判据），超阈值丢积压音频保视频
+                    if (session != null) {
+                        val nonce = System.nanoTime()
+                        val sentUs = nowUs()
+                        synchronized(pendingPings) {
+                            pendingPings[nonce] = sentUs
+                            while (pendingPings.size > 8) pendingPings.remove(pendingPings.keys.first())
+                        }
+                        send(ControlMessage.Ping(nonce = nonce, senderUs = sentUs))
+                        watchdogBacklogGuard()
+                    }
                 }
                 try {
                     Thread.sleep(1000)
@@ -508,6 +710,9 @@ class StreamService : Service() {
     override fun onDestroy() {
         running = false
         statsThread?.interrupt()
+        onSessionReleased() // 服务销毁释放音频捕获
+        audioSenderThread?.interrupt()
+        audioSenderThread = null
         inputComposer?.stop()
         inputComposer = null
         currentSession?.let { sessionManager?.hangup(it) }
@@ -526,6 +731,8 @@ class StreamService : Service() {
         const val CHANNEL_ID = "cloudphone-stream"
         /** 授权成功后由 MainActivity 发起：立即用凭据建共享采集管线 */
         const val ACTION_START_CAPTURE = "cloudphone.source.START_CAPTURE"
+        /** 控制通道积压阈值（源端 PING/PONG RTT 看门狗，任务 2.2）：超过即丢积压音频保视频 */
+        const val BACKLOG_RTT_THRESHOLD_MS = 800.0
 
         /** 加密开关（p2p-crossnet-traversal 3.1）：启动 intent extra，缺省 true；回落 prefs "encryptOn" */
         const val EXTRA_ENCRYPT_ON = "cloudphone.source.ENCRYPT_ON"
