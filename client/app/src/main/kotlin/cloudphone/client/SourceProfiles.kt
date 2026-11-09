@@ -21,6 +21,8 @@ data class SourceProfile(
     val backend: String,
     val token: String,
     val lastConnectedAt: Long,
+    /** 端到端加密意图（p2p-crossnet-traversal 3.2，末位追加带缺省——老档案 JSON 无此键自动 true） */
+    val encryptOn: Boolean = true,
 ) {
     /** 唯一键：host+tcpPort+backend */
     val key: String get() = keyOf(host, tcpPort, backend)
@@ -40,6 +42,7 @@ data class SourceProfile(
             backend = o.getString("backend"),
             token = o.getString("token"),
             lastConnectedAt = o.getLong("lastConnectedAt"),
+            encryptOn = o.optBoolean("encryptOn", true), // 老档案无此键 → 缺省开（向后兼容）
         )
 
         internal fun toJson(p: SourceProfile): JSONObject = JSONObject().apply {
@@ -50,6 +53,7 @@ data class SourceProfile(
             put("backend", p.backend)
             put("token", p.token)
             put("lastConnectedAt", p.lastConnectedAt)
+            put("encryptOn", p.encryptOn)
         }
     }
 

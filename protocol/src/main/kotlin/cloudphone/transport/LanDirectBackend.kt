@@ -33,6 +33,12 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
     @Volatile private var udpActive = false
     private var sourceSawClient = false
 
+    /** 加密下发（协商 AES128GCM 后）：当前 TCP 通道与 UDP 视频通道同步挂 codec；null = 明文 */
+    override fun onCryptoAttached(codec: CryptoCodec?) {
+        channel?.crypto = codec
+        udp?.crypto = codec
+    }
+
     override fun start() {
         checkOpen()
         when (config.role) {

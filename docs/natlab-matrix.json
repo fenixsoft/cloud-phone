@@ -1,0 +1,561 @@
+{
+  "generated_at": "2026-11-09T07:38:55+00:00",
+  "scope": "natlab 实验室口径（netns+iptables 三档 NAT，JVM 协议级对端；非真机结论）",
+  "peer": "protocol/build/install/natlab-peer（NatlabPeer.kt，protocol 库直跑 transport 栈）",
+  "matrix": [
+    {
+      "client": "ei",
+      "server": "ei",
+      "rounds": [
+        {
+          "cl": "ei",
+          "srv": "ei",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 122,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        },
+        {
+          "cl": "ei",
+          "srv": "ei",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 117,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        }
+      ],
+      "direct": 2,
+      "prediction": 0,
+      "frp_fallback": 0,
+      "fail": 0,
+      "success_rate": 1.0,
+      "avg_punch_ms": 119.5,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "ei",
+      "server": "ap-rr",
+      "rounds": [
+        {
+          "cl": "ei",
+          "srv": "ap-rr",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 124,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        },
+        {
+          "cl": "ei",
+          "srv": "ap-rr",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 127,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        }
+      ],
+      "direct": 2,
+      "prediction": 0,
+      "frp_fallback": 0,
+      "fail": 0,
+      "success_rate": 1.0,
+      "avg_punch_ms": 125.5,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "ei",
+      "server": "symmetric",
+      "rounds": [
+        {
+          "cl": "ei",
+          "srv": "symmetric",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 119,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": "armed window=1 ports (peer sym)",
+          "migrated": false
+        },
+        {
+          "cl": "ei",
+          "srv": "symmetric",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 138,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": "armed window=1 ports (peer sym)",
+          "migrated": false
+        }
+      ],
+      "direct": 2,
+      "prediction": 0,
+      "frp_fallback": 0,
+      "fail": 0,
+      "success_rate": 1.0,
+      "avg_punch_ms": 128.5,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "ap-rr",
+      "server": "ei",
+      "rounds": [
+        {
+          "cl": "ap-rr",
+          "srv": "ei",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 140,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        },
+        {
+          "cl": "ap-rr",
+          "srv": "ei",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 161,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        }
+      ],
+      "direct": 2,
+      "prediction": 0,
+      "frp_fallback": 0,
+      "fail": 0,
+      "success_rate": 1.0,
+      "avg_punch_ms": 150.5,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "ap-rr",
+      "server": "ap-rr",
+      "rounds": [
+        {
+          "cl": "ap-rr",
+          "srv": "ap-rr",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 9,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        },
+        {
+          "cl": "ap-rr",
+          "srv": "ap-rr",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 9,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": null,
+          "migrated": false
+        }
+      ],
+      "direct": 0,
+      "prediction": 0,
+      "frp_fallback": 2,
+      "fail": 0,
+      "success_rate": 0.0,
+      "avg_punch_ms": null,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "ap-rr",
+      "server": "symmetric",
+      "rounds": [
+        {
+          "cl": "ap-rr",
+          "srv": "symmetric",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 8,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": "miss after 5000ms",
+          "migrated": false
+        },
+        {
+          "cl": "ap-rr",
+          "srv": "symmetric",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 9,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": false,
+          "prediction_stage": "miss after 5000ms",
+          "migrated": false
+        }
+      ],
+      "direct": 0,
+      "prediction": 0,
+      "frp_fallback": 2,
+      "fail": 0,
+      "success_rate": 0.0,
+      "avg_punch_ms": null,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "symmetric",
+      "server": "ei",
+      "rounds": [
+        {
+          "cl": "symmetric",
+          "srv": "ei",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 139,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": true,
+          "prediction_stage": null,
+          "migrated": false
+        },
+        {
+          "cl": "symmetric",
+          "srv": "ei",
+          "outcome": "direct",
+          "prediction_enabled": true,
+          "punch_ms": 148,
+          "ok": true,
+          "frames": 5,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": true,
+          "prediction_stage": null,
+          "migrated": false
+        }
+      ],
+      "direct": 2,
+      "prediction": 0,
+      "frp_fallback": 0,
+      "fail": 0,
+      "success_rate": 1.0,
+      "avg_punch_ms": 143.5,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "symmetric",
+      "server": "ap-rr",
+      "rounds": [
+        {
+          "cl": "symmetric",
+          "srv": "ap-rr",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 8,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": true,
+          "prediction_stage": null,
+          "migrated": false
+        },
+        {
+          "cl": "symmetric",
+          "srv": "ap-rr",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 9,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": true,
+          "prediction_stage": null,
+          "migrated": false
+        }
+      ],
+      "direct": 0,
+      "prediction": 0,
+      "frp_fallback": 2,
+      "fail": 0,
+      "success_rate": 0.0,
+      "avg_punch_ms": null,
+      "session_established_rate": 1.0
+    },
+    {
+      "client": "symmetric",
+      "server": "symmetric",
+      "rounds": [
+        {
+          "cl": "symmetric",
+          "srv": "symmetric",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 8,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": true,
+          "prediction_stage": "miss after 5000ms",
+          "migrated": false
+        },
+        {
+          "cl": "symmetric",
+          "srv": "symmetric",
+          "outcome": "frp_fallback",
+          "prediction_enabled": true,
+          "punch_ms": -1,
+          "ok": true,
+          "frames": 9,
+          "crypto": "AES128_GCM",
+          "nat_symmetric_client": true,
+          "prediction_stage": "miss after 5000ms",
+          "migrated": false
+        }
+      ],
+      "direct": 0,
+      "prediction": 0,
+      "frp_fallback": 2,
+      "fail": 0,
+      "success_rate": 0.0,
+      "avg_punch_ms": null,
+      "session_established_rate": 1.0
+    }
+  ],
+  "prediction_toggle": [
+    {
+      "client": "ei",
+      "server": "symmetric",
+      "enabled_rounds": 1,
+      "enabled": [
+        {
+          "outcome": "direct",
+          "punch_ms": 112,
+          "prediction_stage": "armed window=2 ports (peer sym)"
+        }
+      ],
+      "enabled_summary": {
+        "armed": 1,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 1
+      },
+      "disabled": {
+        "outcome": "direct",
+        "punch_ms": 135,
+        "prediction_stage": null
+      }
+    },
+    {
+      "client": "ap-rr",
+      "server": "symmetric",
+      "enabled_rounds": 1,
+      "enabled": [
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": "miss after 5000ms"
+        }
+      ],
+      "enabled_summary": {
+        "armed": 1,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 0
+      },
+      "disabled": {
+        "outcome": "frp_fallback",
+        "punch_ms": -1,
+        "prediction_stage": null
+      }
+    },
+    {
+      "client": "symmetric",
+      "server": "ei",
+      "enabled_rounds": 1,
+      "enabled": [
+        {
+          "outcome": "direct",
+          "punch_ms": 167,
+          "prediction_stage": null
+        }
+      ],
+      "enabled_summary": {
+        "armed": 0,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 1
+      },
+      "disabled": {
+        "outcome": "direct",
+        "punch_ms": 167,
+        "prediction_stage": null
+      }
+    },
+    {
+      "client": "symmetric",
+      "server": "ap-rr",
+      "enabled_rounds": 1,
+      "enabled": [
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": null
+        }
+      ],
+      "enabled_summary": {
+        "armed": 0,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 0
+      },
+      "disabled": {
+        "outcome": "frp_fallback",
+        "punch_ms": -1,
+        "prediction_stage": null
+      }
+    },
+    {
+      "client": "symmetric",
+      "server": "symmetric",
+      "enabled_rounds": 1,
+      "enabled": [
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": "miss after 5000ms"
+        }
+      ],
+      "enabled_summary": {
+        "armed": 1,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 0
+      },
+      "disabled": {
+        "outcome": "frp_fallback",
+        "punch_ms": -1,
+        "prediction_stage": null
+      }
+    },
+    {
+      "client": "sym-seq",
+      "server": "sym-seq",
+      "enabled_rounds": 4,
+      "enabled": [
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": "miss after 5000ms"
+        },
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": "miss after 5000ms"
+        },
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": null
+        },
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": null
+        }
+      ],
+      "enabled_summary": {
+        "armed": 2,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 0
+      },
+      "disabled": {
+        "outcome": "fail",
+        "punch_ms": -1,
+        "prediction_stage": null
+      }
+    },
+    {
+      "client": "sym-seq",
+      "server": "symmetric",
+      "enabled_rounds": 2,
+      "enabled": [
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": "armed window=9 ports (peer sym)"
+        },
+        {
+          "outcome": "frp_fallback",
+          "punch_ms": -1,
+          "prediction_stage": "miss after 5000ms"
+        }
+      ],
+      "enabled_summary": {
+        "armed": 2,
+        "hit": 0,
+        "hit_rate": 0.0,
+        "direct": 0
+      },
+      "disabled": {
+        "outcome": "frp_fallback",
+        "punch_ms": -1,
+        "prediction_stage": null
+      }
+    }
+  ],
+  "migration": {
+    "cl": "ei",
+    "srv": "ei",
+    "outcome": "direct",
+    "prediction_enabled": true,
+    "punch_ms": 115,
+    "ok": true,
+    "frames": 45,
+    "crypto": "AES128_GCM",
+    "nat_symmetric_client": false,
+    "prediction_stage": null,
+    "migrated": true,
+    "migration_ip_switched": true,
+    "reconnects": 1,
+    "resumed_frames": 30,
+    "frame_sequences": [
+      5
+    ],
+    "session_continuous": true
+  }
+}

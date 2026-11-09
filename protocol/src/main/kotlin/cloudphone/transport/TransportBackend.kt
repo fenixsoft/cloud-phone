@@ -71,6 +71,7 @@ enum class StreamEvent {
     PUNCH_ESTABLISHED,   // p2p UDP 直连打通（视频切直连）
     PUNCH_FALLBACK_FRP,  // p2p 打洞超时回落 frp（视频走 TCP 复用，会话不中断）
     UDP_DEGRADED,        // UDP 视频通道坏死降级 TCP 复用
+    PUNCH_MIGRATED,      // 端点迁移：对端候选地址更新（会话/统计不重置，直连重建后重新报 ESTABLISHED）
 }
 
 fun interface StreamEventListener {
@@ -103,6 +104,14 @@ interface TransportBackend : Closeable {
 
     /** 当前统计快照（≥1Hz 由调用方驱动） */
     fun snapshot(): TransportStats.Snapshot = stats.snapshot()
+
+    /**
+     * 启用/更换会话加密（p2p-crossnet-traversal 1.4）：握手协商结果 = AES128GCM 时
+     * 上层传入按协商材料构造的 [CryptoCodec]（方向子钥内建），此后控制与视频通道按
+     * direction 加解密；协商 none 或重连未协商时传 null —— 通道走明文，路径与 v1
+     * 现状逐字节一致。重连后必须重新握手协商（新 codec 实例，counter 全新）。
+     */
+    fun enableCrypto(codec: CryptoCodec?)
 }
 
 /** 后端公共基座：回调持有 + 发送序号默认自增（上层亦可显式指定 sequence） */
@@ -111,6 +120,18 @@ abstract class TransportBackendBase(final override val config: TransportConfig) 
     override var onControl: ControlSink? = null
     override var onVideo: VideoSink? = null
     override var onStreamEvent: StreamEventListener? = null
+
+    /** 会话加密编解码器（null = 明文）；enableCrypto 下发并同步到当前通道 */
+    var sessionCrypto: CryptoCodec? = null
+        private set
+
+    final override fun enableCrypto(codec: CryptoCodec?) {
+        sessionCrypto = codec
+        onCryptoAttached(codec)
+    }
+
+    /** 子类把 codec 下发到当前活跃通道（TCP/UDP channel 的 volatile crypto 字段） */
+    protected open fun onCryptoAttached(codec: CryptoCodec?) {}
 
     final override fun controlSink(): ControlSink? = onControl
     final override fun videoSink(): VideoSink? = onVideo
@@ -141,6 +162,9 @@ class TcpStreamChannel(
     @Volatile private var retired = false
     private var readerThread: Thread? = null
 
+    /** 会话加密（协商成功后由后端 onCryptoAttached 下发；null = 明文，与 v1 逐字节一致） */
+    @Volatile var crypto: CryptoCodec? = null
+
     /**
      * 退役：被更新通道替换后，读泵静默退出——既有 socket 上后续的读异常
      * （含延迟/立即 close 触发的 SocketException）不再触发 onError，
@@ -162,9 +186,24 @@ class TcpStreamChannel(
                     // EOF（对端正常关闭）按断流处理：触发 onError → DISCONNECT 事件/重连
                     val record = reader.read() ?: throw java.io.EOFException("peer closed stream")
                     when (record.type) {
-                        Framing.RECORD_CONTROL -> callbacks.controlSink()?.onControl(record.payload)
+                        Framing.RECORD_CONTROL -> {
+                            val c = crypto
+                            var payload = record.payload
+                            if (c != null) {
+                                // 加密态：按记录到达顺序重建 control counter；认证失败丢弃该记录
+                                // （长度前缀分帧不受影响，继续读后续记录；明文/密钥错配的瞬态竞态
+                                // 只损失单条消息，不升级为断流重连风暴）
+                                val plain = c.decryptControl(record.payload)
+                                if (plain == null) {
+                                    stats.onBadEvent(TransportStats.BadEvent.STREAM_ERROR, "control decrypt")
+                                    continue
+                                }
+                                payload = plain
+                            }
+                            callbacks.controlSink()?.onControl(payload)
+                        }
                         Framing.RECORD_VIDEO -> {
-                            val f = decodeVideoRecord(record.payload)
+                            val f = decodeVideoRecord(record.payload, crypto)
                             if (f == null) {
                                 stats.onBadEvent(TransportStats.BadEvent.STREAM_ERROR, "video record decode")
                             } else {
@@ -186,21 +225,28 @@ class TcpStreamChannel(
         }, "tcp-stream-$name").apply { isDaemon = true; start() }
     }
 
-    /** TCP 复用模式发视频：单分片视频载荷套 RECORD_VIDEO 记录 */
+    /** TCP 复用模式发视频：单分片视频载荷套 RECORD_VIDEO 记录（加密态下分片载荷按 AAD=sequence/flags 加密） */
     fun writeVideo(sequence: Long, ptsUs: Long, keyframe: Boolean, frame: ByteArray) {
+        val c = crypto
+        // 探针帧（sequence=0）恒明文（打洞期对端尚无密钥）
+        val data = if (c != null && sequence != UdpVideoChannel.PUNCH_PROBE_SEQUENCE) {
+            c.encryptVideo(sequence, keyframe, 0, frame)
+        } else frame
         val payload = Framing.encodeVideoPayload(
-            Framing.VideoFrameHeader(sequence, ptsUs, keyframe, 0, 1, frame.size), frame,
+            Framing.VideoFrameHeader(sequence, ptsUs, keyframe, 0, 1, frame.size), data,
         )
         synchronized(output) {
             Framing.writeRecord(output, Framing.RECORD_VIDEO, payload)
             output.flush() // 实时视频：逐帧出栈（ Nagle 已关，缓冲滞留会直接放大端到端延迟）
         }
-        stats.onFrameSent(frame.size)
+        stats.onFrameSent(frame.size) // 统计口径恒为明文字节数
     }
 
     fun writeControl(payload: ByteArray) {
+        val c = crypto
+        val sealed = if (c != null) c.encryptControl(payload) else payload
         synchronized(output) {
-            Framing.writeRecord(output, Framing.RECORD_CONTROL, payload)
+            Framing.writeRecord(output, Framing.RECORD_CONTROL, sealed)
             output.flush() // 控制消息必须即时出栈（BufferedOutputStream 不 flush 会滞留 64KB 缓冲）
         }
     }
@@ -214,14 +260,18 @@ class TcpStreamChannel(
     }
 
     companion object {
-        /** TCP 视频记录 → 单帧（TCP 复用模式不分片，fragCnt 恒 1） */
-        fun decodeVideoRecord(payload: ByteArray): Framing.VideoFrame? {
+        /** TCP 视频记录 → 单帧（TCP 复用模式不分片，fragCnt 恒 1）；加密态下先解密分片载荷 */
+        fun decodeVideoRecord(payload: ByteArray, crypto: CryptoCodec? = null): Framing.VideoFrame? {
             val buf = java.nio.ByteBuffer.wrap(payload)
             val header = Framing.decodeVideoHeader(buf)
             if (header.fragmentCount != 1) return null
-            val data = ByteArray(buf.remaining())
-            buf.get(data)
-            return Framing.VideoFrame(header.sequence, header.ptsUs, header.keyframe, data)
+            var chunk = ByteArray(buf.remaining())
+            buf.get(chunk)
+            if (crypto != null && header.sequence != UdpVideoChannel.PUNCH_PROBE_SEQUENCE) {
+                chunk = crypto.decryptVideo(header.sequence, header.keyframe, header.fragmentIndex, chunk)
+                    ?: return null // 认证失败/重放：按流错误丢弃（读泵计 STREAM_ERROR）
+            }
+            return Framing.VideoFrame(header.sequence, header.ptsUs, header.keyframe, chunk)
         }
     }
 }
@@ -248,6 +298,9 @@ class UdpVideoChannel(
     private val sendFailures = java.util.concurrent.atomic.AtomicInteger(0)
     private var recvThread: Thread? = null
 
+    /** 会话加密（协商成功后由后端下发；null = 明文分片，与 v1 逐字节一致） */
+    @Volatile var crypto: CryptoCodec? = null
+
     private val firstPacketFired = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /** 首包回调（无论 remote 是否已知；p2p 打洞以"对端任一数据报到达"判定直连建立） */
@@ -257,6 +310,9 @@ class UdpVideoChannel(
 
     fun setRemote(address: InetSocketAddress) {
         remote = address
+        // 目标更新（初始 setRemote / 端点迁移 setRemote）重挂首包回调：
+        // 迁移后下一数据报重新触发 onFirstPacket → P2pBackend 重建 established 标记
+        firstPacketFired.set(false)
     }
 
     fun remoteAddress(): InetSocketAddress? = remote
@@ -297,8 +353,18 @@ class UdpVideoChannel(
         val payload = java.nio.ByteBuffer.wrap(buf, 1, len - 1)
         val header = Framing.decodeVideoHeader(payload)
         if (header.sequence == PUNCH_PROBE_SEQUENCE) return // 打洞探针：不计统计、不下发解码
-        val chunk = ByteArray(payload.remaining())
+        var chunk = ByteArray(payload.remaining())
         payload.get(chunk)
+        // 加密态：按帧头 (sequence, keyframe, fragIdx) 解密分片（AAD 绑定帧头）；失败即丢片
+        val c = crypto
+        if (c != null) {
+            val plain = c.decryptVideo(header.sequence, header.keyframe, header.fragmentIndex, chunk)
+            if (plain == null) {
+                stats.onFragmentDropped()
+                return
+            }
+            chunk = plain
+        }
         val frame = reassembler.offer(header, chunk)
         if (frame != null) {
             stats.onFrameReceived(frame.data.size)
@@ -318,11 +384,26 @@ class UdpVideoChannel(
         val target = remote ?: return SendResult.NO_PEER
         try {
             val fragments = fragmenter.fragment(sequence, ptsUs, keyframe, frame)
+            val c = crypto
+            val encrypt = c != null && sequence != PUNCH_PROBE_SEQUENCE // 探针帧恒明文
             val datagrams = ArrayList<DatagramPacket>(fragments.size)
             for (f in fragments) {
-                val wire = ByteArray(f.size + 1)
+                var body = f
+                if (encrypt) {
+                    // 分片载荷 = [帧头 21B][分片字节]；按帧头字段逐片 AEAD（tag +16B/片）
+                    val bb = java.nio.ByteBuffer.wrap(f)
+                    val fh = Framing.decodeVideoHeader(bb)
+                    val chunk = ByteArray(bb.remaining())
+                    bb.get(chunk)
+                    val sealed = c!!.encryptVideo(fh.sequence, fh.keyframe, fh.fragmentIndex, chunk)
+                    val replaced = ByteArray(Framing.VIDEO_HEADER_BYTES + sealed.size)
+                    System.arraycopy(f, 0, replaced, 0, Framing.VIDEO_HEADER_BYTES)
+                    System.arraycopy(sealed, 0, replaced, Framing.VIDEO_HEADER_BYTES, sealed.size)
+                    body = replaced
+                }
+                val wire = ByteArray(body.size + 1)
                 wire[0] = Framing.RECORD_VIDEO.toByte()
-                System.arraycopy(f, 0, wire, 1, f.size)
+                System.arraycopy(body, 0, wire, 1, body.size)
                 datagrams.add(DatagramPacket(wire, wire.size, target))
             }
             for (p in datagrams) socket.send(p)

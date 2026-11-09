@@ -236,3 +236,49 @@ iperf3 -c 112.74.85.74 -p 5201 -t 30 -u -b 100M  # UDP 上行（Jitter/丢包列
 
 ### 2.3 源端通道晋升语义（2026-11-09）
 LanDirectBackend SOURCE 角色自本日起为 **pending→promote** 两段式：accept 的新连接先挂 pending，收到其第一条控制记录（合法 HELLO）才晋升为现役通道并退役旧通道（last-HELLO-wins）。裸 TCP 连接（探针/扫描器/健康检查）不再踢会话。同一时间仍只支持一个活跃客户端——后连接的真客户端会踢掉前者（`installChannel`/`onChannelControl`）。配套：`adb-forward-keepalive.service`（5s 自检，重建消失的 forward 规则，脚本 scripts/adb_forward_keepalive.sh）。
+
+## 10. 跨网 P2P 打洞与加密开关真机手册（p2p-crossnet-traversal 5.2）
+
+### 10.1 真机跨网打洞步骤（蜂窝/办公网客户端 ↔ 家庭宽带源端）
+
+1. **源端（家庭宽带侧）**：启动 SourceActivity（前台服务 + MediaProjection 授权），
+   记下配对 token 与公网中转（frp，TCP:22333 / UDP:22334 隧道）可达性。
+2. **客户端（另一网络侧）**：ConnectActivity 填 host（frp 公网地址）+ token，
+   backend 选 `p2p`，保持「端到端加密」开关状态（默认开）。
+3. **握手**：客户端 HELLO 携多候选 offer（双 STUN 节点 SRFLX + 本地网卡候选，
+   `;nat=sym` 尾缀标识 symmetric 判定）；源端 HELLO_ACK 回多候选 answer。
+4. **打洞**：双端并行 out-probe 全候选集；对端 symmetric 时额外启用端口预测
+   （≤64 端口差分外推窗口批量探测，前向+后向）。
+5. **成功判定 = 实时状态视图（StatsView）transport 显示 `p2p(直连)`**；
+   显示 `p2p→frp(回落)` 即打洞失败走中转（功能可用但属 degraded，公网中转带宽受限）。
+   连接页状态区同时显示协商结果：`加密：AES-128-GCM` 或 `未加密（对端不支持）`。
+6. **端点迁移验证（蜂窝场景重点）**：会话中切换 Wi-Fi ↔ 蜂窝（出口映射变化），
+   客户端重跑 SRFLX 发现并经信令发 P2P_MIGRATE；预期画面短暂停顿后恢复（探针重连复用），
+   StatsView 统计连续不重置。蜂窝 NAT 常为 symmetric/池化，迁移恢复依赖 FRP 信令通道
+   在线——若中转也不可达，会话按既有断流逻辑终止。
+7. **常见失败排查**：双端均 strict（如双 symmetric/双 AP-RR）时直连成功率低（见 §10.3
+   natlab 矩阵），属预期——公网中转兜底保证会话建立；打洞耗时 >5s 自动回落。
+
+### 10.2 加密开关位置说明
+
+- **入口**：ConnectActivity 连接表单复选框「**端到端加密（AES-128-GCM，对端不支持自动
+  回落明文）**」，缺省勾选；开关随连接档案持久化（每档案独立，回填显示）。
+- **生效口径**：开关只表达本端意图；实际是否加密由握手协商决定（双端都带协商块且都
+  开启 → AES-128-GCM；任一端老版本/关闭 → 明文，协议逐字节与 v1 现状一致）。
+- **结果显示**：连接成功后状态区显示「加密：AES-128-GCM / 未加密（对端不支持）」，
+  logcat `session ready, 加密：…` 同步输出；会话中可从实时状态视图持续确认。
+- **运维注意**：加密仅作用于流内容（视频片 + 控制记录，含 +16B/片开销）；打洞探针帧
+  （sequence=0）恒明文，不泄露密钥材料。
+
+### 10.3 natlab 结论「实验室口径」标注
+
+本文档与 SPEC 引用的 natlab 数据（`docs/natlab-matrix.json`）均为**实验室口径**，
+不得直接外推为真实蜂窝/家宽成功率：
+
+- NAT 用 Linux netns + iptables 构造（EI 端口保持全锥 / AP-RR 受限锥 / symmetric
+  `--random-fully` / sym-seq 微池化段），内核 NAT 行为同构、无运营商级 QoS/限速/
+  应用层网关干扰；
+- STUN 节点与端点同宿主（时延 <10ms，打洞耗时数字只反映协议栈开销，不含真实 RTT）；
+- 矩阵结论的**有效范围**：协议栈逻辑正确性（多候选汇总、symmetric 判定、预测装配、
+  迁移恢复、FRP 兜底不阻塞），而非「某类真实 NAT 下命中率 X%」；
+- 真机口径请按 §10.1 步骤实测，成功判定以 StatsView transport 显示为准。
