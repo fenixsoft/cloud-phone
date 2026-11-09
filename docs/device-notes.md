@@ -36,6 +36,13 @@
 - 参数变更（如矩阵的 720p30/1080p30 切换）必须**重新授权**后用新凭据重建管线：
   `run_matrix.ensure_pipeline` 在参数变化时自动重走授权 + `am start-foreground-service -a
   cloudphone.source.START_CAPTURE --ei width … --ei bitrateKbps …`。
+- **（2026-11-09 起，上述重新授权约束已被零令牌自适应取代）** 任意客户端档位（分辨率/
+  帧率/码率）即插即连，不再需要后台重新授权：`ScreenCapture.adaptTo()` 换编码器 surface
+  （`VirtualDisplay.setSurface` + 失败兜底 `vd.resize`），同一投影实例零令牌完成切档并即时
+  IDR；`ensureSharedCapture` 异参先 adapt、失败则保留现行管线照常挂接（HelloAck 回实际
+  尺寸，客户端 letterbox 兼容）。协议线格式未改，客户端 APK 无需更新。
+  实证：`scripts/test_adaptive_client.py` 两轮异参（1080x1920@30/5000 → 720x1280@24/3000）
+  经 127.0.0.1 与公网 112.74.85.74:22333 均 PASS（HelloAck ACCEPTED + adaptTo 日志 + 出帧）。
 - 顺序铁律：**必须先启动 `mediaProjection` 型前台服务，再调 `getMediaProjection`**
   （Android 14 要求授权时 FGS 已在运行，否则令牌无效）。`bootstrap_adb.sh` 与
   `MainActivity.requestProjection()` 均已保证该顺序。
@@ -206,3 +213,111 @@ OEM 电池白名单、锁屏 60s、1080p60 硬解 c2.qti 复核、硬编吞吐�
   全部成功；uid2000 下 CREATE 立即 `SecurityException: packageName must match the calling uid`）；
   MIRROR_LIMIT 诊断路径以故障注入复现 §2.1 特征实证（见检查表附录 A/B）。真机重测时以 §2.1 特征
   （PING 正常 + CREATE 静默消失 + 无 crash）为准绳，勿假定模拟器当日行为外推到真机。
+## 9. 真机游戏上行体验（gaming-uplink-1080p SPEC 3.2）
+
+> 模拟器软编 1080p60 编码吞吐上限 ≈4Mbps@12fps（docs/uplink-report.md 附录 A），高熵负载的
+> 码率/帧率结论在模拟器上「编码器即天花板」，**最终判定必须真机硬编复核**。本章为真机人工体验
+> 手册：每步可直接执行，判定全部数值化（非主观「感觉流畅」）。
+
+### 9.1 家庭上行基线测定（iperf3 对公网 VPS 单跑）
+
+先行测定——它是后续所有「码率不达标」归因的参照（家庭上行 vs VPS 中转两因素，uplink-report §frp 归因）。
+
+```bash
+# VPS 侧（112.74.85.74，或现有 frp 所在 VPS；先安装 iperf3：apt install -y iperf3）
+iperf3 -s -p 5201                      # 服务端常驻（防火墙放行 TCP/UDP 5201-5202）
+
+# 家庭侧（源端所在主机，即模拟器宿主机）
+iperf3 -c 112.74.85.74 -p 5201 -t 30 -P 4        # 上行带宽（4 并发，30s，取 SUM 行 Mbps）
+iperf3 -c 112.74.85.74 -p 5201 -t 30 -R          # 下行带宽（家庭下载方向）
+iperf3 -c 112.74.85.74 -p 5201 -t 30 -u -b 100M  # UDP 上行（Jitter/丢包列）
+```
+
+记录表：
+
+| 指标 | 实测值 | 判定 |
+|---|---|---|
+| TCP 上行 Mbps（SUM，30s） | ______ | ≥15Mbps 才够游戏档 1080p（设计区间 8–15Mbps + 头部余量） |
+| UDP 上行 Mbps / Jitter ms / 丢包 % | ______ | 丢包 <0.5% 为网络段 PASS 参照 |
+| RTT 基线（`ping -c 20 112.74.85.74` 取 avg） | ______ ms | 与压测期 RTT 对比算膨胀 |
+
+### 9.2 loadgen 高熵 App 步骤（串流链真机复测）
+
+1. 真机装源端与 loadgen：`adb -s <真机serial> install -r source/app/build/outputs/apk/debug/app-debug.apk source/loadgen/app/build/outputs/apk/debug/app-debug.apk`；完成投影授权（`scripts/bootstrap_adb.sh grant`，顺序铁律见 §2）。
+2. 启动高熵负载：`adb shell am start -S -n cloudphone.loadgen/.GameLoadActivity --es entropy mid`（三档 low/mid/high；档位定义=编码器实际输出，见 uplink-report 附录 A）。
+3. 客户端连真机源端（frp 路径），会话参数 1080p60 / 10000kbps。
+4. 每 2 分钟记录 StatsView（抽屉内）：fps / 码率 kbps / RTT ms / 丢包 %，连续 ≥10 分钟 → 填 §9.4 表。
+
+### 9.3 真实游戏步骤（最终判定）
+
+1. 真机源端装 1–2 款自选真实游戏（x86 兼容性自担，不做自动化——用户已确认）。
+2. 串流游戏档 1080p60（码率目标 ≥10000kbps），实际游玩（战斗/加载/转场均覆盖）≥10 分钟。
+3. 每 2 分钟记录一次 StatsView 四项 + 主观评分（1=不可接受 … 5=与本地无差异），填 §9.4 表。
+4. 网络段异常时补充：`adb -s <客户端serial> shell ss -tn` 截图（对端归属）+ 客户端 logcat `cloudphone-latency` 尾迹。
+
+### 9.4 记录表（每 2 分钟一档，≥10 分钟 = ≥5 行）
+
+| 时刻 | 内容 | fps | 码率(kbps) | RTT(ms) | 丢包(%) | 主观(1–5) |
+|---|---|---|---|---|---|---|
+| 0–2min | | | | | | |
+| 2–4min | | | | | | |
+| 4–6min | | | | | | |
+| 6–8min | | | | | | |
+| 8–10min | | | | | | |
+
+### 9.5 量化判定（全部满足才算真机 PASS）
+
+- 稳态 fps ≥50（60fps 会话）；
+- 稳态码率 ≥8Mbps（若码率 <8Mbps 且 StatsView fps 满 60：编码器受限 → ENCODER_CAPPED-真机复核不成立，按 §9.1 基线与 RTT 膨胀判网络段）；
+- 丢片率 <0.5%；RTT 膨胀 ≤ max(20ms, 2×§9.1 基线)；
+- 主观评分 ≥4 且无可感知卡顿记录；
+- 任一不达标：按 uplink-report §三段链式归因口径定位段（编码器/传输/网络），证据（StatsView 照片 + §9.1 数据）留档。
+
+### 2.3 源端通道晋升语义（2026-11-09）
+LanDirectBackend SOURCE 角色自本日起为 **pending→promote** 两段式：accept 的新连接先挂 pending，收到其第一条控制记录（合法 HELLO）才晋升为现役通道并退役旧通道（last-HELLO-wins）。裸 TCP 连接（探针/扫描器/健康检查）不再踢会话。同一时间仍只支持一个活跃客户端——后连接的真客户端会踢掉前者（`installChannel`/`onChannelControl`）。配套：`adb-forward-keepalive.service`（5s 自检，重建消失的 forward 规则，脚本 scripts/adb_forward_keepalive.sh）。
+
+## 10. 跨网 P2P 打洞与加密开关真机手册（p2p-crossnet-traversal 5.2）
+
+### 10.1 真机跨网打洞步骤（蜂窝/办公网客户端 ↔ 家庭宽带源端）
+
+1. **源端（家庭宽带侧）**：启动 SourceActivity（前台服务 + MediaProjection 授权），
+   记下配对 token 与公网中转（frp，TCP:22333 / UDP:22334 隧道）可达性。
+2. **客户端（另一网络侧）**：ConnectActivity 填 host（frp 公网地址）+ token，
+   backend 选 `p2p`，保持「端到端加密」开关状态（默认开）。
+3. **握手**：客户端 HELLO 携多候选 offer（双 STUN 节点 SRFLX + 本地网卡候选，
+   `;nat=sym` 尾缀标识 symmetric 判定）；源端 HELLO_ACK 回多候选 answer。
+4. **打洞**：双端并行 out-probe 全候选集；对端 symmetric 时额外启用端口预测
+   （≤64 端口差分外推窗口批量探测，前向+后向）。
+5. **成功判定 = 实时状态视图（StatsView）transport 显示 `p2p(直连)`**；
+   显示 `p2p→frp(回落)` 即打洞失败走中转（功能可用但属 degraded，公网中转带宽受限）。
+   连接页状态区同时显示协商结果：`加密：AES-128-GCM` 或 `未加密（对端不支持）`。
+6. **端点迁移验证（蜂窝场景重点）**：会话中切换 Wi-Fi ↔ 蜂窝（出口映射变化），
+   客户端重跑 SRFLX 发现并经信令发 P2P_MIGRATE；预期画面短暂停顿后恢复（探针重连复用），
+   StatsView 统计连续不重置。蜂窝 NAT 常为 symmetric/池化，迁移恢复依赖 FRP 信令通道
+   在线——若中转也不可达，会话按既有断流逻辑终止。
+7. **常见失败排查**：双端均 strict（如双 symmetric/双 AP-RR）时直连成功率低（见 §10.3
+   natlab 矩阵），属预期——公网中转兜底保证会话建立；打洞耗时 >5s 自动回落。
+
+### 10.2 加密开关位置说明
+
+- **入口**：ConnectActivity 连接表单复选框「**端到端加密（AES-128-GCM，对端不支持自动
+  回落明文）**」，缺省勾选；开关随连接档案持久化（每档案独立，回填显示）。
+- **生效口径**：开关只表达本端意图；实际是否加密由握手协商决定（双端都带协商块且都
+  开启 → AES-128-GCM；任一端老版本/关闭 → 明文，协议逐字节与 v1 现状一致）。
+- **结果显示**：连接成功后状态区显示「加密：AES-128-GCM / 未加密（对端不支持）」，
+  logcat `session ready, 加密：…` 同步输出；会话中可从实时状态视图持续确认。
+- **运维注意**：加密仅作用于流内容（视频片 + 控制记录，含 +16B/片开销）；打洞探针帧
+  （sequence=0）恒明文，不泄露密钥材料。
+
+### 10.3 natlab 结论「实验室口径」标注
+
+本文档与 SPEC 引用的 natlab 数据（`docs/natlab-matrix.json`）均为**实验室口径**，
+不得直接外推为真实蜂窝/家宽成功率：
+
+- NAT 用 Linux netns + iptables 构造（EI 端口保持全锥 / AP-RR 受限锥 / symmetric
+  `--random-fully` / sym-seq 微池化段），内核 NAT 行为同构、无运营商级 QoS/限速/
+  应用层网关干扰；
+- STUN 节点与端点同宿主（时延 <10ms，打洞耗时数字只反映协议栈开销，不含真实 RTT）；
+- 矩阵结论的**有效范围**：协议栈逻辑正确性（多候选汇总、symmetric 判定、预测装配、
+  迁移恢复、FRP 兜底不阻塞），而非「某类真实 NAT 下命中率 X%」；
+- 真机口径请按 §10.1 步骤实测，成功判定以 StatsView transport 显示为准。

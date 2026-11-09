@@ -1,0 +1,47 @@
+{
+ "spec": "gaming-uplink-1080p",
+ "generated_at": "2026-11-09 12:03:30",
+ "params": {
+  "res": "1920x1080@60",
+  "steady": 60,
+  "duration": 120,
+  "targets": {
+   "low": 10000,
+   "mid": 10000,
+   "high": 20000
+  }
+ },
+ "groups": [
+  {
+   "backend": "lan-direct",
+   "tier": "high",
+   "duration": 60,
+   "kind": "probe",
+   "target_kbps": 20000,
+   "sustained_kbps": 8124.4026375,
+   "fps_mean": 24.213543575,
+   "fps_recv": 24.275,
+   "loss_mean": 0.0,
+   "loss_max": 0.0,
+   "rtt_mean": 0.0,
+   "delay_p50": 0,
+   "delay_p95": 3,
+   "enc_out_mbps": 8.0943092,
+   "enc_fps": 24.125,
+   "enc_max_gap_ms": 80,
+   "rtt_baseline": -1.0,
+   "rtt_inflate_ms": -1.0,
+   "rtt_client_mean": 8.3,
+   "rtt_client_baseline": -1.0,
+   "rtt_client_inflate": -1.0,
+   "transport_endpoint": "endpoint-seen:10.0.2.2",
+   "baseline_kbps": -1.0,
+   "disconnects": 0,
+   "encoder_capped": false,
+   "network_pass": null,
+   "verdict": "DATA",
+   "attribution": "编码器输出 8.09Mbps@24.1fps，传输侧 sustained 8124kbps",
+   "samples": 40
+  }
+ ]
+}

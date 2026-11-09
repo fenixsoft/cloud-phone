@@ -40,6 +40,13 @@ class StatsView @JvmOverloads constructor(
         }
         val newLines = buildList {
             add("传输: $transport")
+            // 加密协商结果（p2p-crossnet-traversal 3.2）：读 ClientSession 会话态
+            add(
+                when (ClientSession.negotiatedCryptoAlgo) {
+                    cloudphone.transport.CryptoAlgo.AES128_GCM -> "加密: AES-128-GCM"
+                    else -> "未加密（对端不支持）"
+                },
+            )
             if (stats != null) {
                 add("帧率: ${"%.1f".format(stats.fps)} fps")
                 add("码率: ${"%.0f".format(stats.bitrateKbps)} kbps")

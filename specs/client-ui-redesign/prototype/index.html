@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CloudPhone 客户端 · 界面原型（client-ui-redesign）</title>
+<style>
+/* ============ 设计令牌（候选，来源：ui-ux-pro-max --design-system + 反俗套修订） ============ */
+:root{
+  --backdrop:#07070C;
+  --bg:#0B0B10;            /* 深空黑 */
+  --surface:#101018;       /* 输入/嵌面 */
+  --card:#1E1E23;          /* 碳板 */
+  --card-2:#232329;
+  --text:#F8FAFC;          /* 星白 */
+  --dim:#94A3B8;           /* 雾灰 */
+  --faint:#64748B;
+  --border:#1E293B;        /* 界线 */
+  --border-soft:#232B3A;
+  --accent:#3B82F6;        /* 发射蓝 */
+  --accent-hi:#60A5FA;
+  --on-accent:#04101F;
+  --ok:#34D399;            /* 信号绿 */
+  --warn:#F59E0B;
+  --danger:#EF4444;        /* 警戒红 */
+  --ring:rgba(59,130,246,.35);
+  --sans:"Roboto","Noto Sans SC","PingFang SC","Microsoft YaHei",-apple-system,"Segoe UI",sans-serif;
+  --mono:"Roboto Mono",ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;
+  --r-s:10px; --r-m:14px; --r-l:18px; --r-xl:28px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--backdrop);color:var(--text);font-family:var(--sans);
+  -webkit-font-smoothing:antialiased;
+}
+body::before{ /* 桌面舞台：淡网格底纹（签名元素之一，克制的 HUD 氛围） */
+  content:"";position:fixed;inset:0;pointer-events:none;opacity:.5;
+  background-image:
+    linear-gradient(rgba(148,163,184,.045) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(148,163,184,.045) 1px,transparent 1px);
+  background-size:36px 36px;
+}
+button{font-family:var(--sans)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.mono{font-family:var(--mono)}
+.ic{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.ic-16{width:16px;height:16px}
+.ic-18{width:18px;height:18px}
+.ic-28{width:28px;height:28px}
+
+/* ============ 舞台布局 ============ */
+.stage{position:relative;min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 24px 48px}
+.proto-banner{
+  width:100%;max-width:1080px;display:flex;align-items:center;gap:12px;
+  padding:12px 18px;border-radius:14px;
+  border:1px solid rgba(245,158,11,.38);background:rgba(245,158,11,.08);color:#FCD34D;
+  font:600 13px/1.5 var(--sans);
+}
+.proto-banner .warn-ico{color:#F59E0B}
+.proto-banner .ban-sub{font-weight:500;color:rgba(252,211,77,.78)}
+.layout{display:flex;gap:28px;align-items:flex-start;justify-content:center;flex-wrap:wrap;width:100%}
+
+/* 侧栏（演示控制 + 说明） */
+.side{width:300px;display:flex;flex-direction:column;gap:14px;position:sticky;top:20px}
+.side-card{background:rgba(20,20,27,.72);border:1px solid var(--border);border-radius:16px;padding:14px 16px;backdrop-filter:blur(4px)}
+.side h3{margin:0 0 10px;font:700 12px var(--sans);color:var(--dim);letter-spacing:.1em}
+.side p{margin:0;font:400 12.5px/1.7 var(--sans);color:var(--dim)}
+.side p b{color:var(--text);font-weight:600}
+.linkrow{display:flex;flex-wrap:wrap;gap:8px}
+.chipbtn{
+  height:34px;padding:0 12px;border-radius:999px;border:1px solid var(--border);
+  background:var(--surface);color:var(--text);font:500 12.5px var(--sans);cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;transition:all .15s ease;
+}
+.chipbtn:hover{border-color:var(--accent);color:var(--accent-hi)}
+.chipbtn.warn{border-color:rgba(245,158,11,.4);color:#FCD34D}
+kbd{font:600 11px var(--mono);background:var(--card-2);border:1px solid var(--border-soft);border-bottom-width:2px;border-radius:6px;padding:1px 6px;color:var(--dim)}
+
+/* ============ 手机机身 ============ */
+.phone-wrap{padding:6px}
+.phone{
+  position:relative;width:393px;height:832px;background:var(--bg);
+  border:10px solid #101018;border-radius:46px;overflow:hidden;
+  box-shadow:0 0 0 1px #26263a,0 34px 90px rgba(0,0,0,.65),0 8px 24px rgba(0,0,0,.5);
+  display:flex;flex-direction:column;
+}
+.statusbar{
+  height:30px;flex:none;display:flex;align-items:center;justify-content:space-between;
+  padding:0 20px;color:var(--text);font:600 12px var(--mono);letter-spacing:.02em;
+}
+.statusbar .sb-icons{display:flex;align-items:center;gap:6px;color:var(--dim)}
+.screens{position:relative;flex:1;min-height:0}
+.gesture-pill{position:absolute;left:50%;bottom:7px;transform:translateX(-50%);width:118px;height:4px;border-radius:999px;background:rgba(255,255,255,.4);z-index:70;pointer-events:none}
+
+/* ============ 屏幕路由 ============ */
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:var(--bg)}
+.screen.active{display:flex;animation:screenIn .18s ease}
+@keyframes screenIn{from{opacity:.4;transform:translateY(6px)}to{opacity:1;transform:none}}
+.scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-bottom:28px}
+.scroll::-webkit-scrollbar{width:4px}
+.scroll::-webkit-scrollbar-thumb{background:#2A2A38;border-radius:99px}
+
+/* 顶栏 */
+.topbar{height:62px;flex:none;display:flex;align-items:center;gap:8px;padding:0 8px}
+.tb-title{flex:1;min-width:0}
+.tb-t{font:700 17px/1.2 var(--sans)}
+.tb-sub{font:400 12px var(--sans);color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brand{display:flex;align-items:center;gap:9px;flex:1;padding-left:8px}
+.brand-dot{width:26px;height:26px;border-radius:9px;background:linear-gradient(135deg,var(--accent),#1D4ED8);display:grid;place-items:center;color:#04101F;box-shadow:0 0 14px rgba(59,130,246,.35)}
+.brand-dot .ic{width:16px;height:16px}
+.brand-name{font:700 16.5px var(--sans);letter-spacing:.01em}
+.brand-tag{font:600 10.5px var(--mono);color:var(--faint);border:1px solid var(--border);border-radius:6px;padding:2px 6px;letter-spacing:.06em}
+.topbar-actions{display:flex;gap:2px}
+
+/* 通用控件 */
+.iconbtn{
+  width:44px;height:44px;border:none;border-radius:12px;background:transparent;color:var(--dim);
+  display:grid;place-items:center;cursor:pointer;transition:all .15s ease;
+}
+.iconbtn:hover{background:var(--card-2);color:var(--text)}
+.iconbtn.on-dark{color:rgba(255,255,255,.85)}
+.iconbtn.on-dark:hover{background:rgba(255,255,255,.12);color:#fff}
+.btn{
+  height:44px;padding:0 18px;border-radius:999px;border:1px solid var(--border);
+  background:var(--card-2);color:var(--text);font:600 14px var(--sans);cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;transition:all .15s ease;white-space:nowrap;
+}
+.btn:hover{border-color:var(--border-soft);filter:brightness(1.12)}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--accent);border-color:transparent;color:var(--on-accent)}
+.btn-primary:hover{background:var(--accent-hi)}
+.btn-danger{color:#FCA5A5;border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.08)}
+.btn-danger:hover{border-color:rgba(239,68,68,.6)}
+.btn-ghost{background:transparent}
+.btn-sm{height:36px;padding:0 14px;font-size:13px}
+.chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:999px;font:600 12px var(--sans);white-space:nowrap}
+.chip .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.chip-ok{background:rgba(52,211,153,.13);color:#6EE7B7;border:1px solid rgba(52,211,153,.28)}
+.chip-ok .dot{background:var(--ok);box-shadow:0 0 8px rgba(52,211,153,.7)}
+.chip-off{background:rgba(148,163,184,.1);color:var(--dim);border:1px solid var(--border)}
+.chip-off .dot{background:var(--faint)}
+.chip-blue{background:rgba(59,130,246,.14);color:#93C5FD;border:1px solid rgba(59,130,246,.3)}
+.badge-reserved{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:999px;font:600 11px var(--sans);color:#7DD3FC;background:rgba(125,211,252,.1);border:1px solid rgba(125,211,252,.25)}
+
+/* 分区标题 */
+.sec-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:18px 18px 10px}
+.sec-title{font:700 13px var(--sans);color:var(--dim);letter-spacing:.08em}
+.sec-sub{font:500 12px var(--mono);color:var(--faint)}
+
+/* ============ 首页 · 连接 ============ */
+.net-chip{
+  margin:6px 16px 12px;display:flex;align-items:center;gap:8px;
+  padding:9px 13px;border-radius:12px;border:1px solid var(--border);background:var(--card);
+  font:500 12.5px var(--sans);color:var(--dim);
+}
+.net-chip .ic{color:var(--ok)}
+.net-chip .mono{color:var(--faint);font-size:11.5px}
+
+.scan-panel{
+  margin:0 16px;border:1px solid var(--border);border-radius:var(--r-l);background:var(--card);
+  padding:16px;display:flex;align-items:center;gap:16px;
+}
+.radar{width:104px;height:104px;flex:none;border-radius:50%;position:relative;border:1px solid var(--border-soft);background:radial-gradient(circle at 50% 50%,rgba(59,130,246,.12),transparent 70%)}
+.radar .ring{position:absolute;border:1px dashed rgba(148,163,184,.22);border-radius:50%}
+.radar .r1{inset:17px}.radar .r2{inset:34px}
+.radar .sweep{
+  position:absolute;inset:4px;border-radius:50%;
+  background:conic-gradient(from 0deg,rgba(59,130,246,.5),rgba(59,130,246,.07) 55deg,transparent 70deg);
+  animation:spin 2.2s linear infinite;
+}
+.radar .blip{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px rgba(52,211,153,.8);animation:ping 2.2s ease-out infinite}
+.radar .b1{top:24px;right:28px}
+.radar .b2{bottom:22px;left:32px;animation-delay:1.1s}
+@keyframes spin{to{transform:rotate(1turn)}}
+@keyframes ping{0%{opacity:0;transform:scale(.4)}30%{opacity:1}100%{opacity:0;transform:scale(1.2)}}
+.scan-main{flex:1;min-width:0}
+.scan-title{font:600 14.5px var(--sans)}
+.scan-sub{font:500 11.5px var(--mono);color:var(--dim);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.scan-bar{height:4px;border-radius:99px;background:var(--surface);margin-top:10px;overflow:hidden}
+.scan-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-hi));border-radius:99px;transition:width .12s linear}
+
+/* 设备卡片（移动端纵向：头部 / 信息 / 操作） */
+.dev-card{
+  display:block;margin:0 16px 10px;padding:14px;
+  background:var(--card);border:1px solid var(--border);border-radius:var(--r-m);
+  transition:border-color .15s ease;
+}
+.dev-card:hover{border-color:var(--border-soft)}
+.dev-card.offline{opacity:.72}
+.dev-ava{position:relative;width:46px;height:46px;flex:none;border-radius:14px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.3);display:grid;place-items:center;color:#93C5FD}
+.dev-card.offline .dev-ava{background:var(--card-2);border-color:var(--border);color:var(--faint)}
+.dev-live{position:absolute;right:-2px;bottom:-2px;width:12px;height:12px;border-radius:50%;background:var(--ok);border:2.5px solid var(--card);box-shadow:0 0 8px rgba(52,211,153,.8)}
+.dev-card.offline .dev-live{background:var(--faint);box-shadow:none}
+.dev-head{display:flex;align-items:center;gap:12px}
+.dev-name{display:flex;align-items:center;gap:8px;font:600 15px var(--sans);flex:1;min-width:0}
+.dev-name .nt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dev-info{margin-top:11px;padding-top:11px;border-top:1px dashed var(--border);display:grid;gap:5px}
+.kv{display:flex;align-items:baseline;gap:10px;font:400 12px var(--sans)}
+.kv .k{flex:none;width:4em;color:var(--faint)}
+.kv .v{color:var(--dim);font-weight:500;min-width:0;word-break:break-all}
+.kv .v.mono{font:500 12px var(--mono)}
+.dev-foot{display:flex;align-items:center;gap:8px}
+.dev-foot .btn-primary{margin-left:auto}
+
+/* 空态 */
+.empty{margin:8px 16px;border:1px dashed var(--border-soft);border-radius:var(--r-l);padding:30px 20px;text-align:center}
+.empty-ico{width:56px;height:56px;margin:0 auto 14px;border-radius:18px;background:var(--card);border:1px solid var(--border);display:grid;place-items:center;color:var(--faint)}
+.empty-title{font:600 15.5px var(--sans)}
+.empty-sub{font:400 13px/1.6 var(--sans);color:var(--dim);margin-top:6px}
+.empty-sub .mono{font-size:12px}
+.empty-actions{display:flex;justify-content:center;gap:10px;margin-top:18px}
+
+/* 手动保存列表 */
+.add-card{
+  width:calc(100% - 32px);margin:0 16px 10px;padding:14px;display:flex;align-items:center;gap:12px;
+  border:1.5px dashed var(--border-soft);border-radius:var(--r-m);background:transparent;color:var(--dim);
+  font:600 14px var(--sans);cursor:pointer;transition:all .15s ease;
+}
+.add-card:hover{border-color:var(--accent);color:var(--accent-hi);background:rgba(59,130,246,.05)}
+.add-card .plus-ava{width:38px;height:38px;border-radius:12px;border:1px dashed var(--border-soft);display:grid;place-items:center}
+
+/* ============ 底部弹层（新建连接） ============ */
+.veil{position:absolute;inset:0;background:rgba(4,4,8,.62);opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:30}
+.veil.show{opacity:1;pointer-events:auto}
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;max-height:90%;z-index:35;
+  background:#16161D;border-top:1px solid var(--border-soft);border-radius:var(--r-xl) var(--r-xl) 0 0;
+  transform:translateY(105%);transition:transform .24s cubic-bezier(.2,.8,.2,1);
+  display:flex;flex-direction:column;box-shadow:0 -18px 50px rgba(0,0,0,.5);
+}
+.sheet.open{transform:none}
+.sheet-grip{width:40px;height:4px;border-radius:99px;background:#2E2E3A;margin:10px auto 2px;flex:none}
+.sheet-head{display:flex;align-items:center;gap:6px;padding:4px 12px 10px;flex:none}
+.sheet-head h2{margin:0;font:700 17px var(--sans);flex:1}
+.sheet-hint{font:400 11.5px var(--sans);color:var(--faint)}
+.sheet-body{overflow-y:auto;padding:2px 18px 20px}
+.sheet-body::-webkit-scrollbar{width:4px}
+.sheet-body::-webkit-scrollbar-thumb{background:#2A2A38;border-radius:99px}
+.field{display:block;margin-top:14px}
+.field .lab{display:block;font:600 12px var(--sans);color:var(--dim);margin-bottom:6px;letter-spacing:.03em}
+.field input,.field select{
+  width:100%;height:46px;background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  color:var(--text);font:500 14px var(--sans);padding:0 13px;transition:border-color .15s ease,box-shadow .15s ease;
+}
+.field input.mono,.field select.mono{font-family:var(--mono);font-size:13.5px}
+.field input::placeholder{color:var(--faint)}
+.field input:focus,.field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+.frow{display:flex;gap:10px}
+.frow .grow{flex:1}
+.frow label{min-width:0}
+.frow .field{margin-top:14px}
+.hint{font:400 11.5px/1.6 var(--sans);color:var(--faint);margin-top:6px}
+.seg{margin-top:16px}
+.seg-lab{display:block;font:600 12px var(--sans);color:var(--dim);margin-bottom:8px;letter-spacing:.03em}
+.seg-btns{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.segbtn{
+  height:54px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--dim);
+  cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;transition:all .15s ease;
+}
+.segbtn b{font:600 12.5px var(--mono);letter-spacing:.01em}
+.segbtn small{font:400 11px var(--sans);color:var(--faint)}
+.segbtn:hover{border-color:var(--border-soft)}
+.segbtn.active{border-color:var(--accent);background:rgba(59,130,246,.12);color:var(--text);box-shadow:inset 0 0 0 1px var(--accent)}
+.segbtn.active small{color:#93C5FD}
+details.adv{margin-top:16px;border:1px solid var(--border);border-radius:14px;background:var(--surface);overflow:hidden}
+details.adv summary{
+  list-style:none;cursor:pointer;padding:13px 14px;font:600 13px var(--sans);color:var(--dim);
+  display:flex;align-items:center;gap:8px;user-select:none;
+}
+details.adv summary::-webkit-details-marker{display:none}
+details.adv summary .ic{transition:transform .18s ease}
+details.adv[open] summary .ic{transform:rotate(90deg)}
+details.adv summary:hover{color:var(--text)}
+.adv-body{padding:2px 14px 14px}
+.sheet-actions{display:flex;gap:10px;margin-top:18px}
+.sheet-actions .btn{flex:1}
+
+/* ============ 控制台（系统画面 / 单应用） ============ */
+.console{position:absolute;inset:0;background:#050508}
+.viewport{position:absolute;inset:0;overflow:hidden}
+.viewport .ic{color:#fff}
+
+/* 假·源端系统画面 */
+.fake-src{
+  position:absolute;inset:0;display:flex;flex-direction:column;padding:12px 14px 0;
+  background:
+    radial-gradient(90% 55% at 88% -8%,rgba(59,130,246,.22),transparent 60%),
+    radial-gradient(110% 80% at 12% 108%,rgba(16,185,129,.10),transparent 55%),
+    linear-gradient(160deg,#111827,#0B0B10 72%);
+}
+.fs-status{display:flex;justify-content:space-between;align-items:center;font:600 11.5px var(--mono);color:rgba(255,255,255,.85)}
+.fs-sig{display:flex;gap:6px;align-items:center;color:rgba(255,255,255,.8)}
+.fs-clock{margin:34px 6px 0}
+.fs-time{font:300 62px/1 var(--sans);letter-spacing:-.02em;color:#F8FAFC}
+.fs-date{font:400 13.5px var(--sans);color:var(--dim);margin-top:6px}
+.fs-search{
+  margin:26px 4px 0;height:42px;border-radius:999px;background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.10);display:flex;align-items:center;gap:9px;padding:0 16px;
+  color:rgba(255,255,255,.6);font:400 13.5px var(--sans);
+}
+.fs-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;padding:22px 6px 0}
+.fs-app{display:flex;flex-direction:column;align-items:center;gap:6px}
+.fs-appi{width:50px;height:50px;border-radius:15px;display:grid;place-items:center;color:rgba(6,10,18,.85);box-shadow:0 4px 10px rgba(0,0,0,.35)}
+.fs-appi .ic{width:24px;height:24px;stroke-width:2}
+.fs-appl{font:400 11px var(--sans);color:rgba(255,255,255,.75)}
+.fs-dock{
+  margin-top:auto;margin-bottom:26px;border-radius:24px;background:rgba(255,255,255,.09);
+  border:1px solid rgba(255,255,255,.08);padding:11px;display:flex;justify-content:space-around;backdrop-filter:blur(6px);
+}
+.fs-dock .fs-appi{width:52px;height:52px}
+
+/* 假·单应用游戏画面 */
+.fake-game{position:absolute;inset:0;background:linear-gradient(180deg,#141C26 0%,#0D131B 55%,#090D12 100%);overflow:hidden}
+.fg-glow{position:absolute;top:12%;left:50%;transform:translateX(-50%);width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(245,158,11,.16),transparent 65%)}
+.fg-floor{position:absolute;left:0;right:0;bottom:0;height:34%;background:repeating-linear-gradient(90deg,rgba(148,163,184,.06) 0 2px,transparent 2px 44px),linear-gradient(180deg,transparent,rgba(2,4,8,.8))}
+.fg-horizon{position:absolute;left:8%;right:8%;bottom:33%;height:2px;background:linear-gradient(90deg,transparent,rgba(245,158,11,.5),transparent)}
+.fg-top{position:absolute;top:14px;left:14px;right:14px;display:flex;align-items:center;gap:10px}
+.fg-hp{flex:none;width:130px;height:10px;border-radius:99px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.2);overflow:hidden}
+.fg-hp i{display:block;height:100%;width:72%;background:linear-gradient(90deg,#34D399,#10B981)}
+.fg-chip{height:22px;display:inline-flex;align-items:center;padding:0 9px;border-radius:8px;background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.18);font:600 11.5px var(--mono);color:rgba(255,255,255,.85)}
+.fg-map{position:absolute;top:52px;right:14px;width:64px;height:64px;border-radius:50%;border:1.5px solid rgba(255,255,255,.25);background:rgba(10,14,20,.6);overflow:hidden}
+.fg-map::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:rgba(255,255,255,.18)}
+.fg-map::after{content:"";position:absolute;top:50%;left:0;right:0;height:1px;background:rgba(255,255,255,.18)}
+.fg-map i{position:absolute;width:10px;height:10px;border-radius:2px;background:rgba(245,158,11,.8);left:24px;top:22px;box-shadow:0 0 8px rgba(245,158,11,.7)}
+.fg-stick{position:absolute;bottom:96px;width:66px;height:66px;border-radius:50%;border:2px solid rgba(255,255,255,.3);background:rgba(255,255,255,.06)}
+.fg-stick::after{content:"";position:absolute;inset:19px;border-radius:50%;background:rgba(255,255,255,.35)}
+.fg-stick.l{left:20px}
+.fg-stick.r{right:20px;border-style:dashed}
+.fg-skills{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);display:flex;align-items:flex-end;gap:12px}
+.fg-skill{width:46px;height:46px;border-radius:50%;border:2px solid rgba(255,255,255,.35);background:rgba(255,255,255,.08);display:grid;place-items:center;font:700 13px var(--mono);color:rgba(255,255,255,.75)}
+.fg-skill.big{width:60px;height:60px;border-color:rgba(245,158,11,.7);background:rgba(245,158,11,.15);color:#FCD34D}
+.fg-tag{position:absolute;left:16px;bottom:30px;font:500 12px var(--mono);color:rgba(255,255,255,.5)}
+.fg-vignette{position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 100% at 50% 50%,transparent 60%,rgba(0,0,0,.5))}
+
+.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:20}
+.flash.go{animation:flash .38s ease-out}
+@keyframes flash{0%{opacity:.85}100%{opacity:0}}
+
+/* 控制台顶部悬浮 HUD */
+.console-top{
+  position:absolute;top:0;left:0;right:0;z-index:15;display:flex;align-items:flex-start;gap:6px;
+  padding:10px 8px 26px;background:linear-gradient(180deg,rgba(4,5,10,.82),rgba(4,5,10,0));
+}
+.ct-main{flex:1;min-width:0}
+.ct-title{display:flex;align-items:center;gap:8px;min-width:0}
+.ct-name{font:700 15.5px var(--sans);color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip-onair{background:rgba(52,211,153,.16);color:#6EE7B7;border:1px solid rgba(52,211,153,.35);font-family:var(--mono);font-weight:600;font-size:11px}
+.chip-mode{background:rgba(245,158,11,.15);color:#FCD34D;border:1px solid rgba(245,158,11,.35)}
+.chip-mode .chip-x{border:none;background:rgba(252,211,77,.15);color:#FCD34D;height:18px;padding:0 8px;border-radius:99px;font:600 11px var(--sans);cursor:pointer;margin-left:2px}
+.stats{display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px rgba(52,211,153,.7);animation:pulse 1.6s ease-in-out infinite;flex:none;margin-right:2px}
+@keyframes pulse{50%{opacity:.4}}
+.stat{height:24px;display:inline-flex;align-items:center;gap:4px;padding:0 9px;border-radius:8px;background:rgba(10,12,18,.66);border:1px solid rgba(148,163,184,.18);font:500 11.5px var(--mono);color:rgba(226,232,240,.85)}
+.stat b{color:#fff;font-weight:700}
+
+/* 控制台底部工具坞 */
+.dock{
+  position:absolute;left:12px;right:12px;bottom:16px;z-index:15;
+  background:rgba(16,17,24,.92);border:1px solid rgba(148,163,184,.16);border-radius:22px;
+  padding:8px 10px 10px;backdrop-filter:blur(8px);box-shadow:0 14px 40px rgba(0,0,0,.5);
+}
+.dock-quick{display:flex;justify-content:space-between;align-items:center;gap:2px}
+.qbtn{
+  height:44px;min-width:44px;padding:0 8px;border:none;border-radius:12px;background:transparent;color:var(--dim);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;transition:all .15s ease;flex:1;
+}
+.qbtn span{font:500 10px var(--sans);color:var(--faint)}
+.qbtn:hover{background:var(--card-2);color:var(--text)}
+.qbtn.accent{color:#93C5FD}
+.qbtn.accent:hover{color:#BFDBFE}
+.qchip{
+  flex:1;height:44px;border:none;border-radius:12px;background:rgba(59,130,246,.12);color:#93C5FD;
+  display:flex;align-items:center;justify-content:center;gap:5px;cursor:pointer;font:600 12px var(--mono);transition:all .15s ease;
+}
+.qchip:hover{background:rgba(59,130,246,.2);color:#BFDBFE}
+.dock-split{height:1px;background:rgba(148,163,184,.14);margin:8px 4px}
+.dock-bottom{display:flex;align-items:center;gap:8px}
+.dock-bottom .side-btn{
+  height:44px;padding:0 12px;border:none;border-radius:12px;background:transparent;color:var(--dim);
+  display:inline-flex;align-items:center;gap:6px;font:600 12.5px var(--sans);cursor:pointer;transition:all .15s ease;
+}
+.dock-bottom .side-btn:hover{background:var(--card-2);color:var(--text)}
+.dock-bottom .side-btn.power{color:#FCA5A5}
+.dock-bottom .side-btn.power:hover{background:rgba(239,68,68,.12);color:#FECACA}
+.navkeys{flex:1;display:flex;justify-content:center;gap:26px}
+.navbtn{
+  width:48px;height:48px;border:none;border-radius:14px;background:transparent;color:rgba(255,255,255,.8);
+  display:grid;place-items:center;cursor:pointer;transition:all .15s ease;
+}
+.navbtn:hover{background:rgba(255,255,255,.12);color:#fff}
+.navbtn .fillic{width:24px;height:24px;fill:currentColor;stroke:none}
+
+/* 会话抽屉 */
+.drawer{
+  position:absolute;top:0;right:0;bottom:0;width:302px;z-index:40;
+  background:rgba(18,18,25,.97);border-left:1px solid var(--border-soft);
+  transform:translateX(106%);transition:transform .22s cubic-bezier(.2,.8,.2,1);
+  display:flex;flex-direction:column;padding:14px 14px 18px;box-shadow:-20px 0 50px rgba(0,0,0,.5);
+}
+.drawer.open{transform:none}
+.drawer-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.drawer-head h2{margin:0;font:700 16px var(--sans)}
+.sess-card{border:1px solid var(--border);border-radius:14px;background:var(--card);padding:13px;margin-bottom:10px}
+.sess-top{display:flex;align-items:center;gap:8px}
+.sess-name{flex:1;font:600 14px var(--sans);min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sess-state{font:600 11px var(--sans)}
+.sess-state.run{color:#6EE7B7}
+.sess-state.idle{color:#FCD34D}
+.sess-sub{font:500 11.5px var(--mono);color:var(--dim);margin-top:5px}
+.sess-actions{display:flex;gap:8px;margin-top:11px}
+.sess-actions .btn{flex:1;height:36px;font-size:12.5px;padding:0 8px}
+.drawer-foot{margin-top:auto;display:flex;flex-direction:column;gap:8px}
+.drawer-foot .btn{width:100%}
+
+/* ============ 单应用列表 ============ */
+.searchbox{
+  flex:none;width:132px;height:40px;border:1px solid var(--border);border-radius:12px;background:var(--surface);
+  display:flex;align-items:center;gap:7px;padding:0 11px;color:var(--faint);transition:border-color .15s ease;
+}
+.searchbox:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+.searchbox input{flex:1;min-width:0;border:none;background:transparent;color:var(--text);font:400 13px var(--sans);outline:none}
+.searchbox input::placeholder{color:var(--faint)}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding:10px 16px 4px}
+.tile{
+  position:relative;border:1px solid var(--border);border-radius:16px;background:var(--card);
+  padding:13px 6px 11px;display:flex;flex-direction:column;align-items:center;gap:7px;cursor:pointer;
+  transition:all .15s ease;min-width:0;
+}
+.tile:hover{border-color:#2E3A52;transform:translateY(-1px);background:#232329}
+.tile:active{transform:none}
+.tile-ico{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;color:#0A0F18;box-shadow:0 3px 8px rgba(0,0,0,.3)}
+.tile-ico .ic{width:24px;height:24px;stroke-width:2}
+.tile-name{font:600 12.5px var(--sans);color:var(--text);max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile-pin{
+  position:absolute;top:5px;right:5px;width:30px;height:30px;border:none;border-radius:10px;
+  background:transparent;color:var(--faint);display:grid;place-items:center;cursor:pointer;transition:all .15s ease;
+}
+.tile-pin:hover{color:#FCD34D;background:rgba(245,158,11,.12)}
+.hue1{background:#5EEAD4}.hue2{background:#FCA5A5}.hue3{background:#86EFAC}.hue4{background:#93C5FD}
+.hue5{background:#FDE68A}.hue6{background:#C4B5FD}.hue7{background:#A5B4FC}.hue8{background:#F9A8D4}
+.hint-line{margin:10px 18px 0;font:400 12px/1.7 var(--sans);color:var(--faint)}
+.hint-line .mono{font-size:11px}
+
+/* ============ 设置 ============ */
+.group{margin:14px 16px 0;border:1px solid var(--border);border-radius:16px;background:var(--card);overflow:hidden}
+.group-h{display:flex;align-items:center;gap:8px;padding:13px 14px 6px;font:700 12px var(--sans);color:var(--dim);letter-spacing:.08em}
+.group-h .ic{color:var(--faint)}
+.row{min-height:52px;display:flex;align-items:center;gap:11px;padding:9px 14px;border-top:1px solid rgba(30,41,59,.55)}
+.row:first-of-type{border-top:none}
+.row-main{flex:1;min-width:0}
+.row-t{font:500 14.5px var(--sans);display:flex;align-items:center;gap:8px}
+.row-s{font:400 12px/1.5 var(--sans);color:var(--dim);margin-top:2px}
+.row .val{font:500 13px var(--sans);color:var(--dim);display:flex;align-items:center;gap:6px}
+.row .val.mono{font-size:12.5px}
+.row.link{cursor:pointer;transition:background .15s ease}
+.row.link:hover{background:rgba(148,163,184,.05)}
+.sw{position:relative;width:46px;height:28px;flex:none;display:inline-block}
+.sw input{position:absolute;inset:0;margin:0;appearance:none;-webkit-appearance:none;cursor:pointer;background:#2A2A33;border:1px solid var(--border);border-radius:999px;transition:all .18s ease}
+.sw input:checked{background:var(--accent);border-color:transparent}
+.sw i{position:absolute;top:5px;left:5px;width:18px;height:18px;border-radius:50%;background:#94A3B8;transition:all .18s ease;pointer-events:none}
+.sw input:checked + i{left:23px;background:var(--on-accent)}
+.ver-pill{font:600 11px var(--mono);color:var(--faint);border:1px solid var(--border);border-radius:7px;padding:2px 7px}
+
+/* Toast */
+.toast{
+  position:absolute;left:50%;bottom:96px;transform:translate(-50%,10px);z-index:60;
+  background:rgba(14,15,22,.95);border:1px solid var(--border-soft);color:var(--text);
+  padding:10px 17px;border-radius:999px;font:500 13px var(--sans);white-space:nowrap;
+  opacity:0;pointer-events:none;transition:all .2s ease;box-shadow:0 10px 30px rgba(0,0,0,.5);
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ============ 响应式与动效偏好 ============ */
+@media (max-width:1100px){.side{position:static;width:min(420px,100%)}}
+@media (max-width:520px){
+  .stage{padding:10px 8px 24px}
+  .layout{gap:12px}
+  .phone{width:100%;height:calc(100dvh - 150px);min-height:640px;border-radius:34px;border-width:6px}
+  .proto-banner{font-size:12px;padding:10px 12px}
+}
+@media (prefers-reduced-motion: reduce){
+  .radar .sweep,.radar .blip,.live-dot{animation:none}
+  .screen.active{animation:none}
+  .sheet,.drawer{transition:none}
+}
+</style>
+</head>
+<body>
+
+<!-- SVG 图标库（内联 sprite，无外部资源） -->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.04.05a2 2 0 1 1-2.83 2.83l-.05-.05a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.05.05a2 2 0 1 1-2.83-2.83l.05-.05a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.05-.05a2 2 0 1 1 2.83-2.83l.05.05a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.05-.05a2 2 0 1 1 2.83 2.83l-.05.05a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.03Z"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.8-3.8"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M9 20h6M12 16v4"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.6"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.6"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.6"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 8h9M18.5 8H20M4 16h1.5M11 16h9"/><circle cx="15.5" cy="8" r="2.2"/><circle cx="8" cy="16" r="2.2"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h.01M11 14h.01M15 14h.01M18 14h-1"/></symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24"><path d="M8.5 6.5 10 4h4l1.5 2.5H19A1.5 1.5 0 0 1 20.5 8v9a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 17V8A1.5 1.5 0 0 1 5 6.5h3.5Z"/><circle cx="12" cy="12.5" r="3.2"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/></symbol>
+  <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></symbol>
+  <symbol id="i-navback" viewBox="0 0 24 24"><path d="M16 5.5v13L6.5 12 16 5.5Z"/></symbol>
+  <symbol id="i-navhome" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5.5"/></symbol>
+  <symbol id="i-navrec" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9L17.5 7M10 10.5v6M14 10.5v6"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-.7 6.2 3.2 3.3H6.5l3.2-3.3L9 4ZM12 13.5V20"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M4 9.5a12 12 0 0 1 16 0M6.8 13a8 8 0 0 1 10.4 0M9.6 16.3a4 4 0 0 1 4.8 0M12 19h.01"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8h.01"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7 2.8V11c0 4.6-3 7.7-7 9.2-4-1.5-7-4.6-7-9.2V5.8L12 3Z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13.5A8 8 0 1 1 10.5 4 6.5 6.5 0 0 0 20 13.5Z"/></symbol>
+  <symbol id="i-palette" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 .3 18c1.5 0 2-1 1.4-2-.8-1.4.2-2.5 1.6-2.5H18a3.5 3.5 0 0 0 3-3.5C21 7.5 17 3 12 3Z"/><path d="M7.5 10h.01M10.5 7h.01M14.5 7h.01"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M8 5v14M16 5v14M3.5 9.5H8M3.5 14.5H8M16 9.5h4.5M16 14.5h4.5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.7 2.3 4 5.2 4 8.5s-1.3 6.2-4 8.5c-2.7-2.3-4-5.2-4-8.5s1.3-6.2 4-8.5Z"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3.5v8M6.8 7a8 8 0 1 0 10.4 0"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3.5 3.5 8l8.5 4.5L20.5 8 12 3.5Z"/><path d="M4.5 12.5 12 16.5l7.5-4M4.5 16.5 12 20.5l7.5-4"/></symbol>
+  <symbol id="i-music" viewBox="0 0 24 24"><path d="M9 17.5V6l10-2v11.5"/><circle cx="6.8" cy="17.5" r="2.2"/><circle cx="16.8" cy="15.5" r="2.2"/></symbol>
+  <symbol id="i-gamepad" viewBox="0 0 24 24"><path d="M7 8h10a5 5 0 0 1 5 5c0 2.5-2 4.5-4.2 4.5-1.3 0-2.2-.7-3-1.8L14 14.5h-4l-.8 1.2c-.8 1.1-1.7 1.8-3 1.8C4 17.5 2 15.5 2 13a5 5 0 0 1 5-5Z"/><path d="M7.5 10.5v3M6 12h3M15.5 11.5h.01M17.5 13.5h.01"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-9l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l4.5-3.5 3.5 3 4-3.5 3.5 3"/></symbol>
+  <symbol id="i-battery" viewBox="0 0 24 24"><rect x="2.5" y="8" width="16" height="8" rx="2"/><path d="M21.5 10.5v3"/></symbol>
+  <symbol id="i-signal" viewBox="0 0 24 24"><rect x="4" y="14" width="2.6" height="5" rx=".8" fill="currentColor" stroke="none"/><rect x="9.2" y="11" width="2.6" height="8" rx=".8" fill="currentColor" stroke="none"/><rect x="14.4" y="8" width="2.6" height="11" rx=".8" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 0 0 6 6l1.5-2 4 1.5v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2Z"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20h-19L12 3.5Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+</svg>
+
+<div class="stage">
+
+  <!-- 仿样级无约束力横幅（§3.5 必需） -->
+  <div class="proto-banner" data-proto-id="proto-banner">
+    <svg class="ic warn-ico"><use href="#i-warn"/></svg>
+    <div>
+      仿样原型 · 视觉参照、无约束力
+      <div class="ban-sub">本工程为 Kotlin/Android 客户端，无 Web 组件库画像（fenix stack_profile=unknown），本页为纯 HTML/CSS 仿样；批准入库后仅作 SPEC 的视觉参照，不构成组件级 UI 真相源绑定。</div>
+    </div>
+  </div>
+
+  <div class="layout">
+
+    <!-- ============ 手机 ============ -->
+    <div class="phone-wrap">
+      <div class="phone">
+        <div class="statusbar"><span>14:32</span><span class="sb-icons"><svg class="ic ic-16"><use href="#i-signal"/></svg><svg class="ic ic-16"><use href="#i-wifi"/></svg><svg class="ic ic-16"><use href="#i-battery"/></svg></span></div>
+
+        <div class="screens">
+
+          <!-- ================= 首页 · 连接 ================= -->
+          <section class="screen active" data-screen="home" id="scr-home">
+            <header class="topbar" data-proto-id="home-topbar">
+              <div class="brand">
+                <span class="brand-dot"><svg class="ic"><use href="#i-monitor"/></svg></span>
+                <span class="brand-name">CloudPhone</span>
+                <span class="brand-tag">CLIENT</span>
+              </div>
+              <div class="topbar-actions">
+                <button class="iconbtn" aria-label="会话抽屉" title="会话抽屉" onclick="openDrawer()"><svg class="ic"><use href="#i-layers"/></svg></button>
+                <button class="iconbtn" aria-label="设置" title="设置" onclick="show('settings')"><svg class="ic"><use href="#i-gear"/></svg></button>
+              </div>
+            </header>
+
+            <div class="scroll">
+              <div class="net-chip" data-proto-id="home-network-chip">
+                <svg class="ic ic-18"><use href="#i-wifi"/></svg>
+                当前网络：Wi-Fi「CloudHome_5G」&nbsp;<span class="mono">192.168.1.104/24 · 探测 :22333</span>
+              </div>
+
+              <!-- 扫描面板 -->
+              <div class="scan-panel" data-proto-id="home-scan-panel" id="scanPanel">
+                <div class="radar" aria-hidden="true"><i class="ring r1"></i><i class="ring r2"></i><i class="sweep"></i><span class="blip b1"></span><span class="blip b2"></span></div>
+                <div class="scan-main">
+                  <div class="scan-title" id="scanTitle">正在扫描局域网源端…</div>
+                  <div class="scan-sub mono" id="scanTicker">192.168.1.1–254 · 已探测 0/254 · 端口 :22333</div>
+                  <div class="scan-bar"><i id="scanFill"></i></div>
+                </div>
+              </div>
+
+              <!-- 发现结果 -->
+              <div id="foundWrap" hidden>
+                <div class="sec-head"><span class="sec-title">局域网源端</span><span class="sec-sub" id="scanSummary">发现 2 台 · 用时 2.9s</span></div>
+                <div data-proto-id="home-device-list">
+                  <article class="dev-card" data-proto-id="home-device-card-1">
+                    <div class="dev-head">
+                      <div class="dev-ava"><svg class="ic"><use href="#i-monitor"/></svg><span class="dev-live"></span></div>
+                      <div class="dev-name"><span class="nt">Pixel 8 Pro</span><span class="chip chip-ok"><i class="dot"></i>在线</span></div>
+                      <button class="iconbtn" aria-label="更多操作" onclick="toast('原型：更多操作（编辑备注 / 忽略）')"><svg class="ic"><use href="#i-more"/></svg></button>
+                    </div>
+                    <div class="dev-info">
+                      <div class="kv"><span class="k">地址</span><b class="v mono">192.168.1.23:22333</b></div>
+                      <div class="kv"><span class="k">后端</span><b class="v">lan-direct · 可直连</b></div>
+                      <div class="kv"><span class="k">上次连接</span><b class="v">今天 09:12 · 1080×2400 · 60fps</b></div>
+                    </div>
+                    <div class="dev-foot">
+                      <button class="btn btn-ghost btn-sm" onclick="openApps('Pixel 8 Pro')">单应用</button>
+                      <button class="btn btn-primary btn-sm" onclick="connectDevice('Pixel 8 Pro','192.168.1.23:22333','lan-direct')">连接</button>
+                    </div>
+                  </article>
+                  <article class="dev-card offline" data-proto-id="home-device-card-2">
+                    <div class="dev-head">
+                      <div class="dev-ava"><svg class="ic"><use href="#i-monitor"/></svg><span class="dev-live"></span></div>
+                      <div class="dev-name"><span class="nt">Xiaomi 14</span><span class="chip chip-off"><i class="dot"></i>无响应</span></div>
+                    </div>
+                    <div class="dev-info">
+                      <div class="kv"><span class="k">地址</span><b class="v mono">192.168.1.35:22333</b></div>
+                      <div class="kv"><span class="k">状态</span><b class="v">端口未开放</b></div>
+                      <div class="kv"><span class="k">上次在线</span><b class="v">昨天 22:40</b></div>
+                    </div>
+                    <div class="dev-foot">
+                      <button class="btn btn-ghost btn-sm" disabled style="opacity:.45;cursor:not-allowed">不可达</button>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
+              <!-- 未发现空态 -->
+              <div id="emptyWrap" hidden>
+                <div class="empty" data-proto-id="home-empty-state">
+                  <div class="empty-ico"><svg class="ic ic-28"><use href="#i-search"/></svg></div>
+                  <div class="empty-title">未在同一局域网发现源端</div>
+                  <div class="empty-sub">可能处于公网 / 热点网络，或源端未开机、未监听 <span class="mono">22333</span> 端口。<br>可手动新建连接并保存，供随时重连。</div>
+                  <div class="empty-actions">
+                    <button class="btn btn-primary" onclick="openSheet()"><svg class="ic ic-18"><use href="#i-plus"/></svg>手动新建连接</button>
+                    <button class="btn btn-ghost" onclick="startScan()">重试扫描</button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 手动保存的连接 -->
+              <div class="sec-head"><span class="sec-title">手动保存的连接</span><span class="sec-sub" id="savedCount">1 个档案</span></div>
+              <div id="savedList" data-proto-id="home-saved-list">
+                <article class="dev-card" data-proto-id="home-saved-card-1">
+                  <div class="dev-head">
+                    <div class="dev-ava"><svg class="ic"><use href="#i-globe"/></svg><span class="dev-live" style="background:var(--faint);box-shadow:none"></span></div>
+                    <div class="dev-name"><span class="nt">办公室云机</span><span class="chip chip-blue">frp 中转</span></div>
+                  </div>
+                  <div class="dev-info">
+                    <div class="kv"><span class="k">地址</span><b class="v mono">203.0.113.7:22333</b></div>
+                    <div class="kv"><span class="k">凭据</span><b class="v">token 已存</b></div>
+                    <div class="kv"><span class="k">上次连接</span><b class="v">3 天前</b></div>
+                  </div>
+                  <div class="dev-foot">
+                    <button class="iconbtn" aria-label="删除档案" onclick="toast('原型：长按 / 滑动删除档案')"><svg class="ic"><use href="#i-trash"/></svg></button>
+                    <button class="btn btn-primary btn-sm" onclick="connectDevice('办公室云机','203.0.113.7:22333','frp')">连接</button>
+                  </div>
+                </article>
+                <button class="add-card" data-proto-id="home-manual-connect-entry" onclick="openSheet()">
+                  <span class="plus-ava"><svg class="ic ic-18"><use href="#i-plus"/></svg></span>
+                  新建连接（手动添加源端）
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ================= 控制台 · 系统画面 / 单应用 ================= -->
+          <section class="screen" data-screen="console" id="scr-console">
+            <div class="console" id="consoleRoot">
+              <div class="viewport" data-proto-id="console-screen">
+
+                <!-- 假·源端系统画面 -->
+                <div class="fake-src" data-proto-id="console-screen-system" id="fakeSystem" aria-hidden="true">
+                  <div class="fs-status"><span>14:32</span><span class="fs-sig"><svg class="ic ic-16"><use href="#i-signal"/></svg><svg class="ic ic-16"><use href="#i-wifi"/></svg><svg class="ic ic-16"><use href="#i-battery"/></svg></span></div>
+                  <div class="fs-clock"><div class="fs-time">14:32</div><div class="fs-date">11月9日 周日 · 晴 18°C</div></div>
+                  <div class="fs-search"><svg class="ic ic-18"><use href="#i-search"/></svg>搜索</div>
+                  <div class="fs-grid">
+                    <div class="fs-app"><span class="fs-appi hue2"><svg class="ic"><use href="#i-gamepad"/></svg></span><span class="fs-appl">游戏</span></div>
+                    <div class="fs-app"><span class="fs-appi hue3"><svg class="ic"><use href="#i-chat"/></svg></span><span class="fs-appl">通讯</span></div>
+                    <div class="fs-app"><span class="fs-appi hue5"><svg class="ic"><use href="#i-music"/></svg></span><span class="fs-appl">音乐</span></div>
+                    <div class="fs-app"><span class="fs-appi hue4"><svg class="ic"><use href="#i-image"/></svg></span><span class="fs-appl">相册</span></div>
+                    <div class="fs-app"><span class="fs-appi hue6"><svg class="ic"><use href="#i-globe"/></svg></span><span class="fs-appl">浏览器</span></div>
+                    <div class="fs-app"><span class="fs-appi hue7"><svg class="ic"><use href="#i-camera"/></svg></span><span class="fs-appl">相机</span></div>
+                    <div class="fs-app"><span class="fs-appi hue8"><svg class="ic"><use href="#i-gear"/></svg></span><span class="fs-appl">设置</span></div>
+                    <div class="fs-app"><span class="fs-appi hue1"><svg class="ic"><use href="#i-grid"/></svg></span><span class="fs-appl">应用</span></div>
+                  </div>
+                  <div class="fs-dock">
+                    <span class="fs-appi hue4"><svg class="ic"><use href="#i-phone"/></svg></span>
+                    <span class="fs-appi hue3"><svg class="ic"><use href="#i-chat"/></svg></span>
+                    <span class="fs-appi hue7"><svg class="ic"><use href="#i-camera"/></svg></span>
+                    <span class="fs-appi hue5"><svg class="ic"><use href="#i-image"/></svg></span>
+                  </div>
+                </div>
+
+                <!-- 假·单应用游戏画面 -->
+                <div class="fake-game" data-proto-id="console-screen-app" id="fakeGame" hidden aria-hidden="true">
+                  <div class="fg-glow"></div>
+                  <div class="fg-floor"></div>
+                  <div class="fg-horizon"></div>
+                  <div class="fg-vignette"></div>
+                  <div class="fg-top"><span class="fg-hp"><i></i></span><span class="fg-chip">Lv 42</span><span class="fg-chip">60 FPS</span></div>
+                  <div class="fg-map"><i></i></div>
+                  <div class="fg-stick l"></div>
+                  <div class="fg-stick r"></div>
+                  <div class="fg-skills"><span class="fg-skill">1</span><span class="fg-skill">2</span><span class="fg-skill">3</span><span class="fg-skill big">大</span></div>
+                  <div class="fg-tag">示例画面 · SINGLE_APP</div>
+                </div>
+
+                <div class="flash" id="flash"></div>
+              </div>
+
+              <!-- 顶部悬浮 HUD -->
+              <div class="console-top" data-proto-id="console-topbar">
+                <button class="iconbtn on-dark" aria-label="断开并返回" onclick="disconnect()"><svg class="ic"><use href="#i-back"/></svg></button>
+                <div class="ct-main">
+                  <div class="ct-title">
+                    <span class="ct-name" id="ctName">Pixel 8 Pro</span>
+                    <span class="chip chip-onair" id="ctBackend">lan-direct</span>
+                    <span class="chip chip-mode" data-proto-id="console-mode-chip" id="ctMode" hidden>单应用 · <b id="ctApp">云原神</b><button class="chip-x" onclick="exitSingle()">退出</button></span>
+                  </div>
+                  <div class="stats" data-proto-id="console-stats-bar">
+                    <span class="live-dot"></span>
+                    <span class="stat">FPS <b>60</b></span>
+                    <span class="stat">码率 <b>8.2M</b></span>
+                    <span class="stat">RTT <b>12ms</b></span>
+                    <span class="stat">丢包 <b>0.1%</b></span>
+                    <span class="stat" id="statRes"><b>1080×2400</b></span>
+                  </div>
+                </div>
+                <button class="iconbtn on-dark" aria-label="全屏沉浸" onclick="toast('原型：全屏沉浸模式（隐藏 HUD）')"><svg class="ic"><use href="#i-expand"/></svg></button>
+              </div>
+
+              <!-- 底部工具坞 -->
+              <div class="dock" data-proto-id="console-toolbar">
+                <div class="dock-quick">
+                  <button class="qbtn" onclick="toast('原型：呼出物理键盘映射')"><svg class="ic"><use href="#i-keyboard"/></svg><span>键盘</span></button>
+                  <button class="qbtn" onclick="screenshot()"><svg class="ic"><use href="#i-camera"/></svg><span>截屏</span></button>
+                  <button class="qchip" id="qChip" onclick="cycleQuality()">1080P·60</button>
+                  <button class="qbtn" onclick="toast('原型：横竖屏切换（会话重建）')"><svg class="ic"><use href="#i-rotate"/></svg><span>旋转</span></button>
+                  <button class="qbtn accent" onclick="openApps(deviceName())"><svg class="ic"><use href="#i-grid"/></svg><span>单应用</span></button>
+                </div>
+                <div class="dock-split"></div>
+                <div class="dock-bottom">
+                  <button class="side-btn" onclick="openDrawer()"><svg class="ic ic-18"><use href="#i-layers"/></svg>会话</button>
+                  <div class="navkeys" data-proto-id="console-navkeys">
+                    <button class="navbtn" aria-label="返回键" onclick="toast('已注入 BACK（示例）')"><svg class="fillic"><use href="#i-navback"/></svg></button>
+                    <button class="navbtn" aria-label="主页键" onclick="toast('已注入 HOME（示例）')"><svg class="fillic"><use href="#i-navhome"/></svg></button>
+                    <button class="navbtn" aria-label="最近任务键" onclick="toast('已注入 RECENTS（示例）')"><svg class="fillic"><use href="#i-navrec"/></svg></button>
+                  </div>
+                  <button class="side-btn power" onclick="disconnect()"><svg class="ic ic-18"><use href="#i-power"/></svg>断开</button>
+                </div>
+              </div>
+
+              <!-- 会话抽屉 -->
+              <aside class="drawer" data-proto-id="console-drawer" id="drawer" aria-label="会话抽屉">
+                <div class="drawer-head">
+                  <h2>会话抽屉</h2>
+                  <button class="iconbtn" aria-label="关闭抽屉" onclick="closeDrawer()"><svg class="ic"><use href="#i-close"/></svg></button>
+                </div>
+                <div class="sess-card" id="sessA">
+                  <div class="sess-top"><span class="sess-name">Pixel 8 Pro · 整屏</span><span class="sess-state run" id="sessAState">进行中</span></div>
+                  <div class="sess-sub">192.168.1.23:22333 · RTT 12ms · 60fps</div>
+                  <div class="sess-actions">
+                    <button class="btn btn-ghost" id="sessABtn" onclick="toggleSuspend('sessA')">挂起</button>
+                    <button class="btn btn-danger" onclick="toast('原型：结束该会话')">断开</button>
+                  </div>
+                </div>
+                <div class="sess-card">
+                  <div class="sess-top"><span class="sess-name">办公室云机 · frp</span><span class="sess-state idle">挂起中</span></div>
+                  <div class="sess-sub">203.0.113.7:22333 · 上次 3 天前</div>
+                  <div class="sess-actions">
+                    <button class="btn btn-ghost" onclick="toast('原型：恢复会话（重连 + 复用档案）')">恢复</button>
+                    <button class="btn btn-danger" onclick="toast('原型：删除挂起会话')">断开</button>
+                  </div>
+                </div>
+                <div class="drawer-foot">
+                  <button class="btn btn-ghost" onclick="closeDrawer();show('home')">新建会话 / 返回首页</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <!-- ================= 单应用列表 ================= -->
+          <section class="screen" data-screen="apps" id="scr-apps">
+            <header class="topbar" data-proto-id="apps-topbar">
+              <button class="iconbtn" aria-label="返回控制台" onclick="show('console')"><svg class="ic"><use href="#i-back"/></svg></button>
+              <div class="tb-title">
+                <div class="tb-t">源端应用</div>
+                <div class="tb-sub" id="appsSub">Pixel 8 Pro · 会话在线 · 由源端枚举</div>
+              </div>
+              <div class="searchbox"><svg class="ic ic-18"><use href="#i-search"/></svg><input id="appSearch" placeholder="搜索应用" aria-label="搜索应用" oninput="filterApps()"></div>
+            </header>
+            <div class="scroll">
+              <div class="grid" data-proto-id="apps-grid" id="appGrid">
+                <button class="tile" data-proto-id="apps-tile-1" onclick="openSingle('云原神')">
+                  <span class="tile-ico hue2"><svg class="ic"><use href="#i-gamepad"/></svg></span>
+                  <span class="tile-name">云原神</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-2" onclick="openSingle('哔哩哔哩')">
+                  <span class="tile-ico hue4"><svg class="ic"><use href="#i-film"/></svg></span>
+                  <span class="tile-name">哔哩哔哩</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-3" onclick="openSingle('微信')">
+                  <span class="tile-ico hue3"><svg class="ic"><use href="#i-chat"/></svg></span>
+                  <span class="tile-name">微信</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-4" onclick="openSingle('Chrome')">
+                  <span class="tile-ico hue1"><svg class="ic"><use href="#i-globe"/></svg></span>
+                  <span class="tile-name">Chrome</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-5" onclick="openSingle('相册')">
+                  <span class="tile-ico hue5"><svg class="ic"><use href="#i-image"/></svg></span>
+                  <span class="tile-name">相册</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-6" onclick="openSingle('网易云音乐')">
+                  <span class="tile-ico hue8"><svg class="ic"><use href="#i-music"/></svg></span>
+                  <span class="tile-name">网易云音乐</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-7" onclick="openSingle('设置')">
+                  <span class="tile-ico hue6"><svg class="ic"><use href="#i-gear"/></svg></span>
+                  <span class="tile-name">设置</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+                <button class="tile" data-proto-id="apps-tile-8" onclick="openSingle('负载游戏')">
+                  <span class="tile-ico hue7"><svg class="ic"><use href="#i-gamepad"/></svg></span>
+                  <span class="tile-name">负载游戏</span>
+                  <span class="tile-pin" role="button" aria-label="加到桌面" onclick="event.stopPropagation();toast('已创建桌面快捷方式（示例）')"><svg class="ic ic-18"><use href="#i-pin"/></svg></span>
+                </button>
+              </div>
+              <div class="hint-line">图标为通用占位（真实图标提取属 M1 范围）；右上角图钉 = 「加到桌面」，创建 <span class="mono">cloudphone://launch</span> 快捷方式直达单应用。</div>
+            </div>
+          </section>
+
+          <!-- ================= 设置 ================= -->
+          <section class="screen" data-screen="settings" id="scr-settings">
+            <header class="topbar" data-proto-id="settings-page">
+              <button class="iconbtn" aria-label="返回首页" onclick="show('home')"><svg class="ic"><use href="#i-back"/></svg></button>
+              <div class="tb-title"><div class="tb-t">设置</div><div class="tb-sub">CloudPhone 客户端</div></div>
+              <span class="ver-pill">v1.1.0-proto</span>
+            </header>
+            <div class="scroll">
+              <div class="group" data-proto-id="settings-appearance">
+                <div class="group-h"><svg class="ic ic-16"><use href="#i-palette"/></svg>外观</div>
+                <div class="row link" onclick="toast('原型：主题切换（深色 / 浅色 / 跟随系统）')"><div class="row-main"><div class="row-t">主题</div><div class="row-s">当前：深色</div></div><span class="val">深色<svg class="ic ic-16"><use href="#i-chev"/></svg></span></div>
+                <div class="row"><div class="row-main"><div class="row-t">纯黑 OLED 模式</div><div class="row-s">背景使用纯黑，省电并提升串流对比</div></div><label class="sw"><input type="checkbox" checked aria-label="纯黑 OLED 模式"><i></i></label></div>
+              </div>
+
+              <div class="group" data-proto-id="settings-stream">
+                <div class="group-h"><svg class="ic ic-16"><use href="#i-film"/></svg>串流默认档位</div>
+                <div class="row link" onclick="toast('原型：选择分辨率档位')"><div class="row-main"><div class="row-t">分辨率</div><div class="row-s">连接时可在会话内临时覆盖</div></div><span class="val">跟随本机<svg class="ic ic-16"><use href="#i-chev"/></svg></span></div>
+                <div class="row link" onclick="toast('原型：选择帧率档位')"><div class="row-main"><div class="row-t">帧率</div></div><span class="val mono">60 fps<svg class="ic ic-16"><use href="#i-chev"/></svg></span></div>
+                <div class="row link" onclick="toast('原型：选择码率档位')"><div class="row-main"><div class="row-t">码率</div></div><span class="val mono">8 Mbps<svg class="ic ic-16"><use href="#i-chev"/></svg></span></div>
+              </div>
+
+              <div class="group" data-proto-id="settings-transport">
+                <div class="group-h"><svg class="ic ic-16"><use href="#i-globe"/></svg>传输偏好</div>
+                <div class="row"><div class="row-main"><div class="row-t">优先 P2P 打洞直连</div><div class="row-s">5 秒未打通自动回退公网中转</div></div><label class="sw"><input type="checkbox" checked aria-label="优先 P2P 打洞直连"><i></i></label></div>
+                <div class="row"><div class="row-main"><div class="row-t">默认探测端口</div><div class="row-s">局域网发现使用的源端服务端口</div></div><span class="val mono">22333<svg class="ic ic-16"><use href="#i-chev"/></svg></span></div>
+              </div>
+
+              <div class="group" data-proto-id="settings-input">
+                <div class="group-h"><svg class="ic ic-16"><use href="#i-keyboard"/></svg>触控与输入</div>
+                <div class="row"><div class="row-main"><div class="row-t">显示虚拟导航键</div></div><label class="sw"><input type="checkbox" checked aria-label="显示虚拟导航键"><i></i></label></div>
+                <div class="row"><div class="row-main"><div class="row-t">触感反馈</div></div><label class="sw"><input type="checkbox" aria-label="触感反馈"><i></i></label></div>
+                <div class="row"><div class="row-main"><div class="row-t">剪贴板同步 <span class="badge-reserved">预留</span></div></div><label class="sw"><input type="checkbox" checked aria-label="剪贴板同步"><i></i></label></div>
+              </div>
+
+              <div class="group" data-proto-id="settings-security">
+                <div class="group-h"><svg class="ic ic-16"><use href="#i-shield"/></svg>安全 <span class="badge-reserved">预留</span></div>
+                <div class="row link" onclick="toast('原型：配对 token 管理')"><div class="row-main"><div class="row-t">配对 token 管理</div><div class="row-s">已存 2 个源端档案的凭据</div></div><svg class="ic ic-16" style="color:var(--faint)"><use href="#i-chev"/></svg></div>
+                <div class="row"><div class="row-main"><div class="row-t">意外断开自动重连</div><div class="row-s">重连 ≤1s（沿用 ClientSession 策略）</div></div><label class="sw"><input type="checkbox" checked aria-label="意外断开自动重连"><i></i></label></div>
+              </div>
+
+              <div class="group" data-proto-id="settings-about">
+                <div class="group-h"><svg class="ic ic-16"><use href="#i-info"/></svg>关于</div>
+                <div class="row"><div class="row-main"><div class="row-t">版本</div></div><span class="val mono">1.1.0-proto</span></div>
+                <div class="row link" onclick="toast('原型：检查更新')"><div class="row-main"><div class="row-t">检查更新</div></div><svg class="ic ic-16" style="color:var(--faint)"><use href="#i-chev"/></svg></div>
+                <div class="row link" onclick="toast('原型：开源许可')"><div class="row-main"><div class="row-t">开源许可</div></div><svg class="ic ic-16" style="color:var(--faint)"><use href="#i-chev"/></svg></div>
+              </div>
+              <div style="height:16px"></div>
+            </div>
+          </section>
+
+          <!-- 新建连接弹层 -->
+          <div class="veil" id="veil" onclick="closeSheet();closeDrawer()"></div>
+          <div class="sheet" data-proto-id="manual-sheet" id="sheet" role="dialog" aria-modal="true" aria-label="新建连接">
+            <div class="sheet-grip"></div>
+            <div class="sheet-head">
+              <button class="iconbtn" aria-label="关闭" onclick="closeSheet()"><svg class="ic"><use href="#i-close"/></svg></button>
+              <h2>新建连接</h2><span class="sheet-hint">公网 / 未发现时手动添加</span>
+            </div>
+            <form class="sheet-body" data-proto-id="manual-form" onsubmit="saveManual(event)">
+              <label class="field"><span class="lab">连接名称</span><input id="fName" placeholder="如：办公室云机"></label>
+              <label class="field"><span class="lab">主机地址 / IP</span><input id="fHost" class="mono" placeholder="203.0.113.7 或 host.example.com"></label>
+              <div class="frow">
+                <label class="field grow"><span class="lab">TCP 端口</span><input id="fTcp" class="mono" value="22333" inputmode="numeric"></label>
+                <label class="field grow"><span class="lab">UDP 端口</span><input id="fUdp" class="mono" value="22334" inputmode="numeric"></label>
+              </div>
+              <div class="seg" data-proto-id="manual-form-backend">
+                <span class="seg-lab">传输后端</span>
+                <div class="seg-btns" id="backendSeg">
+                  <button type="button" class="segbtn active" onclick="pickSeg(this)"><b>lan-direct</b><small>局域网直连</small></button>
+                  <button type="button" class="segbtn" onclick="pickSeg(this)"><b>p2p</b><small>打洞·失败回退</small></button>
+                  <button type="button" class="segbtn" onclick="pickSeg(this)"><b>frp</b><small>公网中转</small></button>
+                </div>
+                <div class="hint">不清楚后端时可先选 p2p：源端探测 SRFLX，未打通自动回退 frp。</div>
+              </div>
+              <label class="field"><span class="lab">配对 token</span><input id="fToken" class="mono" type="password" placeholder="源端「配对码」"></label>
+              <details class="adv" data-proto-id="manual-form-advanced">
+                <summary><svg class="ic ic-16"><use href="#i-chev"/></svg>高级选项（分辨率 / 帧率 / 码率 / 观看模式）</summary>
+                <div class="adv-body">
+                  <div class="frow">
+                    <label class="field grow"><span class="lab">分辨率</span>
+                      <select id="fRes"><option>跟随本机</option><option>720P</option><option>1080P</option><option>自定义</option></select>
+                    </label>
+                    <label class="field" style="width:104px"><span class="lab">帧率</span>
+                      <select class="mono" id="fFps"><option>60</option><option>30</option></select>
+                    </label>
+                  </div>
+                  <div class="frow">
+                    <label class="field grow"><span class="lab">码率</span>
+                      <select class="mono" id="fBps"><option>8 Mbps</option><option>4 Mbps</option><option>16 Mbps</option><option>20 Mbps</option></select>
+                    </label>
+                    <label class="field grow"><span class="lab">观看模式</span>
+                      <select id="fView"><option>整屏镜像</option><option>单应用（填包名）</option></select>
+                    </label>
+                  </div>
+                  <div class="hint">自定义分辨率校验区间：宽 320–2560、高 240–2560（与源端钳制区间一致）。</div>
+                </div>
+              </details>
+              <div class="sheet-actions" data-proto-id="manual-actions">
+                <button type="button" class="btn btn-ghost" onclick="closeSheet()">取消</button>
+                <button type="submit" class="btn btn-primary">保存连接</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="toast" id="toast" role="status"></div>
+        </div>
+        <div class="gesture-pill"></div>
+      </div>
+    </div>
+
+    <!-- ============ 侧栏：说明 + 演示控制 ============ -->
+    <aside class="side" data-proto-id="proto-side-panel">
+      <div class="side-card">
+        <h3>原型说明</h3>
+        <p><b>层级：plain 仿样（无约束力）</b>。工程无 Web 组件库，页面内所有设备 / 应用 / 数据均为<b>示例假数据</b>。</p>
+        <p style="margin-top:8px">设计候选来源：ui-ux-pro-max <span class="mono">--design-system</span>（HUD / 星白 #F8FAFC + 发射蓝 #3B82F6 + 深空黑 #0B0B10），经反俗套自批判修订（发光仅限状态点与扫描线、无渐变横幅、mono 仅用于数据读出）；工程无 DESIGN.md，候选不覆盖任何既定设计语言。</p>
+        <p style="margin-top:8px">页面中<b>蓝色</b>=主行动，<b>绿色</b>=在线/健康，<b>琥珀</b>=挂起/单应用，<b>红色</b>=断开/危险。</p>
+      </div>
+      <div class="side-card">
+        <h3>屏幕直达</h3>
+        <div class="linkrow">
+          <button class="chipbtn" onclick="show('home')">① 首页·连接</button>
+          <button class="chipbtn" onclick="connectDevice('Pixel 8 Pro','192.168.1.23:22333','lan-direct')">② 控制台·系统画面</button>
+          <button class="chipbtn" onclick="openApps(deviceName())">③ 单应用列表</button>
+          <button class="chipbtn" onclick="openSingle('云原神')">④ 单应用画面</button>
+          <button class="chipbtn" onclick="show('settings')">⑤ 设置</button>
+        </div>
+      </div>
+      <div class="side-card">
+        <h3>演示状态（首页）</h3>
+        <div class="linkrow">
+          <button class="chipbtn" onclick="runScan('found')">重新扫描 → 发现 2 台</button>
+          <button class="chipbtn warn" onclick="runScan('empty')">模拟公网 · 未发现</button>
+          <button class="chipbtn" onclick="openSheet()">打开「新建连接」弹层</button>
+          <button class="chipbtn" onclick="openDrawer()">打开会话抽屉</button>
+        </div>
+        <p style="margin-top:10px">批注：在手机画面上<b>点选任意区块</b>（带锚点的区域）→ 输入意见 → 提交，意见写入 <kbd>feedback.json</kbd>。</p>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+'use strict';
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+
+/* ---------- 屏幕路由 ---------- */
+let navStack=['home'];
+function activate(id){
+  $$('.screen').forEach(s=>s.classList.toggle('active',s.dataset.screen===id));
+}
+function show(id){
+  if(navStack[navStack.length-1]!==id){navStack.push(id);if(navStack.length>12)navStack=navStack.slice(-12);}
+  activate(id);closeSheet();closeDrawer();
+}
+function goBack(){
+  if(navStack.length>1){navStack.pop();activate(navStack[navStack.length-1]);}
+  closeSheet();closeDrawer();
+}
+function resetTo(id){navStack=[id];activate(id);}
+
+/* ---------- 弹层 / 抽屉 ---------- */
+const veil=$('#veil');
+function openSheet(){$('#sheet').classList.add('open');veil.classList.add('show');}
+function closeSheet(){$('#sheet').classList.remove('open');syncVeil();}
+function openDrawer(){$('#drawer').classList.add('open');veil.classList.add('show');}
+function closeDrawer(){$('#drawer').classList.remove('open');syncVeil();}
+function syncVeil(){
+  const any=$('#sheet').classList.contains('open')||$('#drawer').classList.contains('open');
+  veil.classList.toggle('show',any);
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeSheet();closeDrawer();}});
+
+/* ---------- 局域网扫描演示 ---------- */
+let scanTimer=null, demoFind=true;
+function runScan(mode){demoFind=(mode!=='empty');startScan();}
+function startScan(){
+  clearInterval(scanTimer);
+  $('#foundWrap').hidden=true;$('#emptyWrap').hidden=true;
+  const p=$('#scanPanel');p.hidden=false;
+  $('#scanTitle').textContent='正在扫描局域网源端…';
+  let n=0;const total=254,t0=performance.now();
+  scanTimer=setInterval(()=>{
+    n=Math.min(total,n+5+Math.ceil(Math.random()*9));
+    $('#scanTicker').textContent='192.168.1.1–254 · 已探测 '+n+'/'+total+' · 端口 :22333';
+    $('#scanFill').style.width=(n/total*100)+'%';
+    if(n>=total)finishScan((performance.now()-t0)/1000);
+  },110);
+}
+function finishScan(secs){
+  clearInterval(scanTimer);
+  $('#scanPanel').hidden=true;
+  $('#scanSummary').textContent='发现 '+(demoFind?2:0)+' 台 · 用时 '+secs.toFixed(1)+'s';
+  $('#foundWrap').hidden=!demoFind;
+  $('#emptyWrap').hidden=demoFind;
+}
+
+/* ---------- 设备上下文 ---------- */
+function deviceName(){return $('#ctName').textContent||'Pixel 8 Pro';}
+function connectDevice(name,host,backend){
+  $('#ctName').textContent=name;
+  $('#ctBackend').textContent=backend;
+  $('#appsSub').textContent=name+' · 会话在线 · 由源端枚举';
+  exitSingle(true);
+  show('console');
+  toast('已连接 '+name+'（示例会话）');
+}
+function disconnect(){resetTo('home');toast('已断开连接（示例）');}
+
+/* ---------- 单应用模式 ---------- */
+function openApps(name){
+  $('#appsSub').textContent=(name||deviceName())+' · 会话在线 · 由源端枚举';
+  show('apps');
+}
+function openSingle(app){
+  $('#ctApp').textContent=app;
+  $('#ctMode').hidden=false;
+  $('#fakeSystem').hidden=true;$('#fakeGame').hidden=false;
+  $('#statRes').innerHTML='<b>720×1600</b>';
+  show('console');
+  toast('单应用串流：'+app+'（示例）');
+}
+function exitSingle(silent){
+  $('#ctMode').hidden=true;
+  $('#fakeSystem').hidden=false;$('#fakeGame').hidden=true;
+  $('#statRes').innerHTML='<b>1080×2400</b>';
+  if(silent!==true)toast('已退出单应用，返回系统画面');
+}
+
+/* ---------- 工具坞动作 ---------- */
+const qualities=['1080P·60','720P·60','1080P·30','自定义'];
+let qi=0;
+function cycleQuality(){qi=(qi+1)%qualities.length;$('#qChip').textContent=qualities[qi];toast('串流档位：'+qualities[qi]+'（示例）');}
+function screenshot(){
+  const f=$('#flash');f.classList.remove('go');void f.offsetWidth;f.classList.add('go');
+  toast('已保存截屏（示例）');
+}
+function toggleSuspend(id){
+  const card=$('#'+id),st=card.querySelector('.sess-state'),btn=card.querySelector('.sess-actions .btn');
+  const running=st.classList.toggle('run');
+  st.classList.toggle('idle',!running);
+  st.textContent=running?'进行中':'挂起中';
+  btn.textContent=running?'挂起':'恢复';
+  toast(running?'会话已恢复（示例）':'会话已挂起（示例）');
+}
+
+/* ---------- 单应用列表 ---------- */
+function filterApps(){
+  const q=$('#appSearch').value.trim().toLowerCase();
+  $$('#appGrid .tile').forEach(t=>{
+    const name=(t.querySelector('.tile-name')||{textContent:''}).textContent.toLowerCase();
+    t.style.display=(!q||name.includes(q))?'':'none';
+  });
+}
+
+/* ---------- 新建连接表单 ---------- */
+function pickSeg(btn){
+  $$('#backendSeg .segbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+let savedN=1;
+function saveManual(e){
+  e.preventDefault();
+  const name=$('#fHost').value.trim();
+  if(!name){toast('请填写主机地址');return;}
+  const label=$('#fName').value.trim()||('新建连接 '+(savedN+1));
+  const tcp=$('#fTcp').value.trim()||'22333';
+  const backend=$('#backendSeg .segbtn.active b').textContent;
+  savedN++;
+  const card=document.createElement('article');
+  card.className='dev-card';
+  card.setAttribute('data-proto-id','home-saved-card-manual');
+  card.innerHTML=
+    '<div class="dev-head"><div class="dev-ava"><svg class="ic"><use href="#i-globe"/></svg></div>'+
+    '<div class="dev-name"><span class="nt">'+esc(label)+'</span><span class="chip chip-blue">'+esc(backend)+'</span></div></div>'+
+    '<div class="dev-info">'+
+    '<div class="kv"><span class="k">地址</span><b class="v mono">'+esc(name)+':'+esc(tcp)+'</b></div>'+
+    '<div class="kv"><span class="k">凭据</span><b class="v">token '+(($('#fToken').value?'已存':'未设置'))+'</b></div>'+
+    '<div class="kv"><span class="k">上次连接</span><b class="v">刚刚保存</b></div>'+
+    '</div>'+
+    '<div class="dev-foot">'+
+    '<button class="iconbtn" aria-label="删除档案" onclick="this.closest(\'.dev-card\').remove();updateSavedCount();toast(\'已删除档案（示例）\')"><svg class="ic"><use href="#i-trash"/></svg></button>'+
+    '<button class="btn btn-primary btn-sm" onclick="connectDevice(\''+esc(label)+'\',\''+esc(name)+':'+esc(tcp)+'\',\''+esc(backend)+'\')">连接</button>'+
+    '</div>';
+  $('#savedList').insertBefore(card,$('.add-card'));
+  updateSavedCount();
+  closeSheet();
+  toast('已保存连接档案：'+label);
+  e.target.reset();
+  $('#fTcp').value='22333';$('#fUdp').value='22334';
+}
+function updateSavedCount(){$('#savedCount').textContent=(savedN)+' 个档案';}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;').replace(/\"/g,'&quot;');}
+
+/* ---------- Toast ---------- */
+let toastTimer=null;
+function toast(msg){
+  const t=$('#toast');t.textContent=msg;t.classList.add('show');
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2200);
+}
+
+/* ---------- 初始化 ---------- */
+startScan();
+</script>
+<script src="annotator.js" defer></script>
+</body>
+</html>

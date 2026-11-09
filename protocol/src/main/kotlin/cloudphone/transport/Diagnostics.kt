@@ -141,4 +141,48 @@ object Diagnostics {
             }
         }
     }
+
+    // ── 打洞分级耗时（p2p-crossnet-traversal 2.1：每级独立耗时统计进 Diagnostics）──
+
+    /** 打洞链阶段常量（D2：v6 直连 → 多候选 → 端口预测 → FRP 兜底 → 端点迁移） */
+    object PunchStages {
+        const val SRFLX_DISCOVERY = "srflx_discovery"   // STUN 多节点 SRFLX 发现
+        const val LOCAL_CANDIDATES = "local_candidates" // 本地多网卡候选枚举
+        const val PEER_ANALYSIS = "peer_analysis"       // 对端候选解析 + symmetric 判定
+        const val V6_DIRECT = "v6_direct"               // IPv6 直连优先尝试
+        const val SRFLX_PUNCH = "srflx_punch"           // 多候选并行 out-probe 打洞
+        const val PORT_PREDICTION = "port_prediction"   // symmetric 端口预测窗口批量探测
+        const val MIGRATION = "endpoint_migration"      // 端点迁移地址更新
+        const val FALLBACK = "fallback_frp"             // 全部失败回落 FRP（degraded）
+    }
+
+    /** 打洞分级计时：阶段 → 距链路启动的毫秒数 + 详注（线程安全，阶段后写覆盖前值） */
+    class PunchTrace {
+        data class StageRecord(val stage: String, val elapsedMs: Long, val detail: String)
+
+        private val records = LinkedHashMap<String, StageRecord>()
+        private val t0 = System.nanoTime()
+
+        @Synchronized
+        fun record(stage: String, detail: String = "") {
+            records[stage] = StageRecord(stage, (System.nanoTime() - t0) / 1_000_000, detail)
+        }
+
+        @Synchronized
+        fun snapshot(): List<StageRecord> = records.values.toList()
+
+        @Synchronized
+        fun toJson(): String {
+            val sb = StringBuilder(128)
+            sb.append("{\"stages\":[")
+            records.values.forEachIndexed { i, r ->
+                if (i > 0) sb.append(',')
+                sb.append("{\"stage\":\"").append(escape(r.stage)).append("\",")
+                sb.append("\"elapsed_ms\":").append(r.elapsedMs).append(',')
+                sb.append("\"detail\":\"").append(escape(r.detail)).append("\"}")
+            }
+            sb.append("]}")
+            return sb.toString()
+        }
+    }
 }

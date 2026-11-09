@@ -1,0 +1,33 @@
+[
+ {
+  "backend": "p2p",
+  "tier": "mid",
+  "duration": 120,
+  "kind": "stress",
+  "target_kbps": 10000,
+  "sustained_kbps": 4408.22063,
+  "fps_mean": 25.700512916666664,
+  "fps_recv": 25.8,
+  "loss_mean": 0.0,
+  "loss_max": 0.0,
+  "rtt_mean": 0.0,
+  "delay_p50": 1,
+  "delay_p95": 5,
+  "enc_out_mbps": 4.3906138666666665,
+  "enc_fps": 25.633333333333333,
+  "enc_max_gap_ms": 84,
+  "rtt_baseline": 0.0,
+  "rtt_inflate_ms": 11.600000000000001,
+  "rtt_client_mean": 25.6,
+  "rtt_client_baseline": 14.0,
+  "rtt_client_inflate": 11.600000000000001,
+  "transport_endpoint": "endpoint-seen:112.74.85.74",
+  "baseline_kbps": 71.2096,
+  "disconnects": 0,
+  "encoder_capped": true,
+  "network_pass": true,
+  "verdict": "ENCODER_CAPPED-真机复核",
+  "attribution": "编码器受限（输出 4.39Mbps@25.6fps < 8Mbps 目标，传输跟出 4408kbps、收帧 25.8fps 与编码器一致）→ 网络段独立判定：PASS（丢片 0.00%，客户端RTT 25.6ms 膨胀 11.6ms vs 基线 14.0ms）——码率不达标归因编码器吞吐而非网络故障，真机硬编复核列入检查表 [endpoint-seen:112.74.85.74]",
+  "samples": 60
+ }
+]
