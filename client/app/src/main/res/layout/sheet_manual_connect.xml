@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  新建连接底部弹层表单（client-ui-redesign 2.3）：
+  字段布局按 spec——主机地址独占一行、TCP/UDP 端口同行并排（默认 22333/22334）、
+  传输后端三选（lan-direct 默认）、token 密码态、高级选项折叠（分辨率/帧率/码率/观看模式）。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:fillViewport="true"
+    android:overScrollMode="never">
+
+    <LinearLayout
+        android:id="@+id/sheet_root"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_dock"
+        android:padding="20dp">
+
+        <TextView
+            android:id="@+id/sheet_title"
+            style="@style/sheet_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="新建连接" />
+
+        <TextView
+            style="@style/sheet_field_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="连接名称（可选）" />
+
+        <EditText
+            android:id="@+id/name_input"
+            style="@style/hud_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="如：客厅云机"
+            android:inputType="text"
+            android:maxLines="1" />
+
+        <TextView
+            style="@style/sheet_field_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="主机地址 / IP" />
+
+        <EditText
+            android:id="@+id/host_input"
+            style="@style/hud_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="IP 或域名（独占一行）"
+            android:inputType="text"
+            android:maxLines="1" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/sheet_field_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="TCP 端口" />
+
+                <EditText
+                    android:id="@+id/tcp_input"
+                    style="@style/hud_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:text="22333" />
+            </LinearLayout>
+
+            <Space
+                android:layout_width="10dp"
+                android:layout_height="1dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/sheet_field_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="UDP 端口" />
+
+                <EditText
+                    android:id="@+id/udp_input"
+                    style="@style/hud_input"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="number"
+                    android:maxLines="1"
+                    android:text="22334" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <TextView
+            style="@style/sheet_field_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="传输后端" />
+
+        <LinearLayout
+            android:id="@+id/backend_seg"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/backend_lan"
+                style="@style/seg_item"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="lan-direct" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="1dp" />
+
+            <TextView
+                android:id="@+id/backend_p2p"
+                style="@style/seg_item"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="p2p" />
+
+            <Space
+                android:layout_width="6dp"
+                android:layout_height="1dp" />
+
+            <TextView
+                android:id="@+id/backend_frp"
+                style="@style/seg_item"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="frp" />
+        </LinearLayout>
+
+        <TextView
+            style="@style/sheet_field_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="配对 token" />
+
+        <EditText
+            android:id="@+id/token_input"
+            style="@style/hud_input"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="留空按默认 token 连接"
+            android:inputType="textPassword"
+            android:maxLines="1" />
+
+        <!-- 高级选项折叠头 -->
+        <TextView
+            android:id="@+id/advanced_toggle"
+            style="@style/hud_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_btn_ghost"
+            android:padding="10dp"
+            android:text="高级选项 ▸" />
+
+        <!-- 高级选项折叠区（默认 GONE；默认值：跟随本机 / 60 / 8 Mbps / 整屏镜像） -->
+        <LinearLayout
+            android:id="@+id/advanced_area"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/sheet_field_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="分辨率" />
+
+            <LinearLayout
+                android:id="@+id/resolution_seg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/res_follow"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="跟随本机" />
+
+                <Space
+                    android:layout_width="6dp"
+                    android:layout_height="1dp" />
+
+                <TextView
+                    android:id="@+id/res_720"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="720p" />
+
+                <Space
+                    android:layout_width="6dp"
+                    android:layout_height="1dp" />
+
+                <TextView
+                    android:id="@+id/res_1080"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="1080p" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/sheet_field_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="帧率" />
+
+                    <LinearLayout
+                        android:id="@+id/fps_seg"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/fps_30"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="30" />
+
+                        <Space
+                            android:layout_width="6dp"
+                            android:layout_height="1dp" />
+
+                        <TextView
+                            android:id="@+id/fps_60"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="60" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <Space
+                    android:layout_width="10dp"
+                    android:layout_height="1dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1.4"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/sheet_field_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="码率（Mbps）" />
+
+                    <LinearLayout
+                        android:id="@+id/bitrate_seg"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/br_4"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="4" />
+
+                        <Space
+                            android:layout_width="4dp"
+                            android:layout_height="1dp" />
+
+                        <TextView
+                            android:id="@+id/br_8"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="8" />
+
+                        <Space
+                            android:layout_width="4dp"
+                            android:layout_height="1dp" />
+
+                        <TextView
+                            android:id="@+id/br_16"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="16" />
+
+                        <Space
+                            android:layout_width="4dp"
+                            android:layout_height="1dp" />
+
+                        <TextView
+                            android:id="@+id/br_20"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="20" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                style="@style/sheet_field_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="观看模式" />
+
+            <LinearLayout
+                android:id="@+id/mode_seg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/mode_full"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="整屏镜像" />
+
+                <Space
+                    android:layout_width="6dp"
+                    android:layout_height="1dp" />
+
+                <TextView
+                    android:id="@+id/mode_single"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="单应用" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 动作行 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_cancel"
+                style="@style/hud_button_ghost"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="取消" />
+
+            <Space
+                android:layout_width="10dp"
+                android:layout_height="1dp" />
+
+            <Button
+                android:id="@+id/btn_save"
+                style="@style/hud_button"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="2"
+                android:text="保存" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

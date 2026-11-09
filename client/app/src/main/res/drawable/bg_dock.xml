@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 底部工具坞容器：上圆角面板 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/hud_drawer" />
+    <stroke android:width="1dp" android:color="@color/hud_border" />
+    <corners android:topLeftRadius="16dp" android:topRightRadius="16dp"
+        android:bottomLeftRadius="0dp" android:bottomRightRadius="0dp" />
+</shape>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 徽章胶囊底：警戒/警告语义 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/hud_warn_dim" />
+    <corners android:radius="99dp" />
+</shape>

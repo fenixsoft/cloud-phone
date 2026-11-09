@@ -23,26 +23,43 @@ data class SourceProfile(
     val lastConnectedAt: Long,
     /** 端到端加密意图（p2p-crossnet-traversal 3.2，末位追加带缺省——老档案 JSON 无此键自动 true） */
     val encryptOn: Boolean = true,
+    /**
+     * 手动来源标记（client-ui-redesign 2.4）："manual"=手输/表单保存，"auto"=连接成功自动入库。
+     * 末位追加带缺省——老档案 JSON 无此键读作「手输」（与 encryptOn 兼容先例一致）。
+     */
+    val origin: String = ORIGIN_MANUAL,
 ) {
     /** 唯一键：host+tcpPort+backend */
     val key: String get() = keyOf(host, tcpPort, backend)
+
+    /** 来源展示名（「手输」/「自动」） */
+    val originLabel: String get() = if (origin == ORIGIN_AUTO) "自动" else "手输"
 
     /** 下拉展示名（不含 token） */
     val displayName: String
         get() = if (name.isBlank()) "$host:$tcpPort（$backend）" else "$name（$host:$tcpPort·$backend）"
 
     companion object {
+        /** 手动来源标记值（client-ui-redesign 2.4）：手输建档 */
+        const val ORIGIN_MANUAL = "manual"
+        /** 手动来源标记值：连接成功自动入库 */
+        const val ORIGIN_AUTO = "auto"
+        /** 老档案缺 udpPort 键时的读取兜底值（与既有表单默认一致） */
+        const val DEFAULT_UDP_PORT = 22334
+
         fun keyOf(host: String, tcpPort: Int, backend: String): String = "$host:$tcpPort:$backend"
 
         internal fun fromJson(o: JSONObject): SourceProfile = SourceProfile(
             name = o.optString("name"),
             host = o.getString("host"),
             tcpPort = o.getInt("tcpPort"),
-            udpPort = o.getInt("udpPort"),
+            // 老档案缺 udpPort 键时兜底 22334（client-ui-redesign 2.4，不迁移存储格式）
+            udpPort = o.optInt("udpPort", DEFAULT_UDP_PORT),
             backend = o.getString("backend"),
             token = o.getString("token"),
             lastConnectedAt = o.getLong("lastConnectedAt"),
             encryptOn = o.optBoolean("encryptOn", true), // 老档案无此键 → 缺省开（向后兼容）
+            origin = o.optString("origin", ORIGIN_MANUAL), // 老档案无此键 → 缺省「手输」
         )
 
         internal fun toJson(p: SourceProfile): JSONObject = JSONObject().apply {
@@ -54,12 +71,13 @@ data class SourceProfile(
             put("token", p.token)
             put("lastConnectedAt", p.lastConnectedAt)
             put("encryptOn", p.encryptOn)
+            put("origin", p.origin)
         }
     }
 
-    /** 日志安全形态：host/端口/后端/时间可见，token 恒不出现 */
+    /** 日志安全形态：host/端口/后端/来源/时间可见，token 恒不出现 */
     override fun toString(): String =
-        "SourceProfile(${displayName}, udp=$udpPort, lastConnectedAt=$lastConnectedAt)"
+        "SourceProfile(${displayName}, udp=$udpPort, origin=$originLabel, lastConnectedAt=$lastConnectedAt)"
 }
 
 /**
@@ -106,6 +124,16 @@ class SourceProfiles(context: Context) {
 
     fun findByKey(host: String, tcpPort: Int, backend: String): SourceProfile? =
         list().firstOrNull { it.key == SourceProfile.keyOf(host, tcpPort, backend) }
+
+    /**
+     * 按 host+TCP 端口匹配档案（不限后端；client-ui-redesign 2.2/2.4）：
+     * 首页发现卡与既有档案匹配标「已保存」即用它；取最近使用的匹配项。
+     */
+    fun findByHostPort(host: String, tcpPort: Int): SourceProfile? =
+        list().firstOrNull { it.host == host && it.tcpPort == tcpPort }
+
+    /** 暴露列表增删改查（client-ui-redesign 2.4）：新建表单保存即 upsert、卡片删除即 delete */
+    fun save(profile: SourceProfile): SourceProfile = upsert(profile)
 
     private fun persist(profiles: List<SourceProfile>) {
         val arr = JSONArray()

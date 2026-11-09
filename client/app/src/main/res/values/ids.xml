@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 程序化构建的控制台 UI 使用的 id（client-ui-redesign 3.1） -->
+<resources>
+    <item name="console_surface" type="id" />
+</resources>

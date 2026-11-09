@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HUD 视觉令牌（client-ui-redesign 1.1）：
+  深空黑底 HUD/Sci-Fi 视觉语言色板（视觉参照 specs/client-ui-redesign/prototype/）。
+  语义色 ok/warn/danger 供状态徽章与读数告警；dim 供辅助文案；on-accent 供实心强调钮文字。
+-->
+<resources>
+    <!-- 基底 -->
+    <color name="hud_bg">#0B0B10</color>
+    <color name="hud_card">#1E1E23</color>
+    <color name="hud_input">#14141A</color>
+
+    <!-- 文字层次 -->
+    <color name="hud_text">#F8FAFC</color>
+    <color name="hud_dim">#94A3B8</color>
+    <color name="hud_faint">#64748B</color>
+
+    <!-- 描边/分隔 -->
+    <color name="hud_border">#1E293B</color>
+
+    <!-- 强调与语义色 -->
+    <color name="hud_accent">#3B82F6</color>
+    <color name="hud_ok">#34D399</color>
+    <color name="hud_warn">#F59E0B</color>
+    <color name="hud_danger">#EF4444</color>
+    <color name="hud_on_accent">#04101F</color>
+
+    <!-- 徽章/弱化底色（对应语义色的低透明度变体，ARGB） -->
+    <color name="hud_accent_dim">#263B82F6</color>
+    <color name="hud_ok_dim">#2634D399</color>
+    <color name="hud_warn_dim">#26F59E0B</color>
+    <color name="hud_danger_dim">#26EF4444</color>
+    <color name="hud_reserved_dim">#14748796</color>
+
+    <!-- 抽屉/弹层遮罩与面板 -->
+    <color name="hud_scrim">#CC000000</color>
+    <color name="hud_drawer">#14141B</color>
+</resources>
