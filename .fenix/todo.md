@@ -132,3 +132,9 @@
   - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
   > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：escalation chain 在 escalate 终态化时对同签名加抑制窗/指数 backoff（人工消费、spec 状态变化或新证据指纹出现才解禁再派发）；或 escalate 后告警转 pending_human 态停止自动回派，仅人工/admin 显式消费后 re-arm；arbiter_rulings 计数接入派发闸（超 1 次仅累积不重派）
+- **[arbiter:single-a] 修复合并后运行面滞后：daemon 不重启仍跑旧代码，且无 pending-restart 提示面**
+  - 影响：自进化车道『修复已合并』与『缺陷已消除』之间存在无提示窗口：期间 arbiter/admin 的解冻/复位类处置按旧代码空转并被记为成功语义（配合 todo 已登记的回执缺口形成双盲），问题要等下一次冻结才暴露
+  - 证据：fenixd git ba9249a0f 合并于 13:11:50Z，运行 daemon（daemon_runtime.json pid 2829079）启动于 12:53:47Z——合并后修复不在运行面；restart_history.jsonl 显示重启需外部触发（12:52:50Z 条目→12:53:47Z 生效）；本 spec 13:01:45Z 再冻结发生在『修复已合并但运行面仍旧代码』窗口内；触发 run_id=arbiter-single-app-realdevice-retest-1794230197（签名 single-app-realdevice-retest::verify_env_blocked，来源 escalation-alert）
+  - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
+  > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：修复落 master 后由框架置 pending-restart 标记并单发告警（关联标注受影响的在飞冻结签名），人工/运维按提示重启；或对关键处置面（state_machine/queue）引入版本指纹自检，运行面与 HEAD 不一致时在处置回执中降级为『需重启后重试』而非成功语义
