@@ -287,8 +287,62 @@ stage_create() {
   VERDICT_EVIDENCE+=("CREATE: ${T_CREATE}s 超时无响应且进程存活（pid=$HELPER_PID）")
   return 1
 }
-collect_diagnostics()  { : ; }                              # 3.1
-classify_failure()     { : ; }                              # 3.1
+# ── 3.1 诊断包收集器（任一段失败自动收集，D2）──────────────────────────
+GETENFORCE=""; ID_LINE=""
+collect_diagnostics() {
+  [[ "$DIAG_COLLECTED" == 1 ]] && return 0
+  DIAG_COLLECTED=1
+  say "收集诊断包（logcat 500 行 / dmesg avc|kill / getenforce / build props / id）→ $STAGE_DIR/"
+  timeout 15 adb -s "$SERIAL" shell "logcat -d -t 500" >"$STAGE_DIR/logcat-tail-500.txt" 2>&1
+  timeout 15 adb -s "$SERIAL" shell "dmesg 2>/dev/null | grep -iE 'avc|kill'" >"$STAGE_DIR/dmesg-avc-kill.txt" 2>&1
+  GETENFORCE="$(adb_q getenforce)"
+  ID_LINE="$(adb_q id)"
+  {
+    echo "getenforce: $GETENFORCE"
+    echo "id: $ID_LINE"
+    timeout 15 adb -s "$SERIAL" shell "getprop ro.build.type ro.build.selinux ro.build.version.release ro.build.version.sdk ro.product.cpu.abi ro.build.fingerprint" 2>&1
+  } >"$STAGE_DIR/build-props-selinux.txt"
+  [[ -n "$SPAWN_LOG" ]] && printf '%s\n' "$SPAWN_LOG" >"$STAGE_DIR/helper-spawn-log.txt"
+  # 证据行提取（原文进报告）：AVC 关联助手上下文 / am_kill 类 / crash 类
+  mapfile -t EVIDENCE_AVC < <(grep -hiE 'avc: +denied' "$STAGE_DIR/dmesg-avc-kill.txt" "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | grep -iE "$HELPER_CTX_PAT" | sort -u | head -5)
+  mapfile -t EVIDENCE_KILL < <(grep -hiE 'am_kill|lmkd|lowmemory|SIGKILL|[Kk]illing' "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | grep -iE "$HELPER_NICE|app_process|ShellHel[l]per" | sort -u | head -5)
+  mapfile -t EVIDENCE_CRASH < <(grep -hiE 'FATAL EXCEPTION|AndroidRuntime|Force finishing|tombstone|SIGSEGV|SIGABRT' "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | head -5)
+  say "诊断证据: avc=${#EVIDENCE_AVC[@]} 行, kill=${#EVIDENCE_KILL[@]} 行, crash=${#EVIDENCE_CRASH[@]} 行, getenforce=${GETENFORCE:-?}"
+}
+
+# ── 3.1 结论判定（D1 证据绑定；优先级 SELINUX > MIRROR_LIMIT > SHELL_UNAVAILABLE > UNKNOWN）──
+classify_failure() {
+  if ((${#EVIDENCE_AVC[@]} > 0)); then
+    VERDICT="SELINUX_DENIED"
+    VERDICT_EVIDENCE+=("判定依据: 关联助手上下文（$HELPER_CTX_PAT）的 avc denied ${#EVIDENCE_AVC[@]} 行，首行: ${EVIDENCE_AVC[0]}")
+    return 0
+  fi
+  case "$FAIL_STAGE" in
+    SPAWN)
+      VERDICT="SHELL_UNAVAILABLE"
+      VERDICT_EVIDENCE+=("判定依据: SPAWN 段失败（app_process 未存活）且无 AVC 证据——user 版镜像限制特征（design D3）")
+      ;;
+    CREATE)
+      case "$CREATE_SHAPE" in
+        gone-during|ok-then-gone)
+          if ((${#EVIDENCE_CRASH[@]} > 0)); then
+            VERDICT="UNKNOWN"
+            VERDICT_EVIDENCE+=("判定依据: CREATE 段进程消失但存在 crash 记录（代码级异常而非镜像限制）: ${EVIDENCE_CRASH[0]}")
+          else
+            VERDICT="MIRROR_LIMIT"
+            VERDICT_EVIDENCE+=("判定依据: PING 成功 + CREATE 段进程静默消失（无 crash、无 AVC、getenforce=$GETENFORCE、build=$ENV_TYPE）——device-notes §2.1 特征（CREATE 形态: $CREATE_SHAPE）")
+          fi
+          ;;
+        alive-mute|err-reply|vd-missing)
+          VERDICT="UNKNOWN"   # 证据已在 stage 记录：进程存活但无响应 / ERR 应答 / VD 未登记
+          ;;
+      esac
+      ;;
+    *)
+      VERDICT="UNKNOWN"       # PUSH / PING 段失败：证据已在 stage 记录，无更强枚举依据
+      ;;
+  esac
+}
 write_json()           { : ; }                              # 3.2
 print_report()         { : ; }                              # 3.2/3.3/4.1
 
