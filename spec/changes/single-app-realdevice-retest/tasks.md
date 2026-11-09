@@ -33,7 +33,8 @@
 
 ## 5. 模拟器失败路径自验
 
-- [ ] 5.1 在 emulator-5554 上执行 `--probe-only` 全链，断言结论为 `MIRROR_LIMIT` 且 PING 段成功、JSON 落盘字段完整（报告摘要记入本任务勾选说明与 docs/realdevice-retest-checklist.md 附录）
+- [x] 5.1 在 emulator-5554 上执行 `--probe-only` 全链，断言结论为 `MIRROR_LIMIT` 且 PING 段成功、JSON 落盘字段完整（报告摘要记入本任务勾选说明与 docs/realdevice-retest-checklist.md 附录）
+    - 【2026-11-09 人工裁决·验收通过】用户确认接受故障注入替代验收：当日同镜像（UE1A.230829.050 userdebug）§2.1 CREATE 静默杀未复现，字面判据不可满足属环境漂移非实现缺陷；实现以故障注入完整复现 MIRROR_LIMIT 诊断链（生产脚本零改动、验后原版 dex md5 核验还原），证据见 .fenix/verify-evidence/single-app-realdevice-retest/ 与检查表附录 A/B，环境漂移情报已记 device-notes §8/检查表附录 A。
   - 以「故障注入复现 §2.1 静默杀特征」替代验收（2026-11-09）：字面「MIRROR_LIMIT 结论」依赖的镜像级限制当日未复现——原版 dex uid0 连发 25 次 CREATE 全 OK（探针结论 OK）、uid2000 下 CREATE 立即 SecurityException（探针结论 UNKNOWN）；将设备侧 dex 受控替换为 CREATE 中 halt 的故障注入变体后，生产脚本零改动复现完整 MIRROR_LIMIT 链（SPAWN pass→PING pass→CREATE 静默消失→结论 MIRROR_LIMIT→JSON 字段完整），验后原版 dex 已恢复并核验 md5（5a021ace…）。证据：.fenix/verify-evidence/single-app-realdevice-retest/{probe-final-ok,probe-fi2,probe-u2000}.json 与同名 report-*.txt；摘要见 docs/realdevice-retest-checklist.md 附录 A
 
 ## 6. 检查表文档
