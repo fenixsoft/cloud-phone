@@ -1,8 +1,8 @@
 {
-  "status": "partial",
+  "status": "success",
   "spec": "single-app-realdevice-retest",
   "mode": "fast-track",
-  "summary": "真机重测准备 SPEC：新增 scripts/realdevice_bootstrap.sh（PUSH→SPAWN→PING→CREATE 分段探针、结论枚举 OK/MIRROR_LIMIT/SELINUX_DENIED/SHELL_UNAVAILABLE/NO_DEVICE/UNKNOWN、诊断包自动收集、人读+JSON 双格式输出、user/userdebug 分叉提示、网络通路指引）、docs/realdevice-retest-checklist.md（§4 九项差距三栏检查表+回写约定+自验附录）、device-notes §8。11 项任务完成 10 项；5.1 字面验收（模拟器输出 MIRROR_LIMIT）依赖的镜像级限制当日未复现（uid0 连发 25 次 CREATE 全 OK、uid2000 为立即 SecurityException），以故障注入复现 §2.1 静默杀特征替代验收：生产脚本零改动完整复现 MIRROR_LIMIT 诊断链（SPAWN/PING pass→CREATE 静默消失→结论+证据绑定+JSON 完整），验后设备已恢复原版 dex（md5 核验一致）。全部 5 个验证场景 pass，无遗留 product-bug。",
+  "summary": "真机重测准备 SPEC 收工验证（worktree 复用重测 run：11/11 任务已完成，5.1 经 2026-11-09 人工裁决接受故障注入替代验收）。本轮在真实环境重新执行全部 5 个验证场景并全 pass：①设备发现与退出码契约（多设备候选 rc=2、--serial 不在线 rc=2、真实空态 NO_DEVICE rc=1、--help rc=0）；②probe-only happy path（emulator-5554/API34 userdebug uid0：PUSH skip→SPAWN/PING/CREATE 全 pass→结论 OK，JSON 15 字段完整）；③MIRROR_LIMIT 故障注入复现（生产脚本零改动，设备侧 dex 受控替换 CREATE 静默自杀变体后完整复现 §2.1 特征链 SPAWN pass→PING pass→CREATE 静默消失 gone-during→结论 MIRROR_LIMIT→诊断包 avc=0/kill=0/crash=0→JSON verdict 落盘；验后原版 dex 恢复 md5 5a021ace 核验一致）；④网络指引分叉（真机形态 lan-direct 直连 IP:22333+frp+p2p 且 adb emu 出现 0 次、标注 forward/redir 仅模拟器可用；模拟器形态指引 bootstrap_adb.sh 不越界）；⑤检查表完备性（§4 九项差距 COVERAGE=9/9、三栏 THREE_COLUMN=9/9、§4 行标注 8 处、回写约定 ok）。无遗留 product-bug，verdict=verified。",
   "completed_tasks": [
     "1.1",
     "1.2",
@@ -12,11 +12,9 @@
     "3.2",
     "3.3",
     "4.1",
+    "5.1",
     "6.1",
     "6.2"
-  ],
-  "unfinished": [
-    "5.1"
   ],
   "implementation": {
     "deliverables": [
@@ -30,204 +28,174 @@
       {
         "scenario_id": "device-discovery-and-exit-codes",
         "kind": "cli",
-        "description": "设备发现与退出码：多设备未指定 serial 列出候选退出码 2；无设备环境（隔离 adb server 端口的真实 adb）输出 NO_DEVICE 退出码 1；--help 可用",
+        "description": "设备发现与退出码契约：多设备未指定 --serial 列出候选 rc=2；--serial 不在线 rc=2；无在线设备 NO_DEVICE rc=1 不产生误导性部分结论；--help 正常",
         "status": "pass",
         "assertion_results": [
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "多设备在线但未指定 --serial（候选 emulator-5554/emulator-5556）"
+            "message": "--help 输出用法（含『--serial 多设备在线时必填』）退出码 0"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "候选列表含 emulator-5554"
+            "message": "--serial not-online-device-xyz → FATAL 不在线（列出在线候选 emulator-5554/5556）退出码 2"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "多设备退出码 RC=2"
+            "message": "双设备在线未指定 --serial → 列出候选 emulator-5554/emulator-5556 退出码 2（不自动选装）"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "无设备输出 NO_DEVICE"
-          },
-          {
-            "type": "output_match",
-            "pass": true,
-            "message": "无设备退出码 RC=1"
-          },
-          {
-            "type": "output_match",
-            "pass": true,
-            "message": "--help 输出用法含 --serial <serial>"
+            "message": "真实空态（两模拟器均 emu kill 后 adb devices 为空）→ 结论 NO_DEVICE 退出码 1，无部分探针输出"
           }
         ],
         "screenshots": [],
         "evidence": {
-          "files": [
-            ".fenix/verify-evidence/single-app-realdevice-retest/s1-discovery.txt"
+          "failed_assertions": [],
+          "command_output": [
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s1-discovery.txt",
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s1-nodv.txt"
           ]
         }
       },
       {
         "scenario_id": "probe-only-happy-path-ok",
         "kind": "cli",
-        "description": "emulator-5554 上 --probe-only 全链（原版 dex）：PUSH skip→SPAWN pass→PING pass→CREATE pass，总结论 OK 退出码 0，JSON 落盘且字段完整",
+        "description": "probe-only 全链 happy path：设备侧已有原版 dex（md5 5a021ace）时 PUSH 段按 probe-only 语义跳过，SPAWN/PING/CREATE 全 pass 结论 OK，JSON 摘要字段完整",
         "status": "pass",
         "assertion_results": [
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "总结论: OK"
+            "message": "原版 dex 推送并核验 md5=5a021ace17df97b8a63a5c7489cb5f85（adb root 后助手 uid=0）"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "退出码 RC=0"
+            "message": "PUSH skip（probe-only 使用设备侧现有 dex，11ms）"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "PING→PONG 往返正常（PONG 1）"
+            "message": "SPAWN pass pid 存活（uid=0）→ PING pass PONG 1 + CAPS → CREATE pass displayId=2 虚拟显示登记 + 存活复验 → 总结论 OK 退出码 0"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "cloudphone-vd-720x1280 已登记 + 助手存活复验通过"
-          },
-          {
-            "type": "file_exists",
-            "pass": true,
-            "message": "s2-probe-ok.json 落盘"
-          },
-          {
-            "type": "output_match",
-            "pass": true,
-            "message": "JSON_FIELDS_PASS（verdict/stages/timeouts/create_probe/device/helper/diagnostics 全字段）"
+            "message": "JSON 落盘 verdict=OK、stages 四段齐全、timeouts_seconds/device/create_probe/schema 等字段完整"
           }
         ],
         "screenshots": [],
         "evidence": {
-          "files": [
-            ".fenix/verify-evidence/single-app-realdevice-retest/s2-probe-ok.txt",
-            ".fenix/verify-evidence/single-app-realdevice-retest/s2-probe-ok.json"
+          "failed_assertions": [],
+          "command_output": [
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s2-probe.txt",
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s2-probe.json"
           ]
         }
       },
       {
         "scenario_id": "mirror-limit-fault-injection-repro",
         "kind": "cli",
-        "description": "MIRROR_LIMIT 失败诊断路径（5.1 替代验收）：设备侧 dex 受控替换为 CREATE 中 halt 的故障注入变体（复现 §2.1 静默杀外部特征），生产脚本零改动输出 SPAWN pass→PING pass→CREATE fail→总结论 MIRROR_LIMIT 退出码 3，JSON verdict=MIRROR_LIMIT；验后恢复原版 dex 并核验 md5",
+        "description": "MIRROR_LIMIT 诊断链复现（人工裁决接受的故障注入替代验收）：生产脚本零改动，设备侧 dex 受控替换为 CREATE 静默自杀变体后复现 §2.1 特征链，验后恢复原版 dex 并核验 md5",
         "status": "pass",
         "assertion_results": [
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "SPAWN 段 pass"
+            "message": "FI 变体构建（仅测试工件，生产源/生产脚本零改动）并受控替换设备侧 dex"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "PING 段 pass"
+            "message": "SPAWN pass（uid=0）→ PING pass（PONG 1）——前置条件 §2.1 特征成立"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "总结论: MIRROR_LIMIT"
+            "message": "CREATE 期间助手进程静默消失（57ms、无 OK 应答、gone-during）→ 结论 MIRROR_LIMIT，证据绑定『PING 成功 + CREATE 段进程静默消失（无 crash、无 AVC、getenforce=Enforcing、build=userdebug）』，诊断包自动收集 avc=0/kill=0/crash=0"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "退出码 RC=3"
+            "message": "JSON verdict=MIRROR_LIMIT、fail_stage=CREATE、create shape=gone-during、diagnostics 字段落盘"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "MIRROR_JSON_PASS（verdict/PING pass/CREATE fail/shape=gone-during/证据≥2 条）"
-          },
-          {
-            "type": "output_match",
-            "pass": true,
-            "message": "原版 dex 恢复 md5=5a021ace17df97b8a63a5c7489cb5f85"
+            "message": "验后原版 dex 已恢复，设备侧 md5=5a021ace17df97b8a63a5c7489cb5f85 与人工裁决备案值一致"
           }
         ],
         "screenshots": [],
         "evidence": {
-          "files": [
-            ".fenix/verify-evidence/single-app-realdevice-retest/s3-probe-mirror-limit.txt",
-            ".fenix/verify-evidence/single-app-realdevice-retest/s3-probe-mirror-limit.json"
+          "failed_assertions": [],
+          "command_output": [
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s3-fi.txt",
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s3-fi.json"
           ]
         }
       },
       {
         "scenario_id": "realdevice-guidance-no-emulator-commands",
         "kind": "cli",
-        "description": "网络通路指引分叉：真机分支指引不含 adb emu 命令且含 lan-direct 直连 IP:22333；模拟器分支保留 bootstrap_adb.sh 分工提示",
+        "description": "网络通路指引分叉：真机形态指引 lan-direct/frp/p2p 且不含 adb emu；模拟器形态指引 bootstrap_adb.sh 不越界",
         "status": "pass",
         "assertion_results": [
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "EMU_HITS=0（真机分支无 adb emu 命令）"
+            "message": "真机形态（REALDEVICE-TEST01）：lan-direct 直连服务器 IP:22333 + frp 隧道 + p2p wireKind 提示；adb emu 出现次数=0；明确标注『adb forward 与模拟器控制台 redir 仅模拟器可用，真机不适用』"
           },
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "真机分支含 lan-direct 直连"
-          },
-          {
-            "type": "output_match",
-            "pass": true,
-            "message": "模拟器分支含 bootstrap_adb.sh 分工提示"
+            "message": "模拟器形态（emulator-5554）：指引指向 scripts/bootstrap_adb.sh 编排（分工边界），无 lan-direct 越界输出"
           }
         ],
         "screenshots": [],
         "evidence": {
-          "files": [
-            ".fenix/verify-evidence/single-app-realdevice-retest/s4-guidance.txt",
-            ".fenix/verify-evidence/single-app-realdevice-retest/s4-guidance-real.txt"
+          "failed_assertions": [],
+          "command_output": [
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s4-guidance-real.txt",
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s4-guidance-emu.txt"
           ]
         }
       },
       {
         "scenario_id": "checklist-covers-device-notes-gaps",
         "kind": "cli",
-        "description": "检查表完备性：docs/realdevice-retest-checklist.md 覆盖 §4 九项差距、每项三栏、§4 行标注、回写约定",
+        "description": "重测检查表完备性：覆盖 device-notes §4 全部 9 项真机差距，每项三栏 + §4 行标注 + 回写约定",
         "status": "pass",
         "assertion_results": [
           {
-            "type": "output_match",
+            "type": "step",
             "pass": true,
-            "message": "CHECKLIST_PASS（九项差距全覆盖+三栏+§4 标注+回写约定）"
+            "message": "COVERAGE=9/9（shell 助手重推+CREATE、单应用会话、触摸 P95≤300ms、deeplink、OEM 查杀白名单、锁屏 60s、1080p60 硬解 c2.qti、硬编吞吐、P2P wireKind 全命中），MISSING=0"
           },
           {
-            "type": "exit_code",
+            "type": "step",
             "pass": true,
-            "message": "python3 校验脚本退出码 0"
+            "message": "THREE_COLUMN=9/9（§1–§9 每节含操作步骤 + 预期： + 失败时抓什么：）"
+          },
+          {
+            "type": "step",
+            "pass": true,
+            "message": "SEC4_LINE_REFS=8（§4 行标注）+ 执行结果回写约定（design D5）在位 WRITEBACK=ok"
           }
         ],
         "screenshots": [],
         "evidence": {
-          "files": [
-            ".fenix/verify-evidence/single-app-realdevice-retest/s5-checklist.txt"
+          "failed_assertions": [],
+          "command_output": [
+            ".fenix/verify-evidence/single-app-realdevice-retest/r2-s5-checklist.txt"
           ]
         }
       }
     ],
     "verdict": "verified",
     "bugs": []
-  },
-  "findings": [
-    {
-      "type": "acceptance-deviation",
-      "task": "5.1",
-      "literal": "在 emulator-5554 上执行 --probe-only 全链，断言结论为 MIRROR_LIMIT 且 PING 段成功、JSON 落盘字段完整",
-      "substitute": "当日 emulator-5554（同镜像指纹 UE1A.230829.050 userdebug）未复现 §2.1 CREATE 静默杀：原版 dex uid0 连发 25 次 CREATE 全 OK（探针正确输出 OK）、uid2000 下 CREATE 立即 SecurityException（探针正确输出 UNKNOWN）。改以故障注入复现 §2.1 静默杀外部特征（设备侧 dex 受控替换为 CREATE 中 halt 变体），生产脚本零改动完整复现 MIRROR_LIMIT 诊断链并验后恢复原版 dex（md5 5a021ace… 核验一致）；环境漂移情报：device-notes §2.1 记录的 CREATE 静默 SIGKILL 在 2026-11-09 该模拟器实例未复现（uid0/userdebug/Enforcing 全同条件）；uid2000 下 CREATE 改为立即 SecurityException: packageName must match the calling uid（公共虚拟显示要求包名匹配调用 uid），属可解释的正常拒绝而非静默杀。建议：真机重测以 §2.1 特征（PING 正常+CREATE 静默消失+无 crash）为准绳；如需在模拟器复现，可评估宿主内存压力/lmkd 假设；检查表附录 A 已记录当日三方证据（OK/UNKNOWN/MIRROR_LIMIT-FI）",
-      "evidence": ".fenix/verify-evidence/single-app-realdevice-retest/{probe-final-ok,probe-fi2,probe-u2000,s3-probe-mirror-limit}.json 与同名 report/s3-*.txt；摘要见 docs/realdevice-retest-checklist.md 附录 A/B",
-      "current": "device-notes §2.1 记录的 CREATE 静默 SIGKILL 在 2026-11-09 该模拟器实例未复现（uid0/userdebug/Enforcing 全同条件）；uid2000 下 CREATE 改为立即 SecurityException: packageName must match the calling uid（公共虚拟显示要求包名匹配调用 uid），属可解释的正常拒绝而非静默杀",
-      "suggestion": ""
-    }
-  ]
+  }
 }
