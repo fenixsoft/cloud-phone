@@ -19,6 +19,8 @@ import cloudphone.protocol.WatchMode
 import cloudphone.protocol.decodeControlMessage
 import cloudphone.protocol.encodeControlMessage
 import cloudphone.transport.BackendKind
+import cloudphone.transport.CryptoAlgo
+import cloudphone.transport.CryptoCodec
 import cloudphone.transport.P2pBackend
 import cloudphone.transport.Role
 import cloudphone.transport.StunClient
@@ -54,6 +56,8 @@ object ClientSession {
         val kind: BackendKind,
         val token: String,
         val useUdpVideo: Boolean,
+        /** 端到端加密意图（p2p-crossnet-traversal 3.2，缺省开；对端不支持自动回落明文） */
+        val encryptOn: Boolean = true,
     )
 
     @Volatile var onFrame: ((VideoFrame) -> Unit)? = null
@@ -95,6 +99,19 @@ object ClientSession {
     // 有界缓冲（避免 SynchronousQueue 无阻塞 offer 在 poll 未就绪时丢 ack 的竞态）
     private val ackQueue = java.util.concurrent.LinkedBlockingQueue<ControlMessage.HelloAck>(8)
 
+    /** 本端加密开关意图（cfg.encryptOn 快照；negotiation 前置材料） */
+    @Volatile private var encryptOn = true
+
+    /**
+     * 加密协商结果（p2p-crossnet-traversal 3.2）：AES128GCM = 双端开启且对端支持；
+     * NONE = 明文（对端老版本/任一侧关闭）。UI 以此展示「加密：AES-128-GCM / 未加密」。
+     */
+    @Volatile var negotiatedCryptoAlgo: CryptoAlgo = CryptoAlgo.NONE
+        private set
+
+    /** 本次握手的客户端 nonce（handleControl 读线程据 ack.cryptoNonce 派生密钥用） */
+    @Volatile private var pendingCryptoNonce: ByteArray? = null
+
     // ── 连接与握手 ──
 
     /** 建链 + HELLO 握手（≤500ms 目标；成功 true） */
@@ -107,6 +124,10 @@ object ClientSession {
             config = cfg
             currentMode = mode
             currentPackage = packageName
+            encryptOn = cfg.encryptOn
+            // 每次连接重新协商：清上一连接的密钥态（新握手新 nonce 新子钥）
+            negotiatedCryptoAlgo = CryptoAlgo.NONE
+            pendingCryptoNonce = null
             val ok = connectOnce() && handshake(mode, packageName)
             if (ok) {
                 lastPongAtMs = SystemClock.elapsedRealtime()
@@ -169,16 +190,19 @@ object ClientSession {
         return connectOk
     }
 
-    /** HELLO 握手（token 配对 ≤500ms；p2p 附 SRFLX offer，收 answer 触发打洞） */
+    /** HELLO 握手（token 配对 ≤500ms；p2p 附多候选 offer，收 answer 触发打洞；附加密协商请求） */
     fun handshake(mode: WatchMode, packageName: String): Boolean {
         val b = backend ?: return false
         val p2p = b as? P2pBackend
         val offer = if (p2p != null) {
-            // 等本端 SRFLX 发现（≤2s），拿到则附 offer
+            // 等本端候选发现（SRFLX 多节点 + 本地多网卡，≤2s），拿到则附多候选 offer 文本
             val deadline = System.currentTimeMillis() + 2000
-            while (p2p.localSrflx == null && System.currentTimeMillis() < deadline) Thread.sleep(50)
-            p2p.localSrflx?.let { StunClient.formatSrflx(it) } ?: ""
+            while (p2p.localCandidates.isEmpty() && System.currentTimeMillis() < deadline) Thread.sleep(50)
+            p2p.localCandidatesText()
         } else ""
+        // 加密协商请求：encryptOn 时携 AES128_GCM + 32B 客户端 nonce（每次握手重新生成）
+        val clientNonce = if (encryptOn) CryptoCodec.generateHandshakeNonce() else ByteArray(0)
+        pendingCryptoNonce = if (encryptOn) clientNonce else null
         val hello = ControlMessage.Hello(
             version = 1,
             token = config?.token ?: "",
@@ -187,10 +211,16 @@ object ClientSession {
             width = 0, height = 0, fps = 0, bitrateKbps = 0,
             sessionId = ClientSession.currentSessionId,
             p2pOffer = offer,
+            encryptOn = encryptOn,
+            cryptoAlgo = if (encryptOn) CryptoAlgo.AES128_GCM else CryptoAlgo.NONE,
+            cryptoNonce = clientNonce,
         )
         while (ackQueue.poll() != null) Unit // 清残留
         sendControl(hello)
-        android.util.Log.d("cloudphone-client", "HELLO sent (mode=$mode offer=${offer.isNotBlank()})")
+        android.util.Log.d(
+            "cloudphone-client",
+            "HELLO sent (mode=$mode offer=${offer.isNotBlank()} encryptOn=$encryptOn)",
+        )
         val ack = ackQueue.poll(2, TimeUnit.SECONDS) ?: run {
             android.util.Log.w("cloudphone-client", "HELLO ack timeout")
             lastError = "HELLO 无应答（握手超时）"
@@ -203,8 +233,14 @@ object ClientSession {
             return false
         }
         if (p2p != null && ack.p2pAnswer.isNotBlank()) {
-            StunClient.parseSrflx(ack.p2pAnswer)?.let { p2p.onPeerSrflx(it) }
+            if (ack.p2pAnswer.contains(',') || ack.p2pAnswer.contains(';')) {
+                p2p.onPeerCandidates(ack.p2pAnswer)
+            } else {
+                StunClient.parseSrflx(ack.p2pAnswer)?.let { p2p.onPeerSrflx(it) }
+            }
         }
+        // 协商结果落态（enableCrypto 已在读线程完成，见 handleControl）
+        negotiatedCryptoAlgo = if (encryptOn) ack.cryptoAlgo else CryptoAlgo.NONE
         return true
     }
 
@@ -265,7 +301,23 @@ object ClientSession {
         when (msg) {
             is ControlMessage.HelloAck -> {
                 if (msg.status == HelloStatus.ACCEPTED && msg.sessionId != 0) currentSessionId = msg.sessionId
+                // 加密协商接受（3.2）：ack 同步读线程处理——握手上层线程尚未从 ackQueue
+                // 取走 ack，源端 enableCrypto 后发来的首批加密记录即刻可解（竞态窗口最小化）
+                if (msg.status == HelloStatus.ACCEPTED && msg.cryptoAlgo == CryptoAlgo.AES128_GCM &&
+                    encryptOn && msg.cryptoNonce.size == CryptoCodec.HANDSHAKE_NONCE_BYTES
+                ) {
+                    val nonce = pendingCryptoNonce
+                    val cfg = config
+                    if (nonce != null && cfg != null) {
+                        val codec = CryptoCodec.negotiate(Role.CLIENT, cfg.token, nonce, msg.cryptoNonce)
+                        backend?.enableCrypto(codec)
+                    }
+                }
                 ackQueue.offer(msg)
+            }
+            is ControlMessage.P2pMigrate -> {
+                // 端点迁移（2.3）：对端网络切换推送新候选；会话/统计不重置
+                (backend as? P2pBackend)?.onPeerCandidates(msg.candidates)
             }
             is ControlMessage.StatsMessage -> {
                 // 矩阵采集口径（run_matrix.py 解析）
@@ -404,6 +456,7 @@ class ConnectActivity : Activity() {
     private lateinit var modeSpinner: Spinner
     private lateinit var packageInput: EditText
     private lateinit var useUdpCheck: CheckBox
+    private lateinit var encryptCheck: CheckBox
     private lateinit var statusText: TextView
     private lateinit var profileSpinner: Spinner
     private lateinit var resolutionSpinner: Spinner
@@ -523,6 +576,10 @@ class ConnectActivity : Activity() {
         useUdpCheck = CheckBox(this).apply { text = "UDP 视频通道（lan 直连默认关闭）"; isChecked = false }
         content.addView(useUdpCheck)
 
+        // 加密开关（3.2）：缺省开；对端不支持（老版本）自动回落明文并在状态区提示
+        encryptCheck = CheckBox(this).apply { text = "端到端加密（AES-128-GCM，对端不支持自动回落明文）"; isChecked = true }
+        content.addView(encryptCheck)
+
         val connectButton = Button(this).apply {
             text = "连接并观看"
             setOnClickListener { connectAndWatch() }
@@ -582,6 +639,7 @@ class ConnectActivity : Activity() {
         tokenInput.setText(p.token)
         tcpPortInput.setText(p.tcpPort.toString())
         udpPortInput.setText(p.udpPort.toString())
+        encryptCheck.isChecked = p.encryptOn
         val idx = (0 until backendSpinner.adapter.count)
             .firstOrNull { backendSpinner.adapter.getItem(it) == p.backend } ?: 0
         backendSpinner.setSelection(idx)
@@ -613,6 +671,7 @@ class ConnectActivity : Activity() {
                 backend = backendSpinner.selectedItem?.toString() ?: "lan-direct",
                 token = tokenInput.text.toString(),
                 lastConnectedAt = System.currentTimeMillis(),
+                encryptOn = encryptCheck.isChecked,
             ),
         )
     }
@@ -806,6 +865,7 @@ class ConnectActivity : Activity() {
             },
             token = tokenInput.text.toString().ifBlank { "cloudphone-m0" },
             useUdpVideo = useUdpCheck.isChecked,
+            encryptOn = encryptCheck.isChecked,
         )
         Thread({
             val ok = ClientSession.connect(cfg, watchMode, pkg)
@@ -830,6 +890,15 @@ class ConnectActivity : Activity() {
                 // 连接成功（START_SESSION ACCEPTED）→ 档案 upsert（1.2）
                 saveProfileFromFields()
                 refreshProfileSpinner()
+                // 加密协商结果（3.2）：状态区 + 日志双出口（画面内 StatsView 持续显示）
+                val cryptoLabel = when (ClientSession.negotiatedCryptoAlgo) {
+                    CryptoAlgo.AES128_GCM -> "加密：AES-128-GCM"
+                    else -> "未加密（对端不支持）"
+                }
+                android.util.Log.i("cloudphone-client", "session ready, $cryptoLabel")
+                if (!silent) {
+                    statusText.text = cryptoLabel
+                }
                 startActivity(Intent(this@ConnectActivity, DecodeRenderActivity::class.java))
             }
         }, "connect-ui").apply { start() }

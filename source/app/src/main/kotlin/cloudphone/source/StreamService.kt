@@ -16,10 +16,13 @@ import cloudphone.protocol.WatchMode
 import cloudphone.protocol.decodeControlMessage
 import cloudphone.protocol.encodeControlMessage
 import cloudphone.transport.BackendKind
+import cloudphone.transport.CryptoAlgo
+import cloudphone.transport.CryptoCodec
 import cloudphone.transport.FrpBackend
 import cloudphone.transport.LanDirectBackend
 import cloudphone.transport.P2pBackend
 import cloudphone.transport.Role
+import cloudphone.transport.StunClient
 import cloudphone.transport.StreamEvent
 import cloudphone.transport.TransportBackend
 import cloudphone.transport.TransportConfig
@@ -52,6 +55,16 @@ class StreamService : Service() {
     @Volatile private var running = false
     private var token = DEFAULT_TOKEN
 
+    /** 源端加密开关意图（启动 intent EXTRA_ENCRYPT_ON 下发，缺省开；negotiation 亦要求对端开启） */
+    @Volatile private var encryptOn = true
+
+    /**
+     * 会话级协商结果（p2p-crossnet-traversal 3.1）：AES128GCM = 双端开启且对端支持，
+     * NONE = 明文（对端老版本不支持/任一侧关闭）。enableCrypto 后与 wire 实际态一致。
+     */
+    @Volatile var negotiatedCryptoAlgo: CryptoAlgo = CryptoAlgo.NONE
+        private set
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -70,6 +83,9 @@ class StreamService : Service() {
         val tcpPort = prefs.getInt("tcpPort", 22333)
         val udpPort = prefs.getInt("udpPort", 22334)
         val useUdp = prefs.getBoolean("useUdpVideo", false)
+        // 加密开关：启动 intent extra 优先（矩阵自动化下发），回落 prefs，缺省开
+        encryptOn = intent?.getBooleanExtra(EXTRA_ENCRYPT_ON, prefs.getBoolean("encryptOn", true))
+            ?: prefs.getBoolean("encryptOn", true)
         if (!running) {
             startStreaming(backendKind, tcpPort, udpPort, useUdp)
         }
@@ -212,6 +228,10 @@ class StreamService : Service() {
         android.util.Log.d("cloudphone-source", "recv ${msg.javaClass.simpleName}")
         when (msg) {
             is ControlMessage.Hello -> handleHello(msg)
+            is ControlMessage.P2pMigrate -> {
+                // 端点迁移（2.3）：对端网络切换推送新候选；会话/统计不重置
+                (backend as? P2pBackend)?.onPeerCandidates(msg.candidates)
+            }
             is ControlMessage.StartSession -> handleStartSession(msg)
             is ControlMessage.StopSession -> {
                 val session = sessionManager?.get(msg.sessionId)
@@ -273,27 +293,60 @@ class StreamService : Service() {
 
     private fun handleHello(msg: ControlMessage.Hello) {
         val manager = sessionManager ?: return
+        // token 校验最前置（加密协商复用既有拒绝路径：token 不匹配 → REJECT_BAD_TOKEN，
+        // 绝不进入协商/enableCrypto）
         if (!manager.validateToken(msg.token)) {
-            send(
-                ack(HelloStatus.REJECT_BAD_TOKEN, "token mismatch", msg),
-            )
+            negotiatedCryptoAlgo = CryptoAlgo.NONE
+            send(ack(HelloStatus.REJECT_BAD_TOKEN, "token mismatch", msg))
             return
         }
-        // p2p：offer（客户端 SRFLX）→ 源端 answer
+        // p2p：offer（客户端候选文本，多候选 + symmetric 标记；旧单候选为其特例）→ 源端候选文本 answer
         var answer = ""
         val p2p = backend as? P2pBackend
         if (p2p != null && msg.p2pOffer.isNotBlank()) {
-            cloudphone.transport.StunClient.parseSrflx(msg.p2pOffer)?.let { offer ->
-                p2p.onPeerSrflx(offer)
-                answer = p2p.localSrflx?.let { cloudphone.transport.StunClient.formatSrflx(it) } ?: ""
+            if (msg.p2pOffer.contains(',') || msg.p2pOffer.contains(';')) {
+                p2p.onPeerCandidates(msg.p2pOffer)
+            } else {
+                StunClient.parseSrflx(msg.p2pOffer)?.let { p2p.onPeerSrflx(it) }
             }
+            answer = p2p.localCandidatesText()
         }
+        // 加密协商（3.1）：客户端 encryptOn + AES128_GCM + 32B nonce，且本端开关开启 → 接受；
+        // 否则明文（ack 无 crypto 块，与 v1 老端字节一致）
+        var acceptedCodec: CryptoCodec? = null
+        var sourceNonce = ByteArray(0)
+        val algo = if (encryptOn && msg.encryptOn && msg.cryptoAlgo == CryptoAlgo.AES128_GCM &&
+            msg.cryptoNonce.size == CryptoCodec.HANDSHAKE_NONCE_BYTES
+        ) {
+            CryptoAlgo.AES128_GCM
+        } else {
+            CryptoAlgo.NONE
+        }
+        if (algo == CryptoAlgo.AES128_GCM) {
+            sourceNonce = CryptoCodec.generateHandshakeNonce()
+            acceptedCodec = CryptoCodec.negotiate(Role.SOURCE, msg.token, msg.cryptoNonce, sourceNonce)
+        }
+        negotiatedCryptoAlgo = algo
         send(
             ack(HelloStatus.ACCEPTED, "", msg).copy(
                 hungSessions = manager.hungSessions(),
                 p2pAnswer = answer,
+                // ack 的 crypto 块仅在协商成功（algo != NONE）时随线格式出现
+                encryptOn = algo == CryptoAlgo.AES128_GCM,
+                cryptoAlgo = algo,
+                cryptoNonce = sourceNonce,
             ),
         )
+        // 关键次序：ack 已同步 flush 出栈（writeControl flush），此后才启用加密——
+        // TCP 有序保证客户端先以明文读到 ack（拿到 s2c/c2s 材料）再收加密记录。
+        // handleControl 跑在通道读线程，enableCrypto 直接作用于当前 channel。
+        if (acceptedCodec != null) {
+            backend?.enableCrypto(acceptedCodec)
+            android.util.Log.i(
+                "cloudphone-source",
+                "crypto negotiated: AES128-GCM (session keys derived from pairing token)",
+            )
+        }
     }
 
     private fun ack(status: HelloStatus, reason: String, hello: ControlMessage.Hello) =
@@ -473,6 +526,9 @@ class StreamService : Service() {
         const val CHANNEL_ID = "cloudphone-stream"
         /** 授权成功后由 MainActivity 发起：立即用凭据建共享采集管线 */
         const val ACTION_START_CAPTURE = "cloudphone.source.START_CAPTURE"
+
+        /** 加密开关（p2p-crossnet-traversal 3.1）：启动 intent extra，缺省 true；回落 prefs "encryptOn" */
+        const val EXTRA_ENCRYPT_ON = "cloudphone.source.ENCRYPT_ON"
 
         /** MainActivity 授权后的投影对象交接点（进程内单会话整屏路径） */
         @Volatile var projectionRef: MediaProjection? = null

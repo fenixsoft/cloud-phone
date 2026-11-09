@@ -1,5 +1,6 @@
 package cloudphone.protocol
 
+import cloudphone.transport.CryptoAlgo
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 
@@ -16,7 +17,7 @@ import java.nio.charset.StandardCharsets
 /** 协议版本（M0 = 1） */
 const val PROTOCOL_VERSION: Int = 1
 
-/** 控制消息类型常量（M1 C++ 化时保持数值不变） */
+/** 控制消息类型常量（M1 C++ 化时保持数值不变；0x0C 起为 p2p-crossnet-traversal 扩展） */
 object MsgType {
     const val HELLO: Int = 0x01
     const val HELLO_ACK: Int = 0x02
@@ -29,6 +30,9 @@ object MsgType {
     const val PONG: Int = 0x09
     const val APP_LIST_REQUEST: Int = 0x0A
     const val APP_LIST: Int = 0x0B
+
+    /** 端点迁移（p2p-crossnet-traversal 2.3）：本端网络切换后向对端推送新候选地址 */
+    const val P2P_MIGRATE: Int = 0x0C
 }
 
 /** 观看模式：整屏 / 单应用（指定包名）/ 附着到已挂机会话 */
@@ -40,7 +44,7 @@ enum class WatchMode(val id: Int) {
     }
 }
 
-/** HELLO_ACK 状态与错误码 */
+/** HELLO_ACK 状态与错误码（REJECT_BAD_TOKEN=1：token 不匹配拒绝，加密协商亦复用该拒绝路径） */
 enum class HelloStatus(val id: Int) {
     ACCEPTED(0), REJECT_BAD_TOKEN(1), REJECT_BUSY(2), REJECT_VERSION(3), REJECT_UNSUPPORTED_MODE(4);
 
@@ -101,7 +105,37 @@ sealed class ControlMessage(val type: Int) {
         val sessionId: Int,
         /** 客户端 SRFLX offer（"ip:port"，p2p 打洞用；空串 = 不打洞） */
         val p2pOffer: String,
-    ) : ControlMessage(MsgType.HELLO)
+        /** 加密开关意图（true 时线格式追加 34B crypto 块；false = 不追加，与 v1 现状逐字节一致） */
+        val encryptOn: Boolean = false,
+        /** 请求的加密算法（协商请求语义：encryptOn=true 恒 AES128GCM） */
+        val cryptoAlgo: CryptoAlgo = CryptoAlgo.NONE,
+        /** 客户端 32B 随机 nonce（HKDF salt 材料；每次握手重新生成） */
+        val cryptoNonce: ByteArray = ByteArray(0),
+    ) : ControlMessage(MsgType.HELLO) {
+        /** ByteArray 属性需按内容比较（数据类默认引用比较） */
+        override fun equals(other: Any?): Boolean =
+            other is Hello && other.version == version && other.token == token && other.mode == mode &&
+                other.packageName == packageName && other.width == width && other.height == height &&
+                other.fps == fps && other.bitrateKbps == bitrateKbps && other.sessionId == sessionId &&
+                other.p2pOffer == p2pOffer && other.encryptOn == encryptOn && other.cryptoAlgo == cryptoAlgo &&
+                other.cryptoNonce.contentEquals(cryptoNonce)
+        override fun hashCode(): Int {
+            var h = version
+            h = h * 31 + token.hashCode()
+            h = h * 31 + mode.hashCode()
+            h = h * 31 + packageName.hashCode()
+            h = h * 31 + width
+            h = h * 31 + height
+            h = h * 31 + fps
+            h = h * 31 + bitrateKbps
+            h = h * 31 + sessionId
+            h = h * 31 + p2pOffer.hashCode()
+            h = h * 31 + encryptOn.hashCode()
+            h = h * 31 + cryptoAlgo.hashCode()
+            h = h * 31 + cryptoNonce.contentHashCode()
+            return h
+        }
+    }
 
     /** 源端 → 客户端：握手应答（接受携带会话参数，拒绝携带原因） */
     data class HelloAck(
@@ -118,7 +152,39 @@ sealed class ControlMessage(val type: Int) {
         val p2pAnswer: String,
         /** 已挂机会话列表（会话抽屉） */
         val hungSessions: List<HungSession>,
-    ) : ControlMessage(MsgType.HELLO_ACK)
+        /** 源端加密开关意图（老端无此块 = false） */
+        val encryptOn: Boolean = false,
+        /** 协商结果：AES128GCM = 双端都开且都支持；NONE = 未加密（老端不支持/任一侧关闭） */
+        val cryptoAlgo: CryptoAlgo = CryptoAlgo.NONE,
+        /** 源端 32B 随机 nonce（协商结果 AES128GCM 时携带） */
+        val cryptoNonce: ByteArray = ByteArray(0),
+    ) : ControlMessage(MsgType.HELLO_ACK) {
+        /** ByteArray 属性需按内容比较（数据类默认引用比较） */
+        override fun equals(other: Any?): Boolean =
+            other is HelloAck && other.status == status && other.reason == reason && other.sessionId == sessionId &&
+                other.width == width && other.height == height && other.fps == fps &&
+                other.bitrateKbps == bitrateKbps && other.encoder == encoder && other.displayId == displayId &&
+                other.p2pAnswer == p2pAnswer && other.hungSessions == hungSessions &&
+                other.encryptOn == encryptOn && other.cryptoAlgo == cryptoAlgo &&
+                other.cryptoNonce.contentEquals(cryptoNonce)
+        override fun hashCode(): Int {
+            var h = status.hashCode()
+            h = h * 31 + reason.hashCode()
+            h = h * 31 + sessionId
+            h = h * 31 + width
+            h = h * 31 + height
+            h = h * 31 + fps
+            h = h * 31 + bitrateKbps
+            h = h * 31 + encoder.hashCode()
+            h = h * 31 + displayId
+            h = h * 31 + p2pAnswer.hashCode()
+            h = h * 31 + hungSessions.hashCode()
+            h = h * 31 + encryptOn.hashCode()
+            h = h * 31 + cryptoAlgo.hashCode()
+            h = h * 31 + cryptoNonce.contentHashCode()
+            return h
+        }
+    }
 
     /** 客户端 → 源端：发起新会话或以 sessionId 附着挂机会话 */
     data class StartSession(
@@ -130,6 +196,15 @@ sealed class ControlMessage(val type: Int) {
         val fps: Int,
         val bitrateKbps: Int,
     ) : ControlMessage(MsgType.START_SESSION)
+
+    /**
+     * 双向：端点迁移地址更新（p2p-crossnet-traversal 2.3）。本端网络切换（出口 IP 变化）后
+     * 经信令通道把新候选地址推给对端；对端显式 setRemote 更新打洞目标，sequence=0 探针
+     * 重连复用，会话与统计均不重置。载荷候选文本格式与 p2pOffer 一致（多候选 + ";nat=sym"）。
+     */
+    data class P2pMigrate(
+        val candidates: String,
+    ) : ControlMessage(MsgType.P2P_MIGRATE)
 
     /** 客户端 → 源端：结束会话（单应用模式销毁虚拟屏与 App） */
     data class StopSession(val sessionId: Int) : ControlMessage(MsgType.STOP_SESSION)
@@ -206,11 +281,35 @@ private fun ByteBuffer.getU16String(): String {
     return String(bytes, StandardCharsets.UTF_8)
 }
 
+// ── 加密协商块（p2p-crossnet-traversal 1.3，可选尾部字段；不 bump PROTOCOL_VERSION）──
+
+/** [u8 cryptoAlgo][u8 encryptOn][32B nonce] = 34B；老端无此块，新端按 remaining() 判定有无 */
+const val CRYPTO_BLOCK_BYTES: Int = 1 + 1 + 32
+
+private fun ByteBuffer.putCryptoBlock(algo: CryptoAlgo, encryptOn: Boolean, nonce: ByteArray) {
+    put(algo.id.toByte())
+    put((if (encryptOn) 1 else 0).toByte())
+    val n = ByteArray(32) // 不足 32B 左侧零填充（nonce 恒 32B，防御编码半成品）
+    nonce.copyInto(n, (32 - nonce.size).coerceAtLeast(0).coerceAtMost(32))
+    put(n)
+}
+
+/** 读可选 crypto 块；缓冲不足（老端消息）返回 null → 协商回落 none */
+private fun ByteBuffer.getCryptoBlockOpt(): Triple<CryptoAlgo, Boolean, ByteArray>? {
+    if (remaining() < CRYPTO_BLOCK_BYTES) return null
+    val algo = CryptoAlgo.from(get().toInt() and 0xFF) ?: CryptoAlgo.NONE
+    val on = (get().toInt() and 0xFF) != 0
+    val nonce = ByteArray(32)
+    get(nonce)
+    return Triple(algo, on, nonce)
+}
+
 /** 控制消息 → 线载荷（不含 record 头，首字节为 msgType） */
 fun encodeControlMessage(msg: ControlMessage): ByteArray {
     val body = when (msg) {
         is ControlMessage.Hello -> ByteBuffer.allocate(
-            2 + 2 + msg.token.toByteArray(StandardCharsets.UTF_8).size + 1 + 2 + msg.packageName.toByteArray(StandardCharsets.UTF_8).size + 2 + 2 + 1 + 4 + 4 + 2 + msg.p2pOffer.toByteArray(StandardCharsets.UTF_8).size
+            2 + 2 + msg.token.toByteArray(StandardCharsets.UTF_8).size + 1 + 2 + msg.packageName.toByteArray(StandardCharsets.UTF_8).size + 2 + 2 + 1 + 4 + 4 + 2 + msg.p2pOffer.toByteArray(StandardCharsets.UTF_8).size +
+                (if (msg.encryptOn) CRYPTO_BLOCK_BYTES else 0)
         ).apply {
             putShort(msg.version.toShort())
             putU16String(msg.token)
@@ -222,9 +321,12 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
             putInt(msg.bitrateKbps)
             putInt(msg.sessionId)
             putU16String(msg.p2pOffer)
+            if (msg.encryptOn) putCryptoBlock(msg.cryptoAlgo, msg.encryptOn, msg.cryptoNonce)
         }
         is ControlMessage.HelloAck -> {
-            var cap = 1 + 2 + msg.reason.toByteArray(StandardCharsets.UTF_8).size + 4 + 2 + 2 + 1 + 4 + 2 + msg.encoder.toByteArray(StandardCharsets.UTF_8).size + 4 + 2 + msg.p2pAnswer.toByteArray(StandardCharsets.UTF_8).size + 2
+            val cryptoBlock = msg.encryptOn || msg.cryptoAlgo != CryptoAlgo.NONE
+            var cap = 1 + 2 + msg.reason.toByteArray(StandardCharsets.UTF_8).size + 4 + 2 + 2 + 1 + 4 + 2 + msg.encoder.toByteArray(StandardCharsets.UTF_8).size + 4 + 2 + msg.p2pAnswer.toByteArray(StandardCharsets.UTF_8).size + 2 +
+                (if (cryptoBlock) CRYPTO_BLOCK_BYTES else 0)
             for (h in msg.hungSessions) cap += 4 + 1 + 2 + h.packageName.toByteArray(StandardCharsets.UTF_8).size + 2 + 2
             ByteBuffer.allocate(cap).apply {
                 put(msg.status.id.toByte())
@@ -245,6 +347,7 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
                     putShort(h.width.toShort())
                     putShort(h.height.toShort())
                 }
+                if (cryptoBlock) putCryptoBlock(msg.cryptoAlgo, msg.encryptOn, msg.cryptoNonce)
             }
         }
         is ControlMessage.StartSession -> ByteBuffer.allocate(4 + 1 + 2 + msg.packageName.toByteArray(StandardCharsets.UTF_8).size + 2 + 2 + 1 + 4).apply {
@@ -257,6 +360,9 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
             putInt(msg.bitrateKbps)
         }
         is ControlMessage.StopSession -> ByteBuffer.allocate(4).apply { putInt(msg.sessionId) }
+        is ControlMessage.P2pMigrate -> ByteBuffer.allocate(2 + msg.candidates.toByteArray(StandardCharsets.UTF_8).size).apply {
+            putU16String(msg.candidates)
+        }
         is ControlMessage.IdrRequest -> ByteBuffer.allocate(4).apply { putInt(msg.sessionId) }
         is ControlMessage.InputEvent -> ByteBuffer.allocate(4 + 1 + 1 + 2 + 2).apply {
             putInt(msg.sessionId)
@@ -315,19 +421,24 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
     val buf = ByteBuffer.wrap(payload)
     val type = buf.get().toInt() and 0xFF
     return when (type) {
-        MsgType.HELLO -> ControlMessage.Hello(
-            version = buf.short.toInt(),
-            token = buf.getU16String(),
-            mode = WatchMode.from(buf.get().toInt())
-                ?: throw ProtocolException("bad watch mode"),
-            packageName = buf.getU16String(),
-            width = buf.short.toInt(),
-            height = buf.short.toInt(),
-            fps = buf.get().toInt(),
-            bitrateKbps = buf.int,
-            sessionId = buf.int,
-            p2pOffer = buf.getU16String(),
-        )
+        MsgType.HELLO -> {
+            val hello = ControlMessage.Hello(
+                version = buf.short.toInt(),
+                token = buf.getU16String(),
+                mode = WatchMode.from(buf.get().toInt())
+                    ?: throw ProtocolException("bad watch mode"),
+                packageName = buf.getU16String(),
+                width = buf.short.toInt(),
+                height = buf.short.toInt(),
+                fps = buf.get().toInt(),
+                bitrateKbps = buf.int,
+                sessionId = buf.int,
+                p2pOffer = buf.getU16String(),
+            )
+            // 可选 crypto 块（老端无尾部字节 → 保持默认 none/false，兼容回落）
+            val crypto = buf.getCryptoBlockOpt() ?: return hello
+            hello.copy(encryptOn = crypto.second, cryptoAlgo = crypto.first, cryptoNonce = crypto.third)
+        }
         MsgType.HELLO_ACK -> {
             val status = HelloStatus.from(buf.get().toInt())
                 ?: throw ProtocolException("bad hello status")
@@ -351,10 +462,13 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
                 val hh = buf.short.toInt()
                 hung.add(HungSession(hs, hm, hp, hw, hh))
             }
-            ControlMessage.HelloAck(
+            val ack = ControlMessage.HelloAck(
                 status, reason, sessionId, width, height, fps, bitrateKbps,
                 encoder, displayId, p2pAnswer, hung,
             )
+            // 可选 crypto 块（老端无尾部字节 → 协商结果 none）
+            val crypto = buf.getCryptoBlockOpt() ?: return ack
+            ack.copy(encryptOn = crypto.second, cryptoAlgo = crypto.first, cryptoNonce = crypto.third)
         }
         MsgType.START_SESSION -> ControlMessage.StartSession(
             sessionId = buf.int,
@@ -366,6 +480,7 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
             bitrateKbps = buf.int,
         )
         MsgType.STOP_SESSION -> ControlMessage.StopSession(buf.int)
+        MsgType.P2P_MIGRATE -> ControlMessage.P2pMigrate(candidates = buf.getU16String())
         MsgType.IDR_REQUEST -> ControlMessage.IdrRequest(buf.int)
         MsgType.INPUT_EVENT -> ControlMessage.InputEvent(
             sessionId = buf.int,

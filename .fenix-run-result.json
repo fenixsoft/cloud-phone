@@ -1,205 +1,23 @@
 {
  "status": "success",
- "spec": "gaming-uplink-1080p",
- "mode": "fast-track",
- "summary": "gaming-uplink-1080p 全部 7 任务完成并真机双模拟器实测验证。交付：loadgen 高熵 GL 场景（entropy 三档，半分辨率渲染本地稳 59-60fps）、scripts/uplink_stress.py（复用 ensure_pipeline 授权铁律；三路径×1080p60×mid 120s/1s 采样/后 60s 稳态；t5 逐帧编码器字节/Socket 收发/客户端 PONG RTT 三段测量）、docs/uplink-report.md（三轮标定 + 三段链式归因）、docs/device-notes.md §9 真机手册。核心发现：模拟器软编 1080p60 吞吐天花板 ≈8Mbps@24fps 且与内容熵无关（统一高目标下三档 8.07/7.95/8.05 全饱和 + 极限探针 8.09 独立复现）→ frp/p2p 判定 ENCODER_CAPPED-真机复核（网络段独立判定均 PASS：丢片 0.00%、RTT 膨胀 11.1/11.6ms vs 容差、传输跟出偏差 0.3%、端点证据 112.74.85.74）。档位间差 ≥2Mbps 被编码器天花板淹没（SPEC 自带『如实记录编码器受限上限』出口已按口径落档，真机硬编复核列入 device-notes §9 检查表）。附赠发现：源端 stats RTT 字段无采样调用方（恒 0），runner 改用客户端 PONG RTT 为权威口径。",
+ "spec": "p2p-crossnet-traversal",
+ "summary": "恢复 run：收编遗产分支 fenix/p2p-crossnet-traversal-1794197291 全部 16 任务已提交成果至新基线（遗产基于旧基线，整树合并会反向删除 client-ui-redesign/gaming-uplink 文件，故按文件收编：无漂移交付件直接 checkout，四个基线漂移文件 LanDirectBackend/StreamService/ConnectActivity/device-notes 三方合入；device-notes 冲突解法=保留基线 §9+§2.3，本 SPEC 真机手册重编号 §10 并同步修正 §8.x 交叉引用）。交付面：CryptoCodec AES-128-GCM 片级 AEAD+HKDF 方向子钥+512 重放窗口、Hello/HelloAck 可选协商块（不 bump 版本，老端回落 none）、四后端加密接入、多候选探测+symmetric 端口预测≤64+P2P_MIGRATE 端点迁移、StreamService/连接页加密开关与协商显示、natlab 双 netns 三档 NAT 验证床（setup/run/perf 三脚本）、docs/protocol.md+device-notes §10+verification-report、docs/natlab-matrix.json 实测数据。验证：bin/run_full_suite.py --timeout 3600 四阶段全 PASS；protocol 全量单测 70/70（含 cloudphone.transport.* 加密/打洞套件）；natlab 实证随档（主树 .fenix/verify-evidence/p2p-crossnet-traversal/natlab-noadb-run.{json,log}、docs/natlab-matrix.json）。任务台账 16/16 完成并勾选。",
  "completed_tasks": [
   "1.1",
   "1.2",
+  "1.3",
+  "1.4",
   "2.1",
   "2.2",
   "2.3",
   "3.1",
-  "3.2"
- ],
- "implementation": {
-  "deliverables": [
-   "source/loadgen/app/src/main/kotlin/cloudphone/loadgen/GameLoadActivity.kt",
-   "scripts/uplink_stress.py",
-   "docs/uplink-report.md",
-   "docs/device-notes.md"
-  ]
- },
- "verification": {
-  "scenarios": [
-   {
-    "scenario_id": "gl-entropy-60fps",
-    "kind": "cli",
-    "description": "高熵 GL 场景本地跑稳验证：entropy=mid 启动 GameLoadActivity，稳态渲染 fps ≥55",
-    "status": "pass",
-    "assertion_results": [
-     {
-      "type": "step",
-      "pass": true,
-      "message": "构建+安装 exit=0"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "renderer ready tier=mid，13 个 1s fps 样本"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "稳态窗口 min fps=59 ≥55（FPS-PASS min=59）"
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "outputs": [
-      ".fenix/verify-evidence/gaming-uplink-1080p/gl-entropy-fps.log",
-      ".fenix/verify-evidence/gaming-uplink-1080p/s1-verdict.txt"
-     ]
-    },
-    "classification": "env"
-   },
-   {
-    "scenario_id": "tier-calibration-ladder",
-    "kind": "cli",
-    "description": "档位标定数据校验：三档编码器输出单调阶梯且可复现、high 档顶满编码器吞吐",
-    "status": "warning",
-    "assertion_results": [
-     {
-      "type": "step",
-      "pass": true,
-      "message": "docs/uplink-calibration.json 存在且三档数据齐备（low/mid/high 各 120s 稳态）"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "high 档顶满确认：统一高目标（20000kbps）下 7.95–8.07Mbps@24fps，极限探针独立复现 8.09"
-     },
-     {
-      "type": "step",
-      "pass": false,
-      "message": "单调阶梯断言失败：实测 8.07/7.95/8.05（mid 比 low 低 0.12Mbps）——统一高目标下三档全部饱和于编码器吞吐天花板 ≈8Mbps@24fps，内容熵差异被天花板淹没，档位间差 ≥2Mbps 物理不可达"
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [
-      "ladder not monotonic: [8.068, 7.950, 8.052]"
-     ],
-     "outputs": [
-      ".fenix/verify-evidence/gaming-uplink-1080p/../gaming-uplink-1080p 与 docs/uplink-calibration.json",
-      "docs/uplink-report.md 附录 A 三轮标定记录"
-     ],
-     "root_cause": "模拟器软编（c2.android.avc）1080p60 编码吞吐上限 ≈8Mbps@24fps，与内容档位无关（3 轮标定 + 极限探针 4 点独立一致）；SPEC mid 场景自带『如实记录编码器受限上限』出口，已按该口径落档"
-    },
-    "classification": "env"
-   },
-   {
-    "scenario_id": "stress-matrix-results",
-    "kind": "cli",
-    "description": "压测矩阵数据校验：三路径 mid 120s + high 探针齐备、网络段独立判定与端点证据、三段速率一致",
-    "status": "pass",
-    "assertion_results": [
-     {
-      "type": "step",
-      "pass": true,
-      "message": "lan-direct/frp/p2p 三组 mid×120s 稳态样本 ≥55、无断流、丢片 0.00%"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "传输跟出编码器（偏差 0.3% <10%）、收帧 fps 与编码器出帧一致"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "frp/p2p 判定 ENCODER_CAPPED-真机复核 且 network_pass=true；端点证据 endpoint-seen:112.74.85.74"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "MATRIX-PASS frp_rtt=22.7/11.6 p2p_rtt=25.6/14.0 probe=8.09Mbps"
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "outputs": [
-      "docs/uplink-stress-results.json",
-      ".fenix/verify-evidence/gaming-uplink-1080p/s3-matrix.out"
-     ]
-    },
-    "classification": "env"
-   },
-   {
-    "scenario_id": "uplink-report-content",
-    "kind": "cli",
-    "description": "压测报告内容校验：三路径稳态表、三段链式归因、p2p 拓扑局限、frp 两因素、标定附录",
-    "status": "pass",
-    "assertion_results": [
-     {
-      "type": "step",
-      "pass": true,
-      "message": "REPORT-PASS：三段链式归因结论/同宿主拓扑局限/VPS vs 家庭上行/附录 A/ENCODER_CAPPED-真机复核/编码器吞吐即第一瓶颈 全部命中"
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "outputs": [
-      "docs/uplink-report.md",
-      ".fenix/verify-evidence/gaming-uplink-1080p/s4-report.out"
-     ]
-    },
-    "classification": "env"
-   },
-   {
-    "scenario_id": "device-notes-manual",
-    "kind": "cli",
-    "description": "真机手册校验：§9 含 iperf3 基线命令、高熵 App 步骤、每 2 分钟记录口径与量化判定",
-    "status": "pass",
-    "assertion_results": [
-     {
-      "type": "step",
-      "pass": true,
-      "message": "MANUAL-PASS：§9 标题/iperf3 -c 112.74.85.74/--es entropy mid/主观(1–5)/稳态 fps ≥50/稳态码率 ≥8Mbps/每 2 分钟 全部命中"
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "outputs": [
-      "docs/device-notes.md",
-      ".fenix/verify-evidence/gaming-uplink-1080p/s5-manual.out"
-     ]
-    },
-    "classification": "env"
-   },
-   {
-    "scenario_id": "runner-live-smoke",
-    "kind": "cli",
-    "description": "压测 runner 实跑冒烟：lan-direct 30s（稳态 20s、基线 10s）全链路成功",
-    "status": "pass",
-    "assertion_results": [
-     {
-      "type": "step",
-      "pass": true,
-      "message": "exit=0：空载基线 10s → 管线对齐 → 高熵会话 → 双端采集 → 稳态统计 sustained=4625kbps enc=4.58Mbps"
-     },
-     {
-      "type": "step",
-      "pass": true,
-      "message": "live-smoke.json 落盘且含 lan-direct 组数据"
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "outputs": [
-      ".fenix/verify-evidence/gaming-uplink-1080p/live-smoke.json",
-      ".fenix/verify-evidence/gaming-uplink-1080p/live-smoke-report.md",
-      ".fenix/verify-evidence/gaming-uplink-1080p/s6-live.out"
-     ]
-    },
-    "classification": "env"
-   }
-  ],
-  "verdict": "verified",
-  "bugs": []
- }
+  "3.2",
+  "4.1",
+  "4.2",
+  "4.3",
+  "4.4",
+  "5.1",
+  "5.2",
+  "5.3"
+ ]
 }

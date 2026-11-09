@@ -1,0 +1,80 @@
+{
+  "sizing": {
+    "fps": 30,
+    "frame_bytes": 33333,
+    "app_bitrate_kbps": 7999
+  },
+  "arms": [
+    {
+      "crypto": "AES128GCM",
+      "transport": "direct",
+      "windows": 15,
+      "fps_mean": 29.7,
+      "fps_min": 29.0,
+      "app_bitrate_kbps_mean": 7925.0,
+      "wire_bitrate_kbps_mean": 8032.0,
+      "rtt_ms_mean": 0.8,
+      "rtt_ms_p95": 1.35,
+      "round": 1
+    },
+    {
+      "crypto": "AES128GCM",
+      "transport": "direct",
+      "windows": 15,
+      "fps_mean": 29.7,
+      "fps_min": 29.0,
+      "app_bitrate_kbps_mean": 7926.0,
+      "wire_bitrate_kbps_mean": 8032.0,
+      "rtt_ms_mean": 0.7,
+      "rtt_ms_p95": 0.65,
+      "round": 2
+    },
+    {
+      "crypto": "none",
+      "transport": "direct",
+      "windows": 15,
+      "fps_mean": 29.8,
+      "fps_min": 29.0,
+      "app_bitrate_kbps_mean": 7944.0,
+      "wire_bitrate_kbps_mean": 7944.0,
+      "rtt_ms_mean": 0.54,
+      "rtt_ms_p95": 0.33,
+      "round": 1
+    },
+    {
+      "crypto": "none",
+      "transport": "direct",
+      "windows": 15,
+      "fps_mean": 29.8,
+      "fps_min": 29.0,
+      "app_bitrate_kbps_mean": 7943.0,
+      "wire_bitrate_kbps_mean": 7943.0,
+      "rtt_ms_mean": 0.6,
+      "rtt_ms_p95": 0.45,
+      "round": 2
+    }
+  ],
+  "summary": {
+    "crypto_on": {
+      "fps_mean": 29.7,
+      "app_bitrate_kbps_mean": 7925.5,
+      "wire_bitrate_kbps_mean": 8032.0,
+      "rtt_ms_mean": 0.75,
+      "rtt_ms_p95": 1.0
+    },
+    "crypto_off": {
+      "fps_mean": 29.8,
+      "app_bitrate_kbps_mean": 7943.5,
+      "wire_bitrate_kbps_mean": 7943.5,
+      "rtt_ms_mean": 0.57,
+      "rtt_ms_p95": 0.39
+    },
+    "delta": {
+      "fps_mean": -0.1,
+      "app_bitrate_kbps_mean": -18.0,
+      "wire_bitrate_kbps_mean": 88.5,
+      "rtt_ms_mean": 0.18,
+      "rtt_ms_p95": 0.61
+    }
+  }
+}

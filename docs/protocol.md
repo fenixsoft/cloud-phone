@@ -70,6 +70,7 @@
 | `0x09` | PONG | S → C | PING 应答 |
 | `0x0A` | APP_LIST_REQUEST | C → S | 请求枚举源端可启动应用（请求-应答制） |
 | `0x0B` | APP_LIST | S → C | 可启动应用列表应答（会话在线才应答） |
+| `0x0C` | P2P_MIGRATE | 双向（经信令通道） | 端点迁移：对端地址变化后的新候选推送（p2p-crossnet-traversal 扩展，会话不重建） |
 
 控制记录 payload 首字节即 msgType，其后按各消息字段表排列。
 
@@ -114,7 +115,11 @@
 | 7 | fps | u8 | 请求帧率 |
 | 8 | bitrateKbps | u32 | 请求码率 kbps |
 | 9 | sessionId | i32 | ATTACH 模式的目标会话 id（其余为 0） |
-| 10 | p2pOffer | str | 客户端 SRFLX `"ip:port"`（p2p 打洞；空串 = 不打洞） |
+| 10 | p2pOffer | str | 客户端候选集 `"ip:port,ip:port;nat=sym"`（多候选：SRFLX 多节点 + 本地网卡候选；`;nat=sym` 尾缀 = 本端判定 symmetric；空串 = 不打洞。M0 单候选文本为其 n=1 特例） |
+| 11 | 加密协商块 | 34B（可选） | 仅当客户端开启加密时携带：`[u8 cryptoAlgo][u8 encryptOn][32B cryptoNonce]`。老端（v1 初版）忽略整块（按剩余长度判定有无），PROTOCOL_VERSION 不变 |
+
+- **加密协商块**：`cryptoAlgo` ∈ CryptoAlgo（§7.5）；`encryptOn` = 客户端开关意图；
+  `cryptoNonce` = 32B 随机（每次握手重生成，HKDF salt 材料）。
 
 ### 3.2 HELLO_ACK（0x02）
 
@@ -129,9 +134,10 @@
 | 7 | bitrateKbps | u32 | 实际码率 |
 | 8 | encoder | str | 编码器名（如 `OMX.qcom.video.encoder.avc`） |
 | 9 | displayId | i32 | 采集目标 display id（拒绝时 -1） |
-| 10 | p2pAnswer | str | 源端 SRFLX `"ip:port"`（空串 = 不打洞） |
+| 10 | p2pAnswer | str | 源端候选集 `"ip:port,ip:port;nat=sym"`（格式同 p2pOffer；空串 = 不打洞） |
 | 11 | hungCount | u16 | 挂机会话数 N |
 | 12 | N × 挂机项 | — | `{i32 sessionId, u8 mode, str packageName, u16 width, u16 height}` |
+| 13 | 加密协商块 | 34B（可选） | 仅当源端接受加密协商时携带：`[u8 cryptoAlgo][u8 encryptOn][32B cryptoNonce]`（协商结果与 server nonce，§7.6 时序） |
 
 ### 3.3 START_SESSION（0x03）
 
@@ -233,26 +239,52 @@
 - **应答条件与时序**：仅当会话在线（存在 ACTIVE 会话）才应答，目标 ≤1s（实测 <100ms）；
   无会话时静默忽略（客户端以 3s 超时判定列表获取失败）。
 
+### 3.12 P2P_MIGRATE（0x0C）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | candidates | str | 发起端新候选集（格式同 p2pOffer，多候选 + `;nat=sym` 尾缀） |
+
+- 端点迁移（p2p-crossnet-traversal 2.3）：会话绑定 sessionId 不绑网络地址。任一端检测到
+  本端出口映射变化（重跑 SRFLX 发现，候选文本变化）即经**信令通道**向对端发本消息；
+  对端收到后 `migrateTo(newCandidates)` 显式更新对端地址并以 sequence=0 探针重连复用
+  （探针帧恒明文，见 §7.4），视频流不断、统计不重置。
+- 老端收到 0x0C：未知 msgType 按总则「忽略且不中断会话」处理。
+
 ## 4. 握手与会话时序（文字版）
 
-**首次连接（新会话）**
+**首次连接（新会话，含加密协商，p2p-crossnet-traversal 1.3）**
 
 ```
 client                          source
   │  TCP/frp-TCP connect           │
   │── HELLO{version,token,mode,   │
   │      packageName,w,h,fps,     │
-  │      bitrate,p2pOffer} ──────►│  校验 token（≤500ms）
-  │◄── HELLO_ACK{accepted,        │  （token 不符 → rejected + 关闭连接）
-  │      sessionId,w,h,fps,       │
+  │      bitrate,p2pOffer,        │
+  │      [加密协商块 algo=1,      │  校验 token（≤500ms）
+  │       encryptOn,clientNonce]}►│  （token 不符 → REJECT_BAD_TOKEN + 关闭连接）
+  │◄── HELLO_ACK{accepted,        │  加密协商：双方都带块且都 encryptOn → AES128GCM；
+  │      sessionId,w,h,fps,       │  任一方缺块/关闭 → none（逐字节与 v1 现状一致）
   │      bitrate,encoder,         │
   │      displayId,p2pAnswer,     │
-  │      hungSessions[]} ────────│
+  │      hungSessions[],          │
+  │      [加密协商块 algo,        │
+  │       encryptOn,serverNonce]}─│
+  │  双方各自 HKDF 派生方向子钥（§7.1），后续视频片/控制记录按 §7 加密
   │  （视频通道按后端建立：UDP 直连/公网 UDP/TCP 复用）
-  │◄══ 视频帧（首帧为 IDR 关键帧）══│
+  │◄══ 视频帧（sequence=0 探针帧恒明文，首个视频帧为 IDR 关键帧）══│
   │── PING / ◄── PONG（≥1Hz RTT） │
   │◄── STATS ──/── STATS（≥1Hz）  │
   │── INPUT_EVENT（触摸/back）───►│
+```
+
+**端点迁移（p2p-crossnet-traversal 2.3）**
+
+```
+某端出口映射变化（如 Wi-Fi→蜂窝）
+  │── P2P_MIGRATE{candidates=新候选集} ──►对端（信令通道，会话不重建）
+  对端 migrateTo(newCandidates) 显式 setRemote + sequence=0 探针重连复用；
+  视频流续传、统计（fps/码率/RTT/丢帧计数）连续不重置。
 ```
 
 **附着挂机会话（重连 ≤30s，同 token）**
@@ -274,10 +306,13 @@ client                          source
 | 值 | 名称 | 含义 |
 |---|---|---|
 | 0 | ACCEPTED | 接受，携带会话参数 |
-| 1 | REJECT_BAD_TOKEN | token 不匹配，拒绝并关闭连接 |
+| 1 | REJECT_BAD_TOKEN | token 不匹配，拒绝并关闭连接。**加密协商拒绝复用同一错误码路径**：源端校验 token 失败时，无论协商块内容如何一律以此码拒绝，且在发送 HELLO_ACK 前不建立任何加密状态（p2p-crossnet-traversal 3.1：token 校验拒绝路径优先于加密协商） |
 | 2 | REJECT_BUSY | 源端会话资源满（M0 ≥2 并存，超出即拒） |
 | 3 | REJECT_VERSION | 协议版本不支持 |
 | 4 | REJECT_UNSUPPORTED_MODE | 观看模式不支持（如无 shell 权限时的单应用模式降级拒绝） |
+
+> 加密协商**没有独立错误码**：协商不一致（任一端不支持/关闭）不是错误，结果回落 `none`
+> （§7.6 兼容矩阵），会话照常建立。
 
 ## 6. M1 C++ 化兼容性约定
 
@@ -287,3 +322,78 @@ client                          source
 4. **msgType/recordType/枚举值冻结**：本文所有常量数值为线上格式承诺，M1 不得改动数值含义；新增消息只能追加新 msgType，旧端按"未知消息忽略"兼容。
 5. **版本协商**：HELLO.version 单调递增；源端支持版本集合包含客户端版本 → 继续，否则回 REJECT_VERSION。M0 唯一版本 = 1。语义扩展（新增字段）通过追加新消息类型实现，M0 不做消息内版本分叉。
 6. **32 位帧序号**：sequence 线上宽度 u32，C 侧以 `uint32_t` 承载（回绕按无符号比较）。
+
+## 7. 加密层（p2p-crossnet-traversal，CryptoCodec）
+
+实现真相源：`protocol/src/main/kotlin/cloudphone/transport/CryptoCodec.kt`
+（`CryptoCodecTest.kt` 覆盖往返/AAD 篡改拒绝/方向隔离/重放窗口/开销断言）。
+
+### 7.1 密钥派生（RFC 5869 HKDF-SHA256）
+
+```
+PRK = HKDF-Extract(salt = clientNonce XOR serverNonce（32B 逐字节）, ikm = 配对 token)
+子钥 = HKDF-Expand(PRK, info = "c2s" | "s2c", L = 16)   // 每方向独立 AES-128 密钥
+```
+
+- 双方 nonce 逐字节 XOR 作 salt：任一端 nonce 变化即换全部子钥（每次握手重生成 nonce，
+  会话密钥不跨会话复用）。
+- 方向以角色定义：client→source = `c2s`，source→client = `s2c`；两端只持有对端方向的
+  解密钥，方向子钥互相不可解（测试断言）。
+
+### 7.2 nonce 布局（12B，大端）
+
+```
+[u32 direction][u64 counter]     direction: c2s=1、s2c=2
+```
+
+- **视频片 counter**：由帧头确定性推导 `counter = sequence * 65536 + fragIdx`
+  （u32 sequence × u16 fragIdx = 48bit 空间），线上**不传 counter**，双端按帧头重建
+  nonce；同帧多片各占独立 counter，杜绝 GCM nonce 重用。
+- **控制记录 counter**：可靠有序流上从 `2^62` 起单调自增（与视频 counter 空间隔离），
+  接收端按到达顺序重建。
+
+### 7.3 AAD 与 tag（AES-128-GCM 片级 AEAD）
+
+| 载荷 | AAD | counter |
+|---|---|---|
+| 视频分片 | `[u32 sequence][u8 flags]`（帧头 sequence/keyframe 绑定，防重排/篡改） | `sequence*65536+fragIdx` |
+| 控制记录 | `[u64 counter]` | 2^62 起单调 |
+
+- tag 128bit；**密文输出 = ciphertext ‖ tag**，无独立头，每片开销恒 **+16B**
+  （测试断言 ≤明文+18B）。
+- 重放防护：每方向 512bit 滑动窗口位图（视频 `FragReplayGuard` 与控制 `ReplayWindow`
+  分离）——重复/窗口外旧 counter 丢弃，正常序列不受影响。
+
+### 7.4 探针帧恒明文与降级路径
+
+- P2P 打洞探针 wire = `[0x02][sequence=0 帧头][1B 载荷]`，**恒明文**（`P2pBackend`
+  短路、`CryptoCodec` 不做特判）：打洞探针必须先于密钥协商可用，且 sequence=0 探针
+  不占用加密 counter 空间。
+- 协商结果 `none` 时，加密/解密调用方直接透传原字节，**线路逐字节与 v1 现状一致**
+  （`CryptoTransportTest` 回归断言）。
+
+### 7.5 CryptoAlgo 枚举（协商块首字节）
+
+| 值 | 名称 | 说明 |
+|---|---|---|
+| 0 | NONE | 明文，与协议 v1 现状逐字节一致 |
+| 1 | AES128GCM | §7.1–7.3 片级 AEAD |
+
+### 7.6 协商判定与老端兼容矩阵
+
+**判定规则**（HELLO/HELLO_ACK 均按「剩余长度 ≥34B」判定协商块有无，PROTOCOL_VERSION
+恒为 1 不变）：
+
+```
+enable = HELLO带块∧encryptOn ∧ HELLO_ACK带块∧encryptOn ∧ algo=1（AES128GCM）
+否则 → none（含任一端缺块/开关关闭/algo 未知）
+```
+
+| 客户端 \ 源端 | 老端（无协商块） | 新端 encryptOn=false | 新端 encryptOn=true |
+|---|---|---|---|
+| 老端（无协商块） | none | none | none |
+| 新端 encryptOn=false | none | none | none |
+| 新端 encryptOn=true | none（老端按忽略未知字段兼容） | none | **AES128GCM** |
+
+- 全矩阵会话均正常建立；仅 (true, true) 单元格启用 §7 加密。
+- 老端新消息兼容：P2P_MIGRATE（0x0C）被老端按「未知消息忽略」处理，不影响会话。
