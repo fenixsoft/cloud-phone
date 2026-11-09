@@ -56,6 +56,9 @@ object SettingsPrefs {
  */
 class SettingsActivity : Activity() {
 
+    /** 已接线端口输入与落盘回调（onPause 兜底提交：编辑后直接返回不丢改，与失焦路径幂等） */
+    private val portInputs = mutableListOf<Pair<EditText, (Int) -> Unit>>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_settings)
@@ -92,9 +95,20 @@ class SettingsActivity : Activity() {
         // 外观/触控输入/安全/检查更新各行为预留行：XML 已含「预留」徽章，不挂点击监听（点击无效）
     }
 
-    /** 端口输入框：失焦时合法值落盘，非法值回填旧值 */
+    override fun onPause() {
+        super.onPause()
+        // 兜底提交：失焦监听在「编辑后直接返回」路径不触发（Activity 结束不走常规焦点变更），
+        // onPause 统一再提交一遍（合法值落盘；与失焦提交幂等，spec「设置项变更 MUST 持久化」）
+        portInputs.forEach { (input, save) ->
+            val parsed = input.text.toString().toIntOrNull()
+            if (parsed != null && parsed in 1..65535) save(parsed)
+        }
+    }
+
+    /** 端口输入框：失焦时合法值落盘，非法值回填旧值；另注册 onPause 兜底提交 */
     private fun wirePortInput(input: EditText, current: Int, save: (Int) -> Unit) {
         input.setText(current.toString())
+        portInputs.add(input to save)
         input.onFocusChangeListener = android.view.View.OnFocusChangeListener { v, hasFocus ->
             if (!hasFocus) {
                 val parsed = input.text.toString().toIntOrNull()
