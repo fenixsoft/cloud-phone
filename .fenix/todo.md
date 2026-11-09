@@ -85,3 +85,5 @@
   - 证据：commit 20e3690 于 2026-11-08T21:29:33Z 落盘（verification-report.md 人工裁定「验收通过、SPEC 收口」）；同签名告警 7c3ed1bd8e67 仍于 21:30:50.970Z 由上一轮 Arbiter 基于裁定前快照生成，框架随即于 21:30:51.119Z 以 source=escalation-alert 回派本 run（fenixd.log）；框架代码 grep 'human disposition' 无消费点（/root/fenixd 全量），人工裁定仅以 commit/报告文本存在。；触发 run_id=arbiter-client-ux-and-input-latency-1794173451（签名 client-ux-and-input-latency::judge_rerun_cap，来源 escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：升级告警回派前检查 spec 的 verification-report 是否含人工裁定/最近 human disposition commit；或把人工裁定登记为一等状态（STATE 字段/台账），供升级链入队前短路；或在 Arbiter 触发快照中固定采集 git log 最近 human disposition commit 供裁决复用。
+### 知识真相源
+- [ ] knowledge-distill 重试：归档 m0-a2a-streaming-pipeline — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
