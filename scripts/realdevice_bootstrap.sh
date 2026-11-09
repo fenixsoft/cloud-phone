@@ -37,7 +37,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # ── 状态 ─────────────────────────────────────────────────────────────
 SERIAL="" MODE="auto" JSON_PATH="" STAGE_DIR=""
 VERDICT="UNKNOWN"
-STAGE_NAME=""
+STAGE_NAME=""; FAIL_STAGE=""
 declare -A STAGE_STATUS STAGE_DETAIL STAGE_MS
 EVIDENCE_AVC=() EVIDENCE_KILL=() EVIDENCE_CRASH=() VERDICT_EVIDENCE=()
 DIAG_COLLECTED=0
@@ -240,7 +240,53 @@ stage_ping() {
   VERDICT_EVIDENCE+=("PING: 助手存活但 22340 无 PONG（${T_PING}s）")
   return 1
 }
-stage_create() { stage_end skip "（待实现）"; return 0; }   # 2.2
+# ── 2.2 CREATE 探针（虚拟显示 + MediaCodec 初始化冒烟）─────────────────
+CREATED_DISPLAY=""; CREATE_SHAPE=""; VD_NAME="cloudphone-vd-${CREATE_W}x${CREATE_H}"
+stage_create() {
+  local reply alive_after vd_line
+  say "下发 CREATE $CREATE_W $CREATE_H $CREATE_DPI（超时 ${T_CREATE}s）…"
+  reply="$(ctrl_once "$FWD_PORT" "CREATE $CREATE_W $CREATE_H $CREATE_DPI" "$T_CREATE")"
+  if [[ "$reply" == OK\ * ]]; then
+    CREATED_DISPLAY="${reply#OK }"
+    # §2.1 特征复验：静默 SIGKILL 常发生在 CREATE 执行/首帧合成窗口——等 3s 再核验进程与 VD 登记
+    sleep 3
+    alive_after="$(helper_alive)"
+    vd_line="$(adb_q "dumpsys display 2>/dev/null | grep -F '$VD_NAME' | head -1")"
+    if [[ -z "$alive_after" ]]; then
+      CREATE_SHAPE="ok-then-gone"
+      stage_end fail "CREATE 应答 OK（displayId=$CREATED_DISPLAY）但助手随后静默消失（§2.1 同型特征）"
+      VERDICT_EVIDENCE+=("CREATE: 应答 OK 后进程静默消失（pid=$HELPER_PID, displayId=$CREATED_DISPLAY）")
+      return 1
+    fi
+    if [[ -z "$vd_line" ]]; then
+      CREATE_SHAPE="vd-missing"
+      stage_end fail "CREATE 应答 OK 但 dumpsys display 未登记 $VD_NAME"
+      VERDICT_EVIDENCE+=("CREATE: OK 应答但虚拟显示未登记（displayId=$CREATED_DISPLAY）")
+      return 1
+    fi
+    CREATE_SHAPE="ok"
+    stage_end pass "虚拟显示就绪 displayId=$CREATED_DISPLAY（$VD_NAME 已登记 + 助手存活复验通过）"
+    return 0
+  fi
+  alive_after="$(helper_alive)"
+  SPAWN_LOG="$(adb_q "cat $DEV_LOG 2>/dev/null")"
+  if [[ "$reply" == ERR* ]]; then
+    CREATE_SHAPE="err-reply"
+    stage_end fail "CREATE 返回错误: $reply"
+    VERDICT_EVIDENCE+=("CREATE: ERR 应答: $reply; 助手日志尾: $(echo "$SPAWN_LOG" | tail -3 | tr '\n' '|')")
+    return 1
+  fi
+  if [[ -z "$alive_after" ]]; then
+    CREATE_SHAPE="gone-during"
+    stage_end fail "CREATE 期间助手进程消失（${T_CREATE}s 无应答且进程不复存在）"
+    VERDICT_EVIDENCE+=("CREATE: ${T_CREATE}s 无应答且进程消失（pid=$HELPER_PID 曾于 PING 段存活）; 拉起日志尾: $(echo "$SPAWN_LOG" | tail -3 | tr '\n' '|')")
+    return 1
+  fi
+  CREATE_SHAPE="alive-mute"
+  stage_end fail "CREATE 超时无响应但进程仍存活（pid=$HELPER_PID）——与静默 SIGKILL 形态不符，保守判 UNKNOWN"
+  VERDICT_EVIDENCE+=("CREATE: ${T_CREATE}s 超时无响应且进程存活（pid=$HELPER_PID）")
+  return 1
+}
 collect_diagnostics()  { : ; }                              # 3.1
 classify_failure()     { : ; }                              # 3.1
 write_json()           { : ; }                              # 3.2
@@ -262,10 +308,11 @@ main() {
   pick_device                      # NO_DEVICE: 输出结论 + exit 1（无误导性部分结论）
   record_env
   local ok=1
-  stage_begin PUSH "$T_PUSH";   stage_push   || ok=0
-  if [[ $ok -eq 1 ]]; then stage_begin SPAWN "$T_SPAWN"; stage_spawn  || ok=0; fi
-  if [[ $ok -eq 1 ]]; then stage_begin PING  "$T_PING";  stage_ping   || ok=0; fi
-  if [[ $ok -eq 1 ]]; then stage_begin CREATE "$T_CREATE"; stage_create || ok=0; fi
+  FAIL_STAGE=""
+  stage_begin PUSH "$T_PUSH";   stage_push   || { ok=0; FAIL_STAGE="PUSH"; }
+  if [[ $ok -eq 1 ]]; then stage_begin SPAWN "$T_SPAWN"; stage_spawn  || { ok=0; FAIL_STAGE="SPAWN"; }; fi
+  if [[ $ok -eq 1 ]]; then stage_begin PING  "$T_PING";  stage_ping   || { ok=0; FAIL_STAGE="PING"; }; fi
+  if [[ $ok -eq 1 ]]; then stage_begin CREATE "$T_CREATE"; stage_create || { ok=0; FAIL_STAGE="CREATE"; }; fi
   if [[ $ok -eq 1 && "$VERDICT" == "UNKNOWN" ]]; then VERDICT="OK"; fi
   if [[ $ok -eq 0 ]]; then collect_diagnostics; classify_failure; fi
   write_json
