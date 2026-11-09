@@ -170,8 +170,76 @@ stage_push() {
   stage_end pass "推送完成（md5=$lmd5）"
   return 0
 }
-stage_spawn()  { stage_end skip "（待实现）"; return 0; }   # 2.1
-stage_ping()   { stage_end skip "（待实现）"; return 0; }   # 2.1
+# ── 2.1 SPAWN+PING 探针 ──────────────────────────────────────────────
+HELPER_PID=""; PONG_LINE=""; CAPS_LINE=""; SPAWN_LOG=""
+
+helper_alive() {  # 助手进程行（ps NAME 列 = nice-name），空串=不存活
+  adb_q "ps -A 2>/dev/null | grep -F '$HELPER_NICE' | grep -v grep | head -1"
+}
+
+kill_stale() {  # 清理残留助手（端口 22340 占用会误判新 dex）；[x] 技巧规避查询 shell 自匹配
+  adb_q "pkill -f 'ShellHel[p]er' 2>/dev/null" >/dev/null
+  sleep 1
+}
+
+pick_forward_port() {
+  python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'
+}
+
+# 经 adb forward + bash /dev/tcp 单次控制命令（不依赖设备侧 nc；连不上/无响应返回空）
+ctrl_once() {  # $1=host_port $2=payload $3=read_timeout
+  local port="$1" payload="$2" rt="$3" line=""
+  adb -s "$SERIAL" forward "tcp:$port" "tcp:$CTRL_PORT" >/dev/null 2>&1 || return 1
+  ( exec 3<>"/dev/tcp/127.0.0.1/$port" && printf '%s\n' "$payload" >&3 && read -t "$rt" -r line <&3; printf '%s' "$line" ) 2>/dev/null
+}
+
+stage_spawn() {
+  kill_stale
+  adb_q "rm -f $DEV_LOG" >/dev/null
+  say "拉起助手: CLASSPATH=$DEV_DEX app_process /system/bin --nice-name=$HELPER_NICE $HELPER_CLASS（日志 $DEV_LOG）"
+  # nohup + 立即退出会话：助手脱离 adb shell 会话存活（bootstrap_adb.sh 同款范式）
+  adb -s "$SERIAL" shell "CLASSPATH=$DEV_DEX nohup app_process /system/bin --nice-name=$HELPER_NICE $HELPER_CLASS > $DEV_LOG 2>&1 &" >/dev/null 2>&1 || true
+  local waited=0 line=""
+  while (( waited < T_SPAWN )); do
+    sleep 2; waited=$((waited+2))
+    line="$(helper_alive)"
+    [[ -n "$line" ]] && break
+  done
+  SPAWN_LOG="$(adb_q "cat $DEV_LOG 2>/dev/null")"
+  if [[ -z "$line" ]]; then
+    stage_end fail "app_process 进程在 ${T_SPAWN}s 内未存活（user 版镜像限制特征候选）"
+    VERDICT_EVIDENCE+=("SPAWN: ${T_SPAWN}s 窗口内助手进程未存活; 拉起日志: $(echo "$SPAWN_LOG" | tail -3 | tr '\n' '|')")
+    return 1
+  fi
+  HELPER_PID="$(echo "$line" | awk '{print $2}')"   # ps -A 首列 USER、次列 PID
+  stage_end pass "助手进程存活 pid=$HELPER_PID（日志: $(echo "$SPAWN_LOG" | tail -1)）"
+  return 0
+}
+
+stage_ping() {
+  FWD_PORT="$(pick_forward_port)"
+  local waited=0 reply=""
+  while (( waited < T_PING )); do
+    reply="$(ctrl_once "$FWD_PORT" "PING" 5)"
+    [[ "$reply" == PONG* ]] && break
+    sleep 2; waited=$((waited+2))
+    if [[ -z "$(helper_alive)" ]]; then
+      SPAWN_LOG="$(adb_q "cat $DEV_LOG 2>/dev/null")"
+      stage_end fail "PING 等待期间助手进程消失（静默死亡）"
+      VERDICT_EVIDENCE+=("PING: 等待窗口内助手进程消失（pid=$HELPER_PID）; 拉起日志尾: $(echo "$SPAWN_LOG" | tail -3 | tr '\n' '|')")
+      return 1
+    fi
+  done
+  if [[ "$reply" == PONG* ]]; then
+    PONG_LINE="$reply"
+    CAPS_LINE="$(ctrl_once "$FWD_PORT" "CAPS" 5)"
+    stage_end pass "PING→PONG 往返正常（${PONG_LINE}；CAPS: ${CAPS_LINE:-无响应}）"
+    return 0
+  fi
+  stage_end fail "${T_PING}s 内无 PONG（进程存活但控制口无响应）"
+  VERDICT_EVIDENCE+=("PING: 助手存活但 22340 无 PONG（${T_PING}s）")
+  return 1
+}
 stage_create() { stage_end skip "（待实现）"; return 0; }   # 2.2
 collect_diagnostics()  { : ; }                              # 3.1
 classify_failure()     { : ; }                              # 3.1
