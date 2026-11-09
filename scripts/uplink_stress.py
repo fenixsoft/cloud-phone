@@ -47,6 +47,7 @@ ACTIVITY_STATIC = "cloudphone.loadgen/.StaticAppActivity"
 
 STATS_RE = re.compile(r"fps=([\d.]+) bitrate=([\d.]+) rtt=([\d.]+) loss=([\d.]+)")
 DELAY_RE = re.compile(r"delayMs=(\d+)")
+RTT_MS_RE = re.compile(r"\brtt Ms=(\d+)")  # 客户端 PONG 实测 RTT（源端 stats RTT 无采样调用方，恒 0）
 T5_RE = re.compile(r"t5 enc seq=(\d+) keyframe=(\w+) bytes=(\d+) gapMs=(\d+)")
 TAP_X, TAP_Y = 540, 900  # 触摸注入点：避开底部按钮/overlay，落在高熵画面中央
 
@@ -90,9 +91,13 @@ class StressGroup:
     enc_out_mbps: float = -1.0
     enc_fps: float = -1.0
     enc_max_gap_ms: int = -1
-    # 网络段（基线对比）
+    # 网络段（基线对比；RTT 权威口径 = 客户端 PONG 实测）
     rtt_baseline: float = -1.0
     rtt_inflate_ms: float = -1.0
+    rtt_client_mean: float = -1.0
+    rtt_client_baseline: float = -1.0
+    rtt_client_inflate: float = -1.0
+    transport_endpoint: str = ""  # 客户端 TCP 对端（路径归属证据：frp/p2p 应见公网入口）
     baseline_kbps: float = -1.0
     disconnects: int = 0
     # 判定（Task 2.3 填充）
@@ -138,6 +143,7 @@ def collect_window(source_serial: str, client_serial: str, seconds: int, steady:
     deadline = time.time() + seconds
     samples: list[Sample] = []
     delays: list[tuple[float, int]] = []  # (epoch, delayMs)——客户端收帧率按稳态窗口计数
+    rtts: list[tuple[float, int]] = []    # (epoch, rttMs)——客户端 PONG 实测 RTT
     enc_buckets: dict[int, EncBucket] = {}
     disconnects = [0]
     lock = threading.Lock()
@@ -157,12 +163,17 @@ def collect_window(source_serial: str, client_serial: str, seconds: int, steady:
             with lock:
                 disconnects[0] += 1
             return
+        try:
+            epoch = float(text.split()[0])
+        except (ValueError, IndexError):
+            epoch = time.time()
+        m = RTT_MS_RE.search(text)
+        if m and "cloudphone-latency" in text:
+            with lock:
+                rtts.append((epoch, int(m.group(1))))
+            return
         m = DELAY_RE.search(text)
         if m and "cloudphone-latency" in text:
-            try:
-                epoch = float(text.split()[0])
-            except (ValueError, IndexError):
-                epoch = time.time()
             with lock:
                 delays.append((epoch, int(m.group(1))))
 
@@ -211,11 +222,11 @@ def collect_window(source_serial: str, client_serial: str, seconds: int, steady:
         _stop(pc)
         _stop(ps)
     return {"samples": samples, "enc": sorted(enc_buckets.values(), key=lambda b: b.epoch),
-            "delays": delays, "disconnects": disconnects[0]}
+            "delays": delays, "rtts": rtts, "disconnects": disconnects[0]}
 
 
 def steady_stats(samples: list[Sample], enc: list[EncBucket], delays: list[tuple[float, int]],
-                 steady: int) -> dict:
+                 rtts: list[tuple[float, int]], steady: int) -> dict:
     """稳态窗口统计（后 steady 秒：掐启动瞬态）。编码器段只统计有样本的秒桶。"""
     if not samples:
         return {}
@@ -224,6 +235,7 @@ def steady_stats(samples: list[Sample], enc: list[EncBucket], delays: list[tuple
     ss = [s for s in samples if s.epoch >= t_cut]
     se = [b for b in enc if b.epoch >= t_cut]
     sd = [ms for (e, ms) in delays if e >= t_cut]
+    sr = [ms for (e, ms) in rtts if e >= t_cut]
     out = {
         "steady_samples": len(ss),
         "sustained_kbps": statistics.fmean(s.bitrate_kbps for s in ss) if ss else -1.0,
@@ -231,6 +243,8 @@ def steady_stats(samples: list[Sample], enc: list[EncBucket], delays: list[tuple
         "loss_mean": statistics.fmean(s.loss_pct for s in ss) if ss else -1.0,
         "loss_max": max(s.loss_pct for s in ss) if ss else -1.0,
         "rtt_mean": statistics.fmean(s.rtt_ms for s in ss) if ss else -1.0,
+        "rtt_client_mean": statistics.fmean(sr) if sr else -1.0,  # 客户端 PONG RTT（权威 RTT 口径）
+        "rtt_client_n": len(sr),
         "fps_recv": len(sd) / steady,  # 客户端收帧率（解码到达帧计数 / 稳态秒数）
         "delay_p50": _pct(sd, 0.50),
         "delay_p95": _pct(sd, 0.95),
@@ -289,11 +303,22 @@ def wait_first_stats(client_serial: str, timeout: int = 45) -> bool:
     return False
 
 
+def probe_endpoint(client_serial: str, expect_host: str) -> str:
+    """路径归属证据：客户端 TCP established 对端应含期望入口（frp/p2p=公网 VPS，lan=10.0.2.2）"""
+    try:
+        out = subprocess.run(["adb", "-s", client_serial, "shell",
+                              "ss -tn state established 2>/dev/null || cat /proc/net/tcp"],
+                             capture_output=True, timeout=15).stdout.decode("utf-8", "replace")
+    except subprocess.TimeoutExpired:
+        return "probe-timeout"
+    return f"endpoint-seen:{expect_host}" if expect_host in out else f"endpoint-missing:{expect_host}"
+
+
 def run_group(source_serial: str, client_serial: str, backend: str, tier: str | None,
               duration: int, steady: int, baseline_seconds: int, kind: str,
-              pstate: dict) -> StressGroup:
+              pstate: dict, target_override: int = 0) -> StressGroup:
     """单组压测：空载基线（可选）→ 管线对齐 → 高熵负载会话 → 双端采集 → 稳态统计"""
-    target = SESSION_TARGET_KBPS.get(tier or "mid", 10000)
+    target = target_override or SESSION_TARGET_KBPS.get(tier or "mid", 10000)
     g = StressGroup(backend=backend, tier=tier or "-", duration=duration, kind=kind, target_kbps=target)
 
     # 空载基线（frp 必跑：VPS 中转上限 vs 家庭上行两因素归因；lan/p2p 也采，供 RTT 对比）
@@ -308,10 +333,13 @@ def run_group(source_serial: str, client_serial: str, backend: str, tier: str | 
             print(f"[stress] [warn] {backend} 空载基线无 stats（会话未通），基线记 -1")
         base = collect_window(source_serial, client_serial, baseline_seconds,
                               min(10, baseline_seconds), inject_touch=False)
-        bss = steady_stats(base["samples"], [], base["delays"], min(10, baseline_seconds))
+        bss = steady_stats(base["samples"], [], base["delays"], base["rtts"],
+                           min(10, baseline_seconds))
         g.rtt_baseline = bss.get("rtt_mean", -1.0)
+        g.rtt_client_baseline = bss.get("rtt_client_mean", -1.0)
         g.baseline_kbps = bss.get("sustained_kbps", -1.0)
-        print(f"[stress] 基线: rtt={g.rtt_baseline:.1f}ms idle_kbps={g.baseline_kbps:.0f}")
+        print(f"[stress] 基线: rtt={g.rtt_baseline:.1f}ms client_rtt={g.rtt_client_baseline:.1f}ms "
+              f"idle_kbps={g.baseline_kbps:.0f}")
 
     # 压测主体：高熵负载（或标定档）会话
     if not rm.ensure_pipeline(source_serial, RES_W, RES_H, RES_FPS, target, pstate):
@@ -322,16 +350,22 @@ def run_group(source_serial: str, client_serial: str, backend: str, tier: str | 
     if not wait_first_stats(client_serial):
         g.verdict = "ERROR: 会话 45s 内无 stats（帧流未通）"
         return g
-    print(f"[stress] ({backend}/{tier or '-'}/{kind}) 采集 {duration}s …")
+    g.transport_endpoint = probe_endpoint(client_serial, BACKEND_HOSTS.get(backend, "10.0.2.2"))
+    print(f"[stress] ({backend}/{tier or '-'}/{kind}) 采集 {duration}s … [{g.transport_endpoint}]")
     data = collect_window(source_serial, client_serial, duration, steady)
-    ss = steady_stats(data["samples"], data["enc"], data["delays"], steady)
+    ss = steady_stats(data["samples"], data["enc"], data["delays"], data["rtts"], steady)
     g.sustained_kbps = ss.get("sustained_kbps", -1.0)
     g.fps_mean = ss.get("fps_mean", -1.0)
     g.fps_recv = ss.get("fps_recv", -1.0)
     g.loss_mean = ss.get("loss_mean", -1.0)
     g.loss_max = ss.get("loss_max", -1.0)
     g.rtt_mean = ss.get("rtt_mean", -1.0)
-    g.rtt_inflate_ms = (g.rtt_mean - g.rtt_baseline) if (g.rtt_mean >= 0 and g.rtt_baseline >= 0) else -1.0
+    g.rtt_client_mean = ss.get("rtt_client_mean", -1.0)
+    # RTT 膨胀口径：源端 stats RTT 无采样调用方（恒 0）→ 用客户端 PONG RTT；无客户端样本才退化用 stats
+    base_rtt = g.rtt_client_baseline if g.rtt_client_baseline >= 0 else g.rtt_baseline
+    cur_rtt = g.rtt_client_mean if g.rtt_client_mean >= 0 else g.rtt_mean
+    g.rtt_inflate_ms = (cur_rtt - base_rtt) if (cur_rtt >= 0 and base_rtt >= 0) else -1.0
+    g.rtt_client_inflate = g.rtt_inflate_ms
     g.delay_p50 = ss.get("delay_p50", -1)
     g.delay_p95 = ss.get("delay_p95", -1)
     g.enc_out_mbps = ss.get("enc_out_mbps", -1.0)
@@ -387,7 +421,8 @@ def judge_group(g: StressGroup) -> StressGroup:
         g.network_pass = None
         g.attribution = (f"参照路径：编码器段 {'ENCODER_CAPPED' if g.encoder_capped else '正常'}，"
                          f"传输 {g.sustained_kbps:.0f}kbps ≈ 编码器 {g.enc_out_mbps:.2f}Mbps，"
-                         f"丢片 {g.loss_max:.2f}%，RTT 膨胀 {g.rtt_inflate_ms:.1f}ms")
+                         f"丢片 {g.loss_max:.2f}%，客户端RTT膨胀 {g.rtt_client_inflate:.1f}ms "
+                         f"[{g.transport_endpoint}]")
         return g
 
     if g.encoder_capped:
@@ -396,14 +431,16 @@ def judge_group(g: StressGroup) -> StressGroup:
         g.attribution = (f"编码器受限（输出 {g.enc_out_mbps:.2f}Mbps@{g.enc_fps:.1f}fps < 8Mbps 目标，"
                          f"传输跟出 {g.sustained_kbps:.0f}kbps、收帧 {g.fps_recv:.1f}fps 与编码器一致）→ "
                          f"网络段独立判定：{'PASS' if g.network_pass else 'FAIL'}"
-                         f"（丢片 {g.loss_max:.2f}%，RTT 膨胀 {g.rtt_inflate_ms:.1f}ms vs 基线 {g.rtt_baseline:.1f}ms）"
-                         f"——码率不达标归因编码器吞吐而非网络故障，真机硬编复核列入检查表")
+                         f"（丢片 {g.loss_max:.2f}%，客户端RTT {g.rtt_client_mean:.1f}ms 膨胀 "
+                         f"{g.rtt_client_inflate:.1f}ms vs 基线 {g.rtt_client_baseline:.1f}ms）"
+                         f"——码率不达标归因编码器吞吐而非网络故障，真机硬编复核列入检查表 [{g.transport_endpoint}]")
     else:
         g.network_pass = bool(g.sustained_kbps >= BITRATE_PASS_KBPS and g.fps_mean >= FPS_PASS and loss_ok)
         if g.network_pass:
             g.verdict = "PASS"
             g.attribution = (f"网络段达标：sustained {g.sustained_kbps:.0f}kbps ≥8Mbps、fps {g.fps_mean:.1f} ≥50、"
-                             f"丢片 {g.loss_max:.2f}% <0.5%，RTT 膨胀 {g.rtt_inflate_ms:.1f}ms vs 基线 {g.rtt_baseline:.1f}ms")
+                             f"丢片 {g.loss_max:.2f}% <0.5%，客户端RTT膨胀 {g.rtt_client_inflate:.1f}ms "
+                             f"vs 基线 {g.rtt_client_baseline:.1f}ms [{g.transport_endpoint}]")
         else:
             g.verdict = "FAIL"
             why = []
@@ -413,9 +450,10 @@ def judge_group(g: StressGroup) -> StressGroup:
                 why.append(f"fps {g.fps_mean:.1f} <50")
             if not loss_ok:
                 why.append(f"丢片 {g.loss_max:.2f}% ≥0.5%")
-            g.attribution = (f"网络段不达标：{'; '.join(why)}；RTT 膨胀 {g.rtt_inflate_ms:.1f}ms "
-                             f"vs 基线 {g.rtt_baseline:.1f}ms，空载吞吐 {g.baseline_kbps:.0f}kbps "
-                             f"（VPS 中转上限 vs 家庭上行两因素见报告归因）")
+            g.attribution = (f"网络段不达标：{'; '.join(why)}；客户端RTT {g.rtt_client_mean:.1f}ms 膨胀 "
+                             f"{g.rtt_client_inflate:.1f}ms vs 基线 {g.rtt_client_baseline:.1f}ms，空载吞吐 "
+                             f"{g.baseline_kbps:.0f}kbps（VPS 中转上限 vs 家庭上行两因素见报告归因）"
+                             f" [{g.transport_endpoint}]")
     return g
 
 
@@ -429,14 +467,15 @@ def write_report(groups: list[StressGroup], path: str, steady: int) -> None:
         f"生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}；口径 1080p@60fps，稳态窗口后 {steady}s，采样 1s 粒度。",
         "",
         "| 路径 | 档位 | 类别 | 稳态 sustained(kbps) | 编码器输出(Mbps) | 编码器 fps | 收帧 fps | 丢片率%(均值/最大) "
-        "| RTT 压测/基线/膨胀(ms) | 空载吞吐(kbps) | 断流 | 判定 |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| 客户端RTT 压测/基线/膨胀(ms) | RTT 膨胀(stats口径,ms) | 空载吞吐(kbps) | 端点证据 | 断流 | 判定 |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for g in groups:
         lines.append(
             f"| {g.backend} | {g.tier} | {g.kind} | {g.sustained_kbps:.0f} | {g.enc_out_mbps:.2f} | "
             f"{g.enc_fps:.1f} | {g.fps_recv:.1f} | {g.loss_mean:.2f}/{g.loss_max:.2f} | "
-            f"{g.rtt_mean:.1f}/{g.rtt_baseline:.1f}/{g.rtt_inflate_ms:.1f} | {g.baseline_kbps:.0f} | "
+            f"{g.rtt_client_mean:.1f}/{g.rtt_client_baseline:.1f}/{g.rtt_client_inflate:.1f} | "
+            f"{g.rtt_inflate_ms:.1f} | {g.baseline_kbps:.0f} | {g.transport_endpoint or '-'} | "
             f"{g.disconnects} | {g.verdict} |"
         )
     lines += ["", "### 逐组归因结论", ""]
@@ -464,9 +503,12 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=120, help="每组压测时长（s）")
     ap.add_argument("--steady", type=int, default=60, help="稳态窗口（后 N 秒）")
     ap.add_argument("--baseline-seconds", type=int, default=20, help="空载基线时长（0=跳过）")
-    ap.add_argument("--backends", default="lan-direct,frp,p2p")
+    ap.add_argument("--backends", default=None, help="逗号分隔路径（默认 lan-direct,frp,p2p；"
+        "与 --calibrate/--high-probe 同用时仅显式传入才跑矩阵）")
     ap.add_argument("--tier", default="mid", choices=["low", "mid", "high"])
     ap.add_argument("--calibrate", default="", help="档位标定：逗号分隔档位（lan-direct 60s/档）")
+    ap.add_argument("--target", type=int, default=0,
+                    help="标定用会话码率目标覆盖（kbps）——统一高目标下测内容驱动阶梯，剔除目标限制混淆")
     ap.add_argument("--high-probe", action="store_true", help="编码器极限探针（lan-direct high）")
     ap.add_argument("--json", default="docs/uplink-stress-results.json")
     ap.add_argument("--report", default="docs/uplink-report.md")
@@ -485,9 +527,9 @@ def main() -> int:
     if args.calibrate:
         cal_duration = max(70, args.duration)  # 标定稳态窗口 ≥60s（SPEC 稳态口径）
         for tier in [t.strip() for t in args.calibrate.split(",") if t.strip()]:
-            print(f"[stress] 标定档 {tier}（lan-direct {cal_duration}s, target={SESSION_TARGET_KBPS[tier]}kbps）")
+            print(f"[stress] 标定档 {tier}（lan-direct {cal_duration}s, target={args.target or SESSION_TARGET_KBPS[tier]}kbps）")
             g = run_group(source_serial, client_serial, "lan-direct", tier, cal_duration, 60,
-                          0, "calibration", pstate)
+                          0, "calibration", pstate, target_override=args.target)
             print(f"[stress] → {tier}: enc={g.enc_out_mbps:.2f}Mbps enc_fps={g.enc_fps:.1f} "
                   f"sustained={g.sustained_kbps:.0f}kbps")
             _emit(g)
@@ -497,16 +539,18 @@ def main() -> int:
                       min(40, args.steady), 0, "probe", pstate)
         print(f"[stress] → 探针: enc={g.enc_out_mbps:.2f}Mbps enc_fps={g.enc_fps:.1f}")
         _emit(g)
-    for backend in [b.strip() for b in args.backends.split(",") if b.strip()]:
-        if backend not in BACKEND_HOSTS:
-            print(f"[stress] [warn] 未知路径 {backend}，跳过（可用 {list(BACKEND_HOSTS)}）")
-            continue
-        print(f"[stress] 压测组 {backend}/{args.tier}（{args.duration}s）")
-        g = run_group(source_serial, client_serial, backend, args.tier, args.duration, args.steady,
-                      args.baseline_seconds, "stress", pstate)
-        print(f"[stress] → {backend}: sustained={g.sustained_kbps:.0f}kbps fps={g.fps_mean:.1f} "
-              f"enc={g.enc_out_mbps:.2f}Mbps rtt={g.rtt_mean:.1f}ms(基线{g.rtt_baseline:.1f})")
-        _emit(g)
+    run_matrix = args.backends is not None or not (args.calibrate or args.high_probe)
+    if run_matrix:
+        for backend in [b.strip() for b in (args.backends or "lan-direct,frp,p2p").split(",") if b.strip()]:
+            if backend not in BACKEND_HOSTS:
+                print(f"[stress] [warn] 未知路径 {backend}，跳过（可用 {list(BACKEND_HOSTS)}）")
+                continue
+            print(f"[stress] 压测组 {backend}/{args.tier}（{args.duration}s）")
+            g = run_group(source_serial, client_serial, backend, args.tier, args.duration, args.steady,
+                          args.baseline_seconds, "stress", pstate)
+            print(f"[stress] → {backend}: sustained={g.sustained_kbps:.0f}kbps fps={g.fps_mean:.1f} "
+                  f"enc={g.enc_out_mbps:.2f}Mbps rtt={g.rtt_mean:.1f}ms(基线{g.rtt_baseline:.1f})")
+            _emit(g)
 
     with open(args.json, "w", encoding="utf-8") as f:
         json.dump({"spec": "gaming-uplink-1080p", "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
