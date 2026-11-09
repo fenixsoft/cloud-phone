@@ -122,6 +122,8 @@ resolve_paths() {
   mkdir -p "$(dirname "$JSON_PATH")"
   STAGE_DIR="${JSON_PATH%.json}-diag"
   rm -rf "$STAGE_DIR"; mkdir -p "$STAGE_DIR"
+  # 日志按设备侧 uid 分文件：root 时代的残留日志文件（属主 root）会令 shell 会话重定向失败
+  DEV_LOG="/data/local/tmp/cloudphone-helper-probe-$(adb_q 'id -u').log"
 }
 
 # ── 1.2 PUSH 段：构建 + 幂等推送 ──────────────────────────────────────
@@ -196,6 +198,11 @@ ctrl_once() {  # $1=host_port $2=payload $3=read_timeout
 
 stage_spawn() {
   kill_stale
+  if [[ -n "$(helper_alive)" ]]; then
+    stage_end fail "残留助手无法清理（跨 uid 权限不足？先 adb root 或手动 pkill cloudphone-helper）"
+    VERDICT_EVIDENCE+=("SPAWN: 残留助手进程未清（$(helper_alive)）——旧进程可能冒名应答，探针拒绝继续")
+    return 1
+  fi
   adb_q "rm -f $DEV_LOG" >/dev/null
   say "拉起助手: CLASSPATH=$DEV_DEX app_process /system/bin --nice-name=$HELPER_NICE $HELPER_CLASS（日志 $DEV_LOG）"
   # nohup + 立即退出会话：助手脱离 adb shell 会话存活（bootstrap_adb.sh 同款范式）
@@ -519,8 +526,8 @@ exit_code_for() {
 # ── main ─────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
-  resolve_paths
   pick_device                      # NO_DEVICE: 输出结论 + exit 1（无误导性部分结论）
+  resolve_paths
   record_env
   local ok=1
   FAIL_STAGE=""
