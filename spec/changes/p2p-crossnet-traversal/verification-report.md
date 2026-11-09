@@ -1,13 +1,13 @@
 # 验证报告：p2p-crossnet-traversal
 
-> ⚠️ 本报告由框架于 2026-11-09T09:10:53Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
-> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-09T09:09:32.137000+00:00+run-result@mtime1794215441782178111
+> ⚠️ 本报告由框架于 2026-11-09T13:04:39Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
+> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-09T13:02:40.064731+00:00+run-result@mtime1794229470491736696
 
 ## 结论：❌ 未通过（Bug Found）
 
 **状态：bug-found — 24/25 场景通过，1 失败，0 错误（1 个真实产品 Bug）**
 
-25 场景：24 PASS，1 fail。唯一失败 crypto-deliverables-exist 为交付物缺陷（natlab_run.py 缺可执行位，实测 644 vs 要求可执行），判 product-bug（minor）；其余加密编解码/协商/natlab 矩阵/迁移/兼容/文档场景全部通过，无 flaky/env，无场景文件缺陷
+25 场景：24 pass / 1 fail / 0 warning。裁决：product-bug 1（crypto-deliverables-exist：natlab_run.py 可执行位缺失，minor，免复现确定性缺陷）；test-defect 0、flaky 0、env 0。其余 24 场景（含上轮修复的 encrypt-off/ei-ei/no-adb 场景）全部通过。修复建议：chmod +x scripts/natlab_run.py 并以 100755 模式入库。
 
 | 指标 | 数量 |
 | --- | --- |
@@ -15,8 +15,8 @@
 | 失败 | 1 |
 | 错误 | 0 |
 | 产品 Bug | 1 |
-| 本链增量 Token（输入） | 0.84M |
-| 本链增量 Token（输出） | 0.13M |
+| 本链增量 Token（输入） | 0.99M |
+| 本链增量 Token（输出） | 0.14M |
 
 
 ## 真实产品 Bug
@@ -24,12 +24,12 @@
 ### BUG-01（severity=minor）· exit_code
 
 - 关联场景：crypto-deliverables-exist
-- 描述：交付物 scripts/natlab_run.py 缺少可执行位（权限 644），不符合 tasks.md Deliverables YAML「scripts 新增 natlab_setup.sh/natlab_run.py（可执行位）」要求；natlab_setup.sh 为 755 正常
-- 根因：实现交付时未对 scripts/natlab_run.py 执行 chmod +x；功能本身不受影响（全部 natlab 场景经 python3/bash 调用均通过），属交付物清单违规
+- 描述：交付物 scripts/natlab_run.py 缺可执行位（实测 -rw-r--r--，git 模式 100644），tasks.md Deliverables 要求 natlab_setup.sh/natlab_run.py 均带可执行位（natlab_setup.sh 已为 755/100755）
+- 根因：实现交付时未对 scripts/natlab_run.py 执行 chmod +x，交付物核查脚本 [ -x ] 检查失败使整步 exit 1
 - 证据（场景 crypto-deliverables-exist 结构化证据，引用）：
-  - failed_assertions: [{"type": "exit_code", "selector": "交付物核对脚本", "expected": 0, "actual": 1}, {"type": "output_match", "selector": "DELIVERABLES_OK", "expected": "contains DELIVERABLES_OK", "actual": "MISSING exec bit: scripts/natlab_run.py"}]
+  - failed_assertions: [{"type": "exit_code", "expected": 0, "actual": 1}, {"type": "output_match", "mode": "contains", "expected": "DELIVERABLES_OK", "actual": "MISSING exec bit: scripts/natlab_run.py"}]
   - screenshots: []
-  - first_failed_step: 步骤1: 交付物核对脚本检出 scripts/natlab_run.py 缺少可执行位，exit_code=1
+  - first_failed_step: 步骤1: 交付物核查脚本打印 MISSING exec bit: scripts/natlab_run.py 后 exit 1（文件本体存在，仅可执行位缺失）
 
 
 ## 场景结果
@@ -71,5 +71,7 @@
 
 ## 本轮场景集变更
 
-场景集与持久化集一致，无变更。
+当前稳定场景集共 25 个（第 1 轮）。
+
+- 首轮写入 25 个场景
 

@@ -71,6 +71,11 @@
 | `0x0A` | APP_LIST_REQUEST | C → S | 请求枚举源端可启动应用（请求-应答制） |
 | `0x0B` | APP_LIST | S → C | 可启动应用列表应答（会话在线才应答） |
 | `0x0C` | P2P_MIGRATE | 双向（经信令通道） | 端点迁移：对端地址变化后的新候选推送（p2p-crossnet-traversal 扩展，会话不重建） |
+| `0x0D` | AUDIO_CHUNK | S → C | 音频块（M3 辅助通道，控制 TCP 下行，20ms AAC 帧） |
+| `0x0E` | CLIPBOARD_SET | C → S | 写源端剪贴板（IME 焦点代理） |
+| `0x0F` | CLIPBOARD_GET | C → S | 请求读源端剪贴板（请求-应答制） |
+| `0x10` | CLIPBOARD_TEXT | S → C | 剪贴板文本回执（kind=0）或辅助通道错误回执（kind=1） |
+| `0x11` | TEXT_INPUT | C → S / S → C | 组合文本注入（kind=0，C→S）或注入回执 ACK（kind=1，S→C） |
 
 控制记录 payload 首字节即 msgType，其后按各消息字段表排列。
 
@@ -250,6 +255,69 @@
   对端收到后 `migrateTo(newCandidates)` 显式更新对端地址并以 sequence=0 探针重连复用
   （探针帧恒明文，见 §7.4），视频流不断、统计不重置。
 - 老端收到 0x0C：未知 msgType 按总则「忽略且不中断会话」处理。
+
+### 3.13 AUDIO_CHUNK（0x0D，M3 aux-channels-m3）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | ptsUs | i64 | 捕获时刻微秒时间戳，与视频 PTS 同钟（`SystemClock.elapsedRealtimeNanos()/1000`） |
+| 2 | seq | i32 | 音频帧序号，发送侧单调递增（skip/对账统计依据） |
+| 3 | payloadLen | u16 | AAC 载荷字节数 N |
+| 4 | payload | bytes | AAC 访问单元（48kHz stereo 96kbps，20ms 帧；线协议含 ADTS 头，客户端解码侧剥除） |
+
+- 源端 → 客户端。经控制 TCP 记录通道下行（可靠有序：音频丢帧比延迟更伤体验）。
+- 静音零流量：源端 RMS 低于阈值持续 3s 后停发，仅保留 1 帧/s keepalive（防 NAT 老化与通道活性验证）。
+- 客户端以 120ms 起播水位 jitter buffer 播放，缓冲不足 skip 并计数。
+
+> 编号说明：本节五条消息原规划 0x0C–0x10，0x0C 已被 P2P_MIGRATE（3.12）占用，
+> 收编新基线时重编号为 **0x0D–0x11**。
+
+### 3.14 CLIPBOARD_SET（0x0E，M3）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | text | str | 目标剪贴板文本（UTF-8，客户端本地剪贴板内容） |
+
+- 客户端 → 源端。源端经内置 IME（CloudImeService，持焦点合法）`setPrimaryClip` 写入；
+  成功回 CLIPBOARD_TEXT(kind=0) 应答，失败（IME 未启用/不可写）回 CLIPBOARD_TEXT(kind=1) 错误回执。
+
+### 3.15 CLIPBOARD_GET（0x0F，M3）
+
+- 空载荷（仅 msgType 字节）。客户端 → 源端，请求-应答制。
+- 成功回 CLIPBOARD_TEXT(kind=0)；源端无焦点/IME 未启用回 CLIPBOARD_TEXT(kind=1) 错误回执。
+
+### 3.16 CLIPBOARD_TEXT（0x10，M3）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | kind | u8 | 0 = 剪贴板文本回执；1 = 辅助通道错误回执 |
+| 2 | （kind=0）text | str | 剪贴板文本（UTF-8） |
+| 2 | （kind=1）channel | u8 | AuxChannel：1=AUDIO 2=CLIPBOARD 3=TEXT_INPUT |
+| 3 | （kind=1）reason | str | 失败/降级原因（无焦点、IME 未启用、源端系统不支持音频捕获等） |
+
+- 源端 → 客户端。kind=1 为通用辅助通道错误回执：客户端据此置灰对应按钮并显示原因文案，
+  非静默失败（spec aux-channels-m3 剪贴板/降级 Scenario）。
+
+### 3.17 TEXT_INPUT（0x11，M3）
+
+| 序 | 字段 | 类型 | 说明 |
+|---|---|---|---|
+| 1 | kind | u8 | 0 = 注入请求（C → S）；1 = 注入回执 ACK（S → C） |
+| 2 | seq | i32 | 注入序号（客户端自选单调递增；ACK 原样回显，重复投递去重） |
+| 3 | （kind=0）text | str | 注入文本（完整 Unicode，含中文/emoji） |
+| 3 | （kind=1）ok | u8 | 1 = 注入成功；0 = 失败 |
+| 4 | （kind=1）reason | str | 失败原因（无焦点/IME 未启用/非 ASCII 且无 IME 等；成功为空串） |
+
+- 主路径：源端 IME `commitText` 注入（完整 Unicode）。兜底：IME 未启用且文本纯 ASCII
+  → shellhelper `input text`（空格转义）；非 ASCII 且无 IME → ACK 失败（reason 说明）。
+- 每条 TEXT_INPUT SHALL 有 ACK 回执（成功/失败原因）；seq 重复投递去重不重复注入。
+
+## 3A. 辅助通道兼容性（M3）
+
+- 五条新消息（0x0D–0x11）全部为增量扩展，**不 bump PROTOCOL_VERSION**：
+  老端/未知 msgType 走既有容错路径（整记录忽略、连接不受影响）。
+- 协商不引入新握手字段：三通道均为运行期可用性探测，音频/剪贴板不可用即不发对应消息
+  或经 CLIPBOARD_TEXT(kind=1) 通告原因，客户端按超时/回执感知降级。
 
 ## 4. 握手与会话时序（文字版）
 

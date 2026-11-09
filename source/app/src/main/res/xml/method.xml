@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 云剪贴板输入法元数据（aux-channels-m3 任务 3.2）：
+     纯焦点代理无键盘 UI，settingsActivity 指向源端 App（未启用引导入口复用设置页说明） -->
+<input-method xmlns:android="http://schemas.android.com/apk/res/android"
+    android:supportsSwitchingToNextInputMethod="false"
+    android:settingsActivity="cloudphone.source.MainActivity" />

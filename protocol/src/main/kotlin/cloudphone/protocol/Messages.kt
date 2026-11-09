@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets
 /** 协议版本（M0 = 1） */
 const val PROTOCOL_VERSION: Int = 1
 
-/** 控制消息类型常量（M1 C++ 化时保持数值不变；0x0C 起为 p2p-crossnet-traversal 扩展） */
+/** 控制消息类型常量（M1 C++ 化时保持数值不变；0x0C 为 p2p-crossnet-traversal 扩展，0x0D 起为 aux-channels-m3 扩展） */
 object MsgType {
     const val HELLO: Int = 0x01
     const val HELLO_ACK: Int = 0x02
@@ -33,6 +33,14 @@ object MsgType {
 
     /** 端点迁移（p2p-crossnet-traversal 2.3）：本端网络切换后向对端推送新候选地址 */
     const val P2P_MIGRATE: Int = 0x0C
+
+    // ── M3 辅助通道（aux-channels-m3，增量扩展不 bump PROTOCOL_VERSION；
+    //    原规划 0x0C–0x10，0x0C 已被 P2P_MIGRATE 占用，重编号为 0x0D–0x11）──
+    const val AUDIO_CHUNK: Int = 0x0D
+    const val CLIPBOARD_SET: Int = 0x0E
+    const val CLIPBOARD_GET: Int = 0x0F
+    const val CLIPBOARD_TEXT: Int = 0x10
+    const val TEXT_INPUT: Int = 0x11
 }
 
 /** 观看模式：整屏 / 单应用（指定包名）/ 附着到已挂机会话 */
@@ -76,6 +84,15 @@ data class AppEntry(
     val packageName: String,
     val label: String,
 )
+
+/** M3 辅助通道能力状态（源端运行期探测，经既有回执/降级路径呈现，无握手字段变更） */
+enum class AuxChannel(val id: Int) {
+    AUDIO(1), CLIPBOARD(2), TEXT_INPUT(3);
+
+    companion object {
+        fun from(id: Int): AuxChannel? = entries.firstOrNull { it.id == id }
+    }
+}
 
 /** 已挂机（断开未销毁）会话摘要，随 HELLO_ACK 下发供会话抽屉展示 */
 data class HungSession(
@@ -247,6 +264,59 @@ sealed class ControlMessage(val type: Int) {
         val apps: List<AppEntry>,
     ) : ControlMessage(MsgType.APP_LIST)
 
+    /**
+     * 源端 → 客户端：音频块（M3 aux-channels-m3）。
+     * ptsUs 与视频同钟（SystemNanoTime 派生微秒），seq 单调递增供 skip/对账统计；
+     * payload 为 AAC-LC ADTS 访问单元（20ms 帧）。经控制 TCP 记录通道下行（可靠有序）。
+     */
+    data class AudioChunk(
+        val ptsUs: Long,
+        val seq: Int,
+        val payload: ByteArray,
+    ) : ControlMessage(MsgType.AUDIO_CHUNK) {
+        override fun equals(other: Any?): Boolean =
+            other is AudioChunk && other.ptsUs == ptsUs && other.seq == seq && other.payload.contentEquals(payload)
+        override fun hashCode(): Int = ((ptsUs xor (ptsUs ushr 32)).toInt()) * 31 + seq * 31 + payload.contentHashCode()
+    }
+
+    /** 客户端 → 源端：写剪贴板（IME 焦点代理 setPrimaryClip，全版本可用） */
+    data class ClipboardSet(val text: String) : ControlMessage(MsgType.CLIPBOARD_SET)
+
+    /** 客户端 → 源端：请求读剪贴板（成功回 [ClipboardText]，失败回 [AuxNotice]） */
+    class ClipboardGet : ControlMessage(MsgType.CLIPBOARD_GET)
+
+    /** 源端 → 客户端：剪贴板文本回执（CLIPBOARD_GET/CLIPBOARD_SET 成功应答，kind=0） */
+    data class ClipboardText(val text: String) : ControlMessage(MsgType.CLIPBOARD_TEXT)
+
+    /**
+     * 源端 → 客户端：辅助通道不可用/错误回执（kind=1，与 [ClipboardText] 共用 0x0F）。
+     * 承载剪贴板失败原因（无焦点/IME 未启用）、音频不可用通告（API<29）等降级通知；
+     * 客户端据此置灰按钮并显示原因文案，非静默失败。
+     */
+    data class AuxNotice(
+        val channel: AuxChannel,
+        val reason: String,
+    ) : ControlMessage(MsgType.CLIPBOARD_TEXT)
+
+    /**
+     * 客户端 → 源端：组合文本注入（kind=0，完整 Unicode 含中文）。
+     * seq 供 ACK 对账与重复投递去重；源端 IME commitText 主路径。
+     */
+    data class TextInput(
+        val seq: Int,
+        val text: String,
+    ) : ControlMessage(MsgType.TEXT_INPUT)
+
+    /**
+     * 源端 → 客户端：TEXT_INPUT 注入回执（kind=1，与 [TextInput] 共用 0x10）。
+     * ok=true 注入成功；失败携带原因（无焦点/IME 未启用/非 ASCII 无 IME 等）。
+     */
+    data class TextInputAck(
+        val seq: Int,
+        val ok: Boolean,
+        val reason: String,
+    ) : ControlMessage(MsgType.TEXT_INPUT)
+
     /** 未知类型消息：接收方 MUST 忽略且不中断会话 */
     data class Unknown(val unknownType: Int, val payload: ByteArray) : ControlMessage(unknownType) {
         override fun equals(other: Any?): Boolean =
@@ -406,6 +476,36 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
                 }
             }
         }
+        is ControlMessage.AudioChunk -> ByteBuffer.allocate(8 + 4 + 2 + msg.payload.size).apply {
+            putLong(msg.ptsUs)
+            putInt(msg.seq)
+            putU16(msg.payload.size)
+            put(msg.payload)
+        }
+        is ControlMessage.ClipboardSet -> ByteBuffer.allocate(2 + msg.text.toByteArray(StandardCharsets.UTF_8).size).apply {
+            putU16String(msg.text)
+        }
+        is ControlMessage.ClipboardGet -> ByteBuffer.allocate(0)
+        is ControlMessage.ClipboardText -> ByteBuffer.allocate(1 + 2 + msg.text.toByteArray(StandardCharsets.UTF_8).size).apply {
+            put(0)
+            putU16String(msg.text)
+        }
+        is ControlMessage.AuxNotice -> ByteBuffer.allocate(1 + 1 + 2 + msg.reason.toByteArray(StandardCharsets.UTF_8).size).apply {
+            put(1)
+            put(msg.channel.id.toByte())
+            putU16String(msg.reason)
+        }
+        is ControlMessage.TextInput -> ByteBuffer.allocate(1 + 4 + 2 + msg.text.toByteArray(StandardCharsets.UTF_8).size).apply {
+            put(0)
+            putInt(msg.seq)
+            putU16String(msg.text)
+        }
+        is ControlMessage.TextInputAck -> ByteBuffer.allocate(1 + 4 + 1 + 2 + msg.reason.toByteArray(StandardCharsets.UTF_8).size).apply {
+            put(1)
+            putInt(msg.seq)
+            put(if (msg.ok) 1 else 0)
+            putU16String(msg.reason)
+        }
         is ControlMessage.Unknown -> throw ProtocolException("cannot encode unknown message type ${msg.unknownType}")
     }
     body.flip()
@@ -517,6 +617,36 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
                 apps.add(AppEntry(pkg, buf.getU16String()))
             }
             ControlMessage.AppListMessage(requestId, apps)
+        }
+        MsgType.AUDIO_CHUNK -> {
+            val ptsUs = buf.long
+            val seq = buf.int
+            val len = buf.getU16()
+            val payload = ByteArray(len)
+            buf.get(payload)
+            ControlMessage.AudioChunk(ptsUs, seq, payload)
+        }
+        MsgType.CLIPBOARD_SET -> ControlMessage.ClipboardSet(buf.getU16String())
+        MsgType.CLIPBOARD_GET -> ControlMessage.ClipboardGet()
+        MsgType.CLIPBOARD_TEXT -> when (buf.get().toInt()) {
+            0 -> ControlMessage.ClipboardText(buf.getU16String())
+            1 -> ControlMessage.AuxNotice(
+                AuxChannel.from(buf.get().toInt()) ?: throw ProtocolException("bad aux channel"),
+                buf.getU16String(),
+            )
+            else -> throw ProtocolException("bad clipboard-text kind")
+        }
+        MsgType.TEXT_INPUT -> {
+            val kind = buf.get().toInt()
+            val seq = buf.int
+            when (kind) {
+                0 -> ControlMessage.TextInput(seq, buf.getU16String())
+                1 -> {
+                    val ok = buf.get().toInt() != 0
+                    ControlMessage.TextInputAck(seq, ok, buf.getU16String())
+                }
+                else -> throw ProtocolException("bad text-input kind")
+            }
         }
         else -> {
             val rest = ByteArray(buf.remaining())

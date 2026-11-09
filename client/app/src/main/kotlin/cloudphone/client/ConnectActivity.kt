@@ -67,6 +67,8 @@ object ClientSession {
     @Volatile var onHelloAck: ((ControlMessage.HelloAck) -> Unit)? = null
     /** APP_LIST 应答分发（应用列表页消费；3.1/4.1） */
     @Volatile var onAppList: ((ControlMessage.AppListMessage) -> Unit)? = null
+    /** M3 辅助通道分发（AUDIO_CHUNK/CLIPBOARD_TEXT/AuxNotice/TextInputAck → AuxChannelClient 消费） */
+    @Volatile var onAux: ((ControlMessage) -> Unit)? = null
 
     @Volatile var currentSessionId = 0
     @Volatile var lastHelloAck: ControlMessage.HelloAck? = null
@@ -335,6 +337,11 @@ object ClientSession {
                 if (rtt in 0..10000) android.util.Log.i("cloudphone-latency", "rtt Ms=$rtt")
             }
             is ControlMessage.AppListMessage -> onAppList?.invoke(msg)
+            // M3 辅助通道：转发 AuxChannelClient（未注册时 AudioChunk 直接丢弃省 CPU）
+            is ControlMessage.AudioChunk -> onAux?.invoke(msg)
+            is ControlMessage.ClipboardText -> onAux?.invoke(msg)
+            is ControlMessage.AuxNotice -> onAux?.invoke(msg)
+            is ControlMessage.TextInputAck -> onAux?.invoke(msg)
             is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话
             else -> Unit
         }
@@ -877,7 +884,9 @@ class ConnectActivity : Activity() {
         val pkg = intent.getStringExtra("autoPackage") ?: "cloudphone.loadgen"
         val cfg = ClientSession.Config(
             host = autoHost,
-            tcpPort = SettingsPrefs.defaultTcpPort(this),
+            // autoPort：自动化场景源端监听端口可变（master 侧矩阵兼容语义，重设计接线等效移植），
+            // 缺省回落设置页默认 TCP 端口（4.3）
+            tcpPort = intent.getStringExtra("autoPort")?.toIntOrNull() ?: SettingsPrefs.defaultTcpPort(this),
             udpPort = SettingsPrefs.defaultUdpPort(this),
             kind = kindOf(backend),
             token = "cloudphone-m0",
