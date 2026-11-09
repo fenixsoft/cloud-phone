@@ -120,3 +120,9 @@
   - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
   > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：为 testing 态在 _status_to_event/派发表补 verifier 映射（testing→spec_implemented 或专用 reverify 事件），或在 unfreeze/reset/修订重验/恢复四处统一改走「显式入队 verifier + 落地回执核验（N 分钟内无 verify run 即告警回滚）」；恢复（Recovering interrupted SPEC）路径对「最近 report 已含 env 失败场景且 _scenario_revision_reverify_pending」的 spec 禁用 fast-track 直通 verified。
+- **[arbiter:single-a] 处置动作回执缺下游落地校验（声称 verifier 入队/重派成功但无 run 落地，无任何告警或回滚）**
+  - 影响：处置链对「成功」的判定止步于动作发出，不校验下游 run 落地，导致空转处置被记为成功、告警被闭环（12:02:10「Admin 处置成功链闭环」后 40 秒 spec 即再冻结），升级链对各车道失效失去感知，问题要等下一次冻结才暴露。
+  - 证据：.fenix/logs/fenixd.log：11:20:58.369「env 阻塞处置复位（直通道）：transition_gate(testing) + verifier 入队重验」——此后 23 分钟无 verify run，直通道回执为成功语义；12:39:05.170 revise_scenario_reverify 回执 steps 含「重派 verifier 重验，已写调度唤醒信号」，12:39:05.300 kick 被消费，其后无任何 verifier 派发或失败记录；两次空转均由后续 Arbiter/Admin 逐日志考古才发现。；触发 run_id=arbiter-single-app-realdevice-retest-1794229305（签名 single-app-realdevice-retest::verify_env_blocked，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
+  > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：为「入队/重派 verifier」类动作增加落地回执校验（N 分钟窗口内无对应 agent_type run 落地即升级告警并标记处置无效）；处置回执写入可核验句柄（预期 run 类型+派发时间窗），供 dashboard 与处置链对账。
