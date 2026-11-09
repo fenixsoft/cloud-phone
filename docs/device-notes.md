@@ -166,3 +166,43 @@
 | app-shortcuts（4.1-4.3） | PASS | `appshortcuts_e2e.md`（深链→SINGLE_APP→出画）、`launcher_with_shortcut.png`（桌面快捷方式）、失败路径=伪造包名/不可达端口均得「直达失败」并落盘 |
 | touch-latency-fix（5.1-5.4） | PASS | `touch_baseline.json`（P50=651/P95=3104）→ `touch_fixed.json`（P50=266/P95=575 ≤800）→ `touch_fixed_60fps.json`（P50=1/P95=43 ≤300，帧率 52-59 不回退）；`touch_latency_summary.md` 汇总；device-notes §6 口径差异 |
 | 全量回归（6.1） | PASS | `full-suite-report.json`（8/8：协议单测+三模块构建+lan-direct 线级冒烟+矩阵 lan-direct/game/720p 60.3fps+frp 入口+p2p STUN）；`validation-report.md` 矩阵行 |
+
+## 8. 真机重测准备（single-app-realdevice-retest）
+
+### 8.1 一键接入与分段诊断脚本
+
+`scripts/realdevice_bootstrap.sh`：真机到手后一条命令完成接入 + PUSH→SPAWN→PING→CREATE 分段诊断。
+
+```bash
+bash scripts/realdevice_bootstrap.sh --serial <serial>          # 默认 auto：缺产物则构建 + 幂等推送
+bash scripts/realdevice_bootstrap.sh --serial <serial> --full   # 强制重走构建 + 推送
+bash scripts/realdevice_bootstrap.sh --serial <serial> --probe-only --json <path>   # 只探不改
+```
+
+- 每段独立超时（PUSH 60s / SPAWN 15s / PING 30s / CREATE 40s），前段失败不阻塞输出已有段结论。
+- 结论枚举：`OK | MIRROR_LIMIT | SELINUX_DENIED | SHELL_UNAVAILABLE | NO_DEVICE | UNKNOWN`，全部证据绑定
+  （AVC 行 / am_kill 记录 / getenforce / 构建形态），任一段失败自动抓诊断包
+  （logcat 尾 500 行、dmesg avc|kill、getenforce、build props、id），JSON 摘要落
+  `docs/realdevice-probe-report-<serial>-<ts>.json` + 诊断侧车目录。
+- 网络指引内嵌脚本末尾：真机同网 lan-direct 直连源端 IP:22333（`adb forward`/模拟器控制台 redir
+  仅模拟器可用）；跨网走 frp 既有隧道（§5）。模拟器设备保留 `bootstrap_adb.sh` 分工（两脚本互不调用）。
+- 与 §2.2 授权顺序铁律的关系：本脚本只负责真机接入与助手诊断；整屏模式的
+  「先起 FGS 再 getMediaProjection」授权编排仍由 `bootstrap_adb.sh` / App 内手动授权承担，本脚本不重复实现。
+
+### 8.2 重测检查表
+
+`docs/realdevice-retest-checklist.md`：§4 差距清单逐项展开为三栏执行步骤（操作/预期/失败时抓什么），
+覆盖 shell 助手 CREATE、单应用会话、触摸 P95≤300ms（`measure_latency.py --touch` 口径）、deeplink 直达、
+OEM 电池白名单、锁屏 60s、1080p60 硬解 c2.qti 复核、硬编吞吐、P2P wireKind 异 NAT 核对与加密范围。
+执行后按检查表「回写约定」把结论更新回 device-notes（§4 现状列 + §8 记录）。
+
+### 8.3 user 版真机预期差异
+
+- user 版上 app_process 机制预期可用——scrcpy 在量产 user 机依赖同一机制（业界实证）；
+  若 SPAWN 段失败（`SHELL_UNAVAILABLE`），单应用模式不可用，保留 FULLSCREEN（MediaProjection）降级路径。
+- user 版 SELinux 策略与 userdebug 不同，可能触发未知拒绝形态 → 落 `UNKNOWN` + 完整诊断包人工分析；
+  脚本已按 `ro.build.type` 分叉输出对应预期说明（design D3）。
+- 模拟器自验记录（2026-11-09）：§2.1 的 CREATE 静默杀**在该日镜像实例未复现**（uid0 连发 25 次 CREATE
+  全部成功；uid2000 下 CREATE 立即 `SecurityException: packageName must match the calling uid`）；
+  MIRROR_LIMIT 诊断路径以故障注入复现 §2.1 特征实证（见检查表附录 A/B）。真机重测时以 §2.1 特征
+  （PING 正常 + CREATE 静默消失 + 无 crash）为准绳，勿假定模拟器当日行为外推到真机。
