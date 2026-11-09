@@ -126,3 +126,9 @@
   - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
   > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：为「入队/重派 verifier」类动作增加落地回执校验（N 分钟窗口内无对应 agent_type run 落地即升级告警并标记处置无效）；处置回执写入可核验句柄（预期 run 类型+派发时间窗），供 dashboard 与处置链对账。
+- **[arbiter:single-a] escalate 裁决终态化后同签名告警秒级再派发 arbiter（无抑制窗/回派去重）**
+  - 影响：已上升人工的签名仍被自动回派 arbiter：每轮约 0.15M input token 无状态变更空耗，人工裁决流将被同签名重复包淹没，真实待决项被稀释；escalation_chain_state 已记 arbiter_rulings=1 却仍再派发，计数未参与派发抑制
+  - 证据：.fenix/logs/fenixd.log 13:16:37.393730Z『arbiter 触发入队（单飞串行）: sig=single-app-realdevice-retest::verify_env_blocked alert=d8fc3fb68cbb source=escalation-alert』与 13:16:37.393910Z chain-escalated（chain-1794229305527-6876be08）同秒；上一轮裁决 ledger 条目 arb-ledger-1794230148605（13:15:48Z escalate）；本 run id=arbiter-single-app-realdevice-retest-1794230197 为该签名第 4 次唤起，无新证据、无人工动作；触发 run_id=arbiter-single-app-realdevice-retest-1794230197（签名 single-app-realdevice-retest::verify_env_blocked，来源 escalation-alert）
+  - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
+  > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：escalation chain 在 escalate 终态化时对同签名加抑制窗/指数 backoff（人工消费、spec 状态变化或新证据指纹出现才解禁再派发）；或 escalate 后告警转 pending_human 态停止自动回派，仅人工/admin 显式消费后 re-arm；arbiter_rulings 计数接入派发闸（超 1 次仅累积不重派）
