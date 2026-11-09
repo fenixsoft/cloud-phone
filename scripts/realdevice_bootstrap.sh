@@ -286,8 +286,8 @@ stage_create() {
   fi
   if [[ -z "$alive_after" ]]; then
     CREATE_SHAPE="gone-during"
-    stage_end fail "CREATE 期间助手进程消失（${T_CREATE}s 无应答且进程不复存在）"
-    VERDICT_EVIDENCE+=("CREATE: ${T_CREATE}s 无应答且进程消失（pid=$HELPER_PID 曾于 PING 段存活）; 拉起日志尾: $(echo "$SPAWN_LOG" | tail -3 | tr '\n' '|')")
+    stage_end fail "CREATE 期间助手进程消失（无 OK 应答[EOF 或 ${T_CREATE}s 超时]且进程不复存在）"
+    VERDICT_EVIDENCE+=("CREATE: 无应答且进程消失（pid=$HELPER_PID 曾于 PING 段存活）; 拉起日志尾: $(echo "$SPAWN_LOG" | tail -3 | tr '\n' '|')")
     return 1
   fi
   CREATE_SHAPE="alive-mute"
@@ -314,7 +314,8 @@ collect_diagnostics() {
   # 证据行提取（原文进报告）：AVC 关联助手上下文 / am_kill 类 / crash 类
   mapfile -t EVIDENCE_AVC < <(grep -hiE 'avc: +denied' "$STAGE_DIR/dmesg-avc-kill.txt" "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | grep -iE "$HELPER_CTX_PAT" | sort -u | head -5)
   mapfile -t EVIDENCE_KILL < <(grep -hiE 'am_kill|lmkd|lowmemory|SIGKILL|[Kk]illing' "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | grep -iE "$HELPER_NICE|app_process|ShellHel[l]per" | sort -u | head -5)
-  mapfile -t EVIDENCE_CRASH < <(grep -hiE 'FATAL EXCEPTION|AndroidRuntime|Force finishing|tombstone|SIGSEGV|SIGABRT' "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | head -5)
+  # 注意：AndroidRuntime '>>>>>> START ... RuntimeInit' 是 app_process 正常拉起横幅，MUST NOT 计入 crash
+  mapfile -t EVIDENCE_CRASH < <(grep -hiE 'FATAL EXCEPTION|AndroidRuntime.*FATAL|has died|Force finishing|tombstone|SIGSEGV|SIGABRT' "$STAGE_DIR/logcat-tail-500.txt" 2>/dev/null | head -5)
   say "诊断证据: avc=${#EVIDENCE_AVC[@]} 行, kill=${#EVIDENCE_KILL[@]} 行, crash=${#EVIDENCE_CRASH[@]} 行, getenforce=${GETENFORCE:-?}"
 }
 
