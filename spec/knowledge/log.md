@@ -6,3 +6,4 @@
 > 前缀 grep；历史行禁删改。
 ## [2026-11-09 10:02 UTC+8] distill | m0-a2a-streaming-pipeline 失败：调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
 ## [2026-11-09 10:02 UTC+8] distill | client-ux-and-input-latency 失败：调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
+## [2026-11-09 10:04 UTC+8] lint | audit 体检（修 0 / 转写 0 / 待人工 0 / 过 9）
