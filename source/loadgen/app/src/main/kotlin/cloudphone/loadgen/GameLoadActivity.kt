@@ -237,9 +237,9 @@ class GameLoadActivity : Activity() {
 
 /** 高熵档位：粒子密度/噪声频率缩放（档位验收以编码器实际输出为准，参数见 uplink-report 附录 A） */
 enum class EntropyTier(val noiseFreq: Float, val particleDensity: Float) {
-    LOW(noiseFreq = 3.0f, particleDensity = 9f),
-    MID(noiseFreq = 11.0f, particleDensity = 30f),
-    HIGH(noiseFreq = 24.0f, particleDensity = 64f),
+    LOW(noiseFreq = 4.0f, particleDensity = 10f),
+    MID(noiseFreq = 18.0f, particleDensity = 44f),
+    HIGH(noiseFreq = 30.0f, particleDensity = 80f),
 }
 
 /**
