@@ -1,406 +1,82 @@
 {
-  "status": "partial",
-  "spec": "client-ui-redesign",
-  "mode": "worktree",
-  "summary": "客户端 UI 全面重构 SPEC 收工验证（13/14 完成，5.2 申报 unfinished 走 partial）。实现：①LanScanner 子网并发探测 + 首页三态 + 发现卡/档案卡动作与匹配徽章；②ManualConnectSheet 底部表单（校验/回显/持久化/旧档兼容）；③DecodeRenderActivity 全幅控制台（HUD/工具坞/档位循环重发 START_SESSION/显式旋转/截屏/BACK·HOME·RECENTS/断开）+ 会话抽屉内迁（挂起「已挂起 · 会话 #98」/恢复秒回/断开）；④SourceAppsActivity 磁贴化 + 单应用徽章与一键退出；⑤SettingsActivity 六分组 + 默认值持久化联动。模拟器实机验证全部可覆盖场景 PASS（发现/空态/表单/建档/重启持久/旧档兼容/HUD 刷新/截屏落盘 387,735B/旋转 rotation=1/档位循环控制链不断/挂起-恢复-断开/设置 fps=30、defaultTcpPort=22340 + sheet 联动/徽章渲染与退出处理器/看门狗自愈重连 sid=16·21·54）。5.2 申报 unfinished：两条 spec letter 级验收点（BACK 线级到达源端、单应用磁贴→虚拟屏出画端到端）受测试台限制（adb forward 半开黑洞——ClientSession 既有文档化现象；源端 APP_LIST 活跃会话既有约束）未在本台复现，代码/编码路径与 UI 链均验证通过，verification-report.md 已按六 requirement 块逐条对照输出（含偏差归因），待真机/稳定链路复验。验证期修复真实崩溃（Space→TextView ClassCastException）。verdict=pending（partial 申报，偏差已登记 findings）.",
-  "completed_tasks": [
-    "1.1",
-    "1.2",
-    "2.1",
-    "2.2",
-    "2.3",
-    "2.4",
-    "3.1",
-    "3.2",
-    "3.3",
-    "4.1",
-    "4.2",
-    "4.3",
-    "5.1"
-  ],
-  "implementation": {
-    "deliverables": [
-      "client/app/src/main/kotlin/cloudphone/client/ConnectActivity.kt",
-      "client/app/src/main/kotlin/cloudphone/client/DecodeRenderActivity.kt",
-      "client/app/src/main/kotlin/cloudphone/client/SourceAppsActivity.kt",
-      "client/app/src/main/kotlin/cloudphone/client/SettingsActivity.kt",
-      "client/app/src/main/kotlin/cloudphone/client/StatsView.kt",
-      "client/app/src/main/kotlin/cloudphone/client/ui/ManualConnectSheet.kt",
-      "client/app/src/main/kotlin/cloudphone/client/discovery/LanScanner.kt",
-      "client/app/src/main/res/layout/activity_connect.xml",
-      "client/app/src/main/res/layout/activity_source_apps.xml",
-      "client/app/src/main/res/layout/activity_settings.xml",
-      "client/app/src/main/res/layout/item_device_card.xml",
-      "client/app/src/main/res/layout/item_app_tile.xml",
-      "client/app/src/main/res/layout/sheet_manual_connect.xml",
-      "client/app/src/main/res/values/colors.xml",
-      "client/app/src/main/res/values/themes.xml",
-      "client/app/src/main/res/values/ids.xml",
-      "client/app/src/main/res/drawable/*（深空黑色板 card_/hud_/badge_ 样式族）",
-      "client/app/src/main/res/anim/sheet_in.xml",
-      "client/app/src/main/res/anim/sheet_out.xml",
-      "client/app/src/main/AndroidManifest.xml（ConnectActivity 置 LAUNCHER、注册 SettingsActivity）",
-      "spec/changes/client-ui-redesign/verification-report.md"
-    ],
-    "removed": [
-      "client/app/src/main/kotlin/cloudphone/client/MainActivity.kt（状态总览职责并入首页/控制台，ConnectActivity 置为 LAUNCHER）"
+ "status": "success",
+ "spec": "client-ui-redesign",
+ "mode": "worktree",
+ "summary": "恢复续做收口：上轮 13/14，唯一未完成 5.2（两条验收点受测试台限制）。本轮换道复验成功——TCP 控制链弃用 adb forward，改走 emulator 原生 redir（tcp:12400→22333，宿主连通性预检通过），彻底消除半开黑洞。实测：①BACK 线级到达：工具坞 ◀BACK 实点两次源端均收到 t2 recv action=3 sid=5（InputAction.BACK，整屏会话 sid=5）；②单应用会话级 E2E：首页发现卡「单应用」建会话→应用列表 18 磁贴真实加载→实点 LoadGen→START_SESSION(SINGLE_APP)→HelloAck→IdrRequest→虚拟屏出画（截图 452,859B）→徽章「单应用 · CloudPhone LoadGen」+退出渲染→退出→StopSession+重开整屏（shared capture ready）连接保持；③搜索过滤实机 18→1（源端可启动应用 18 个，匹配 1 个）。顺带实测 4.3 联动：设置端口 12400 落盘（onPause 兜底提交路径）→LanScanner 按 12400 扫描→发现卡 10.0.2.2:12400（扫描完成 1219ms）。14/14 勾选，status=success。遗留 pending-interaction 两项（键盘 TEXT_INPUT 协议缺口、抽屉边缘手势测试台时序）不属任务字面验收缺口，findings 登记待后续协议 SPEC/真机。verdict=success。",
+ "completed_tasks": [
+  "1.1",
+  "1.2",
+  "2.1",
+  "2.2",
+  "2.3",
+  "2.4",
+  "3.1",
+  "3.2",
+  "3.3",
+  "4.1",
+  "4.2",
+  "4.3",
+  "5.1",
+  "5.2"
+ ],
+ "verification": {
+  "rescenario_evidence_dir": ".fenix/verify-evidence/client-ui-redesign/",
+  "reverify_scenarios": [
+   {
+    "scenario_id": "back-injection-wire",
+    "status": "pass",
+    "message": "◀BACK 实点两次源端 recv InputEvent + t2 recv action=3 sid=5（21:16:29.944/21:16:31.948）",
+    "evidence": [
+     "s9-after-back.xml",
+     "源端 logcat 实录"
     ]
-  },
-  "verification": {
-    "scenarios": [
-      {
-        "scenario_id": "lan-discovery-home",
-        "kind": "ui",
-        "description": "局域网自动发现 + 首页三态（spec.md:5,21,37）：进入自动扫描、扫描中进度、发现卡（在线/lan-direct/连接/单应用）、空态（原因+手动新建+重试）、host+port 档案匹配「已保存」、档案卡连接禁用态、扫描完成 1236ms≤10s",
-        "status": "pass",
-        "assertion_results": [
-          {
-            "type": "step",
-            "pass": true,
-            "message": "扫描中态：进度+计数文案呈现（s1-scan-in-progress.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "发现卡：源端 10.0.2.2 在线 lan-direct 未连接过 + 连接/单应用两动作（s1-discovered-screenshot.png、s4-home-with-discovered.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "空态：原因说明 + ＋手动新建连接 + 重试扫描（s1-empty-state.xml、s1-empty-state-screenshot.png）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "发现卡匹配档案：「已保存 · lan-direct」「上次连接 11-09 19:23」（s5-disconnect-home.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "无响应旧档案 192.168.9.9：卡弱化 + 连接禁用（s3-old-profile-compat.xml/png）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "「扫描完成（1236ms）」≤10s（s5-disconnect-home.xml）"
-          }
-        ],
-        "screenshots": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s1-discovered-screenshot.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s1-empty-state-screenshot.png"
-        ],
-        "evidence": {
-          "failed_assertions": [],
-          "command_output": [
-            "uiautomator dump s1-*/s3-*/s4-*/s5-disconnect-home.xml"
-          ]
-        }
-      },
-      {
-        "scenario_id": "manual-connect-sheet",
-        "kind": "ui",
-        "description": "手动建档底部表单（spec.md:37）：字段布局（地址独占行/TCP+UDP 同行 22333/22334/后端三选默认 lan-direct/token 密码态/高级折叠默认 跟随本机·60·8·整屏）、空地址拦截、保存回显+持久化+重启仍在、旧档案兼容（origin 缺省手输/udpPort 缺省 22334）",
-        "status": "pass",
-        "assertion_results": [
-          {
-            "type": "step",
-            "pass": true,
-            "message": "sheet 字段与高级折叠区全呈现（s2-sheet-open.xml、s2-advanced-open.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "空主机提交：sheet 不关 + toast「请填写主机地址」（s2-empty-host-toast.png）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "保存回显卡「CESHI 10.8.0.5:22333 lan-direct token 默认 · 手输 · 11-09 18:46 连接/删除」+ prefs origin=manual udpPort=22334（s2-saved-card.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "force-stop 重启后卡片仍在（s2-after-restart.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "旧格式 JSON（无 origin/udpPort）渲染手输标签 + 22334 兜底（s3-old-profile-compat.xml/png）"
-          }
-        ],
-        "screenshots": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s2-empty-host-toast.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s3-old-compat-screenshot.png"
-        ],
-        "evidence": {
-          "failed_assertions": [],
-          "command_output": [
-            "run-as cloudphone.client cat shared_prefs/cloudphone_source_profiles.xml → origin:manual/udpPort:22334"
-          ]
-        }
-      },
-      {
-        "scenario_id": "fullscreen-console",
-        "kind": "ui",
-        "description": "全幅控制台（spec.md:57）：HUD 统计条 STATS 实时刷新、工具坞十键（含 HOME/RECENTS 预留不扩协议）、截屏落盘、档位循环重发 START_SESSION 控制链不断、显式旋转、断开回首页、会话抽屉挂起（源端保留）/恢复（秒回）/断开",
-        "status": "pass_with_deviations",
-        "assertion_results": [
-          {
-            "type": "step",
-            "pass": true,
-            "message": "控制台实机会话（1280x720@60 lan-direct attach）：cloudphone-stats 逐秒 + recv StatsMessage 实录；HUD 截图两帧（s5-console-initial/stats-refresh.png）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "工具坞坐标导出：◀BACK/●HOME·预留/▣RECENTS·预留/键盘/截屏/1080P·60/旋转/单应用/抽屉/断开 + 把手行（s5-console-initial.xml）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "截屏实点生成 screenshot-20261109-191049.png（387,735B）已归档 EV"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "键盘实点 IME 弹出（s5-keyboard-shown.png）；HOME 实点 toast 窗口 logcat 19:13:48（预留文案）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "档位循环 1080P·60→720P·60→1080P·30：每次 START_SESSION sent + HelloAck + IdrRequest 持续、控制链不断（logcat 19:21:38；s5-tier-dialog.xml/png 720P·60 标签态）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "旋转 rotation=1 横屏 + HUD 存活（s5-console-rotated.xml/png）；实现为客户端显式横竖切换，源端零调用"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "抽屉面板：会话抽屉标题 + 挂起语义文案 + 挂机列表区 + 挂起/断开（s5-drawer-open.xml/png）；挂起 → 「已挂起 · 会话 #98（源端保留）」+ 恢复观看（s5-suspended.xml/png）；恢复 → 覆盖层消失控制台回归（s5-resumed.xml）；断开 → 回首页 + 档案 upsert origin=auto（s5-disconnect-home.xml/png + prefs）"
-          },
-          {
-            "type": "step",
-            "pass": false,
-            "message": "偏差 deviation-1：BACK 线级到达未复现——客户端发送路径齐备（sendRemoteBack → InputEvent(action=BACK)，编码对称 Messages.kt:367），但本台 adb forward 半开连接为既有文档化黑洞（ClientSession 看门狗注释「InputEvent 全部黑洞化」），源端 t2 recv 未观测；看门狗 >6s 无 Pong 掐死重连 ≤1s 自愈实录 sid=16/21/54"
-          },
-          {
-            "type": "step",
-            "pass": false,
-            "message": "偏差 deviation-2：抽屉边缘手势未复现（按钮路径全可用），疑测试台合成事件 touch slop/时序，真机待验"
-          }
-        ],
-        "screenshots": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-console-initial.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/screenshot-20261109-191049.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-console-rotated.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-drawer-open.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-suspended.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-disconnect-home.png"
-        ],
-        "evidence": {
-          "failed_assertions": [
-            "BACK 线级到达（deviation-1，已登记 findings）",
-            "抽屉边缘手势（deviation-2，已登记 findings）"
-          ],
-          "command_output": [
-            "adb logcat cloudphone-client/cloudphone-source 实录（START_SESSION/HelloAck/IdrRequest/StatsMessage/t2）"
-          ]
-        }
-      },
-      {
-        "scenario_id": "app-tiles-single-app-badge",
-        "kind": "ui",
-        "description": "磁贴应用列表 + 单应用徽章（spec.md:81）：磁贴网格（占位图标+白名+图钉无包名）、搜索过滤、徽章「单应用 · <名>」+ 一键退出",
-        "status": "pass_with_deviations",
-        "assertion_results": [
-          {
-            "type": "step",
-            "pass": true,
-            "message": "页面结构：返回/标题/搜索框（按应用名称过滤…）/状态/重试 + 磁贴网格容器（s6-applist.xml/png、s6-applist-live.xml）；item_app_tile.xml 占位图标+白名+图钉（pinShortcut 沿用既有 app-shortcuts）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "搜索过滤 TextWatcher contains(ignoreCase=true) 代码验证 + 编译通过"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "徽章实机：直启控制台 mode=single → 「单应用 · LoadGen」+「退出」渲染（s7-single-badge.xml/png）；点退出 → 处理器执行 Toast 窗口 logcat 19:23:34（s7-exit-toast.png；无会话态按设计提示失败原因）"
-          },
-          {
-            "type": "step",
-            "pass": false,
-            "message": "偏差 deviation-3：单应用会话级 E2E（磁贴点选→虚拟屏出画）未复现——源端 APP_LIST 要求活跃会话（StreamService.kt:273 既有约束），本台控制链路 adb forward 半开 + 帧同步噪声反复重连，列表 3s 窗口未稳定命中"
-          }
-        ],
-        "screenshots": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s7-single-badge.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s6-applist.png"
-        ],
-        "evidence": {
-          "failed_assertions": [
-            "单应用会话级 E2E（deviation-3，已登记 findings）"
-          ],
-          "command_output": [
-            "uiautomator dump s6-*/s7-*.xml"
-          ]
-        }
-      },
-      {
-        "scenario_id": "settings-page",
-        "kind": "ui",
-        "description": "设置页（spec.md:101）：六分组、未实现行「预留」徽章、变更持久化、默认值联动新建表单与 LanScanner 端口",
-        "status": "pass",
-        "assertion_results": [
-          {
-            "type": "step",
-            "pass": true,
-            "message": "六分组全呈现：外观（主题/深色模式 预留）/串流档位默认值（分辨率 跟随本机·720p·1080p、帧率 30·60、码率 4·8·16·20）/传输偏好（TCP 22333/UDP 22334）/触控输入（预留）/安全（预留）/关于（s8-settings.xml/png）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "帧率改 30 → prefs fps=30；TCP 端口改 22340 失焦提交 → prefs defaultTcpPort=22340（s8-settings-changed.png + prefs dump）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "新建 sheet 默认端口联动：TCP 输入框显示 22340（s8-sheet-uses-setting-defaults.xml/png；ManualConnectSheet.kt:72-76 读 SettingsPrefs）"
-          }
-        ],
-        "screenshots": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s8-settings.png",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s8-sheet-defaults.png"
-        ],
-        "evidence": {
-          "failed_assertions": [],
-          "command_output": [
-            "run-as cloudphone.client cat shared_prefs/cloudphone_settings.xml → fps:30/defaultTcpPort:22340/defaultUdpPort:22334"
-          ]
-        }
-      },
-      {
-        "scenario_id": "build-and-static",
-        "kind": "build",
-        "description": "构建与静态验证（5.1）：assembleDebug 编译、lint 限制归因、新旧档案兼容、验证期崩溃修复",
-        "status": "pass",
-        "assertion_results": [
-          {
-            "type": "step",
-            "pass": true,
-            "message": "./gradlew :app:assembleDebug exit 0（BUILD SUCCESSFUL）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "lintDebug 失败为 AGP-lint × 复合构建（includeBuild ../protocol）既有限制：git stash 基线复跑同样失败，非本 SPEC 引入；替代 :app:compileDebugKotlin --rerun-tasks 全量重编，警告仅平台 DialogFragment 弃用（有意为之）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "新旧档案兼容实测（s3-old-profile-compat.xml/png）"
-          },
-          {
-            "type": "step",
-            "pass": true,
-            "message": "验证期发现并修复真实崩溃：ClassCastException Space→TextView（ManualConnectSheet.wireSeg + SettingsActivity 同构），提交 becba88"
-          }
-        ],
-        "screenshots": [],
-        "evidence": {
-          "failed_assertions": [],
-          "command_output": [
-            "gradle assembleDebug/compileDebugKotlin 输出；git stash 基线 lint 对照"
-          ]
-        }
-      }
-    ],
-    "deviations": [
-      {
-        "id": "deviation-1",
-        "kind": "acceptance-deviation",
-        "title": "BACK 注入线级到达未在本测试台复现",
-        "detail": "客户端发送路径齐备（dockButton ◀BACK → sendRemoteBack → ControlMessage.InputEvent(action=BACK, sessionId=currentSessionId)，编码与解码对称），UI 点击链可用；但源端 logcat 未观测到 t2 recv/recv InputEvent。根因归档：本台 adb forward 半开连接为既有文档化黑洞（ClientSession.kt 看门狗注释：写入 0ms 完成但对端永不到达、InputEvent 全部黑洞化；同链路上 IdrRequest/StatsMessage 部分窗口亦受扰）。控制链看门狗（>6s 无 Pong 掐死重连 ≤1s）在多轮重连中自愈（sid=16/21/54 实录），resilience 语义成立。真机/稳定链路复验留待后续。",
-        "evidence": [
-          "client/app/src/main/kotlin/cloudphone/client/ConnectActivity.kt（看门狗注释与重连实现）",
-          "protocol/src/main/kotlin/cloudphone/protocol/Messages.kt:367（InputEvent 编码对称）"
-        ]
-      },
-      {
-        "id": "deviation-2",
-        "kind": "pending-interaction",
-        "title": "控制台抽屉边缘唤出手势未在本台复现（按钮路径可用）",
-        "detail": "自绘边缘唤出条（24dp）+ 平移动画已实现；工具坞「抽屉」按钮路径全链验证通过（面板内容/挂起/恢复/断开全 PASS）。慢速边缘拖拽（1070→500 @1.2s）未唤出，疑与测试台 input swipe 合成事件的 touch slop/时序有关，真机待验。",
-        "evidence": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-drawer-open.xml"
-        ]
-      },
-      {
-        "id": "deviation-3",
-        "kind": "acceptance-deviation",
-        "title": "单应用会话级 E2E 未复现（UI 链与徽章/退出已验证）",
-        "detail": "源端 APP_LIST 枚举要求活跃会话（StreamService.kt:273 既有约束 ignored (no active session)），本台控制链路在 adb forward 半开 + P2pMigrate 帧同步噪声（客户端 3248 条误解析实录）下反复重连，3s 列表窗口未稳定命中；磁贴点选→SINGLE_APP 虚拟屏链路依赖列表数据，故会话级未复现。磁贴页结构、过滤、openApp 路由（startSession SINGLE_APP → extras mode=single/appName/pkg → DecodeRenderActivity）、徽章渲染与退出处理器均验证通过。",
-        "evidence": [
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s6-applist-live.xml",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s7-single-badge.png"
-        ]
-      },
-      {
-        "id": "deviation-4",
-        "kind": "pending-interaction",
-        "title": "键盘停靠按钮仅本地 IME 焦点切换（协议无 TEXT_INPUT）",
-        "detail": "spec 允许「键盘唤起」入坞；协议 INPUT_EVENT 仅 DOWN/UP/MOVE/BACK 四值（本 SPEC 边界禁止扩协议/改源端），M0 输入链无文本注入通道。停靠「键盘」按钮实现为本地 IME 焦点切换（已验证弹出 s5-keyboard-shown.png），无法向源端注入文本；文本输入留待后续协议 SPEC（m3-audio-clipboard-textinput 方向）。",
-        "evidence": [
-          "protocol/src/main/kotlin/cloudphone/protocol/Messages.kt:57-63（InputAction 四值）",
-          "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s5-keyboard-shown.png"
-        ]
-      }
+   },
+   {
+    "scenario_id": "single-app-session-e2e",
+    "status": "pass",
+    "message": "磁贴 18 项加载→LoadGen 点选→SINGLE_APP 会话（HelloAck+IdrRequest）→虚拟屏出画→徽章+退出→StopSession+重开整屏连接保持",
+    "evidence": [
+     "s9-applist-live.xml",
+     "s9-single-badge.xml",
+     "s9-single-app-console.png",
+     "s9-after-exit.xml"
     ]
-  },
-  "findings": [
-    {
-      "id": "client-ui-redesign-keyboard-dock-textinput",
-      "title": "键盘停靠按钮仅本地 IME 焦点切换（协议无 TEXT_INPUT）",
-      "detail": "INPUT_EVENT 仅 DOWN/UP/MOVE/BACK；文本注入通道缺失，本 SPEC 边界不扩协议。真机文本输入场景需后续协议 SPEC 支撑。",
-      "blocking": false,
-      "type": "pending-interaction",
-      "task": "3.1"
-    },
-    {
-      "id": "client-ui-redesign-drawer-edge-gesture",
-      "title": "控制台抽屉边缘唤出手势测试台未复现",
-      "detail": "按钮路径全可用；边缘条已实现，疑合成事件 touch slop 时序，真机待验。",
-      "blocking": false,
-      "type": "pending-interaction",
-      "task": "3.2"
-    },
-    {
-      "id": "client-ui-redesign-single-app-session-e2e",
-      "title": "单应用会话级 E2E 受源端 APP_LIST 活跃会话约束 + 测试台控制链噪声限制",
-      "detail": "UI 链/路由/徽章/退出已验证；会话级复现需稳定控制链或真机。",
-      "blocking": false,
-      "type": "acceptance-deviation",
-      "task": "5.2",
-      "literal": "spec.md:81 「点选磁贴 SHALL 打开单应用画面（虚拟屏单应用会话）」",
-      "substitute": "磁贴页结构/过滤/openApp 路由（startSession SINGLE_APP→extras mode=single/appName/pkg→DecodeRenderActivity）、徽章「单应用 · LoadGen」渲染与一键退出处理器均实机验证通过；会话级虚拟屏出画受源端 APP_LIST 活跃会话既有约束（StreamService.kt:273）+ 本台控制链噪声限制未复现",
-      "evidence": "/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s6-applist-live.xml；/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s7-single-badge.png；/root/cloud-phone/.fenix/verify-evidence/client-ui-redesign/s7-exit-toast.png"
-    },
-    {
-      "id": "client-ui-redesign-back-injection-wire",
-      "title": "BACK 注入线级到达受 adb forward 半开黑洞限制（既有文档化现象）",
-      "detail": "发送路径与编码对称齐备；看门狗自愈实录成立；真机复验留待后续。",
-      "blocking": false,
-      "type": "acceptance-deviation",
-      "task": "5.2",
-      "literal": "spec.md:57 「BACK 经既有 INPUT_EVENT InputAction.BACK 注入源端」",
-      "substitute": "发送路径齐备（dockButton ◀BACK→sendRemoteBack→ControlMessage.InputEvent(action=BACK)）且编码与解码对称（Messages.kt:367-374）；本台 adb forward 半开连接为既有文档化黑洞（ClientSession 看门狗注释「InputEvent 全部黑洞化」），源端 t2 recv 未观测；控制链看门狗 >6s 无 Pong 掐死重连 ≤1s 自愈实录 sid=16/21/54，真机复验留待后续",
-      "evidence": "client/app/src/main/kotlin/cloudphone/client/ConnectActivity.kt；protocol/src/main/kotlin/cloudphone/protocol/Messages.kt"
-    }
+   },
+   {
+    "scenario_id": "tile-search-filter",
+    "status": "pass",
+    "message": "搜索输入 load→18 磁贴过滤为 1（CloudPhone LoadGen），状态行「匹配 1 个」",
+    "evidence": [
+     "s9-filter-load.xml",
+     "s9-filter-live.png"
+    ]
+   },
+   {
+    "scenario_id": "settings-discovery-linkage",
+    "status": "pass",
+    "message": "设置默认 TCP 12400 落盘→LanScanner 扫 12400→发现卡 10.0.2.2:12400，扫描完成 1219ms",
+    "evidence": [
+     "s9-settings-port12400.xml",
+     "s9-home-discovered-12400.xml"
+    ]
+   }
   ],
-  "unfinished": [
-    "5.2"
-  ]
+  "report": "spec/changes/client-ui-redesign/verification-report.md（含复验轮章节）"
+ },
+ "findings": [
+  {
+   "type": "pending-interaction",
+   "task": "3.1",
+   "element": "控制台工具坞「键盘」按钮",
+   "current": "协议 INPUT_EVENT 仅 DOWN/UP/MOVE/BACK 四值，无 TEXT_INPUT 消息；本 SPEC 边界禁止扩协议，按钮实现为本地 IME 焦点切换，无法向源端注入文本",
+   "suggestion": "后续协议 SPEC（m3-audio-clipboard-textinput 方向）增补 TEXT_INPUT 消息后接线文本注入"
+  },
+  {
+   "type": "pending-interaction",
+   "task": "3.2",
+   "element": "控制台抽屉边缘唤出手势（24dp 边缘条）",
+   "current": "边缘条+平移动画已实现，工具坞「抽屉」按钮路径全链可用；测试台 input swipe 合成事件未复现唤出（疑 touch slop/时序）",
+   "suggestion": "真机复验边缘手势；如仍不达可调大边缘命中区或延长 slop 容忍"
+  }
+ ]
 }
