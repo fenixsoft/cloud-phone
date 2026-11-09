@@ -74,6 +74,21 @@
 - 新旧档案兼容：老格式 JSON（无 origin/udpPort）→ 渲染「手输」标签 + 22334 兜底（EV/s3-old-profile-compat.xml/png）
 - 验证期发现并修复真实崩溃：`ClassCastException: Space cannot be cast to TextView`（ManualConnectSheet.wireSeg/SettingsActivity 同构缺陷）→ filterIsInstance 修复，提交 becba88
 
+## 复验轮（2026-11-09 21:05–21:18，恢复续做 run：换测试台路径收口两条受限偏差）
+
+上轮两条 spec letter 级受限点的根因均指向 **adb forward 半开黑洞**（ClientSession 看门狗注释既有现象）。本轮换道：**TCP 控制链不再走 adb forward**，改用 emulator 原生端口重定向（`adb emu redir add tcp:12400→22333`，宿主侧经 `127.0.0.1:12400` 连通性预检通过）；客户端设置页把默认 TCP 端口改为 12400（顺带实测 4.3 联动：设置落盘 → LanScanner 按 12400 扫描 → 发现卡 `10.0.2.2:12400`，扫描完成 1219ms）。复验结果：
+
+| 上轮受限点 | 本轮结果 | 证据 |
+|---|---|---|
+| **deviation-1：BACK 线级到达源端** | **PASS（线级实测）** | 控制台工具坞 ◀BACK 实点两次，源端均收到：`recv InputEvent` + `t2 recv action=3 sid=5`（21:16:29.944 / 21:16:31.948；action=3=InputAction.BACK，sid=5 整屏会话）。EV/s9-after-back.xml + 源端 logcat 实录 |
+| **deviation-3：单应用会话级 E2E（磁贴→虚拟屏出画）** | **PASS（会话级实测）** | 首页发现卡「单应用」→ 建会话 → 应用列表 **18 个磁贴真实加载**（EV/s9-applist-live.xml，源端 `app list response count=18` 既有日志链）；实点 LoadGen 磁贴 → `START_SESSION sent (mode=SINGLE_APP pkg=cloudphone.loadgen sid=0)` → HelloAck → `recv IdrRequest` → 控制台徽章 **「单应用 · CloudPhone LoadGen」+「退出」**渲染（EV/s9-single-badge.xml）+ 虚拟屏出画截图（EV/s9-single-app-console.png，452,859B）；实点退出 → `StopSession` + `StartSession`（整屏）→ `shared capture ready 1080x2400@30/8000kbps` + HelloAck，徽章消失、连接保持（EV/s9-after-exit.xml + 双端 logcat） |
+| 搜索过滤（上轮仅代码级） | **PASS（实机）** | 列表页搜索框输入 `load` → 18 磁贴过滤为 1（`CloudPhone LoadGen`），状态行「源端可启动应用 18 个，匹配 1 个」（EV/s9-filter-load.xml / s9-filter-live.png） |
+
+### 复验轮发现（补充归因，不改变结论）
+
+1. **单应用首点瞬时失败（1ms 秒拒）→ 重试即通**：首点 LoadGen 时源端 HelloAck 1ms 秒回 REJECT——ShellBootstrap 缓存的陈旧控制 socket 写入即断（IOException → `closeControl` 自愈）；第二次点击 85ms 真实 shell 往返成功（CREATE→START→帧流）。既有代码自愈语义成立，客户端「打开失败：<原因>」Toast 路径同时得到覆盖。伴随一次 `vd-frame-17 corrupt record` 记录级解析告警（既有注释「不得崩进程」语义，会话未中断）。
+2. **上轮 deviation-2（抽屉边缘手势）与 deviation-4（键盘 TEXT_INPUT 缺口）维持原状**：测试台合成事件时序与协议边界问题，非本轮换道可解，登记维持 pending-interaction。
+
 ## 结论
 
-六 requirement 块中：发现/首页/空态表单/设置页全 PASS；控制台主体（HUD/工具坞/档位/旋转/抽屉/挂起恢复断开）全 PASS；磁贴列表 UI 结构与徽章/退出链 PASS。两条 spec letter 级验收点（BACK 线级到达源端、单应用磁贴→虚拟屏出画端到端）受测试台限制未复现，对应 findings（acceptance-deviation，task=5.2）已登记。**本轮按框架硬门诚实申报：status=partial，13/14 任务完成，5.2 列入 unfinished 待真机/稳定链路复验后收口。**
+六 requirement 块中：发现/首页/空态表单/设置页全 PASS；控制台主体（HUD/工具坞/档位/旋转/抽屉/挂起恢复断开）全 PASS；磁贴列表 UI 结构与徽章/退出链 PASS。**复验轮（见上节）换道 emulator redir 通道后，上轮两条受限验收点均已线级实测 PASS：BACK 注入到达源端（`t2 recv action=3 sid=5` 实录）、单应用磁贴→虚拟屏出画端到端（18 磁贴加载→SINGLE_APP 会话→徽章渲染→退出回整屏连接保持）**；搜索过滤由代码级升级为实机证据。剩余 pending-interaction 两项（键盘 TEXT_INPUT 协议缺口、抽屉边缘手势测试台时序）不属任务字面验收缺口，已登记 findings 待后续协议 SPEC / 真机复验。**status=success，14/14 任务完成。**
