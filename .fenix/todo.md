@@ -108,3 +108,9 @@
   - 证据：commit d94a5dd（scripts/natlab_run.py mode-only 修复）仅存在于分支 fenix/p2p-crossnet-traversal-1794215453；master b325b72 ls-tree 该文件=100644、主树工作区实测 -rw-r--r--、重修 worktree 基线同 100644（git 两源互证，本 run fresh 复核）；.fenix/code-review/fix-progress.json 无本批跟踪条目；触发 run_id=arbiter-p2p-crossnet-traversal-1794216592（签名 p2p-crossnet-traversal::impl_budget_exhausted，来源 escalation-alert）
   - 调查评估：触发信号 impl_budget_exhausted（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：fastlane 修复成功后登记 tracked pending-merge 条目（unfreeze/下一 checkpoint 幂等消费合回）；或重验/rework 派发基线自动并载对应未合回修复分支；合回被 WIP 门/frozen 阻断时在 STATE 面留可见注记
+- **[arbiter:single-a] arbiter/admin unfreeze→testing 不入队 verifier（_status_to_event 缺 testing 键，30min full_scan 兜底与 15min 孤儿探测节奏差）**
+  - 影响：每轮 env 阻塞解冻/复位都不直接派发重验，必先烧一个 orphaned_state/admin run 才可能入队（11:31Z 事故与本轮空转环两度复现），拉长冻结恢复链路、空耗 admin token；处置链在环境已修复时无法自然收敛
+  - 证据：.fenix/admin_disposition-admin-single-app-realdevice-retest-1794224827.json 代码级定位（core/pm_engine `_status_to_event` 无 testing 键、`_recover_testing` 挂 30 分钟周期 full_scan）；fenixd.log 11:31:02Z 前序 Arbiter unfreeze→testing 后零派发、11:47:07Z orphaned_state 成条；11:54:35.950Z 与 12:02:53.868Z 两次 admin_monitor「verifier 入队重验」复位行均无 state_machine 落盘与实际派发（_judge_real_dispatches 恒 2）；触发 run_id=arbiter-single-app-realdevice-retest-1794225773（签名 single-app-realdevice-retest::verify_env_blocked，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 verify_env_blocked（spec=single-app-realdevice-retest）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: probe-only-happy-path-ok、mirror-limit-fault-injection-repro
+  > [成本参考] 重新出题成本：累计 费用未回传 / 1.0M tokens。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：为 `_status_to_event` 增补 testing→verify 入队事件，使显式解冻同步派发 verifier；或孤儿探测对「testing 且无在飞 verifier」的 spec 直接入队重验而非仅告警 Admin
