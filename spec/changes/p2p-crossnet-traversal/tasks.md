@@ -65,3 +65,13 @@
 - [x] 5.1 docs/protocol.md：v1 协议字段表 + 协商扩展时序（老端兼容矩阵）+ 加密帧格式（AAD/tag/nonce 布局）+ token 拒绝错误码
 - [x] 5.2 docs/device-notes.md 增补：真机跨网打洞步骤（蜂窝/办公网对家庭宽带，成功判定=连接页显示 P2P 直连非 degraded）、加密开关位置说明、natlab 结论「实验室口径」标注
 - [x] 5.3 verification-report：加密往返/重放/兼容/开销单测结果、1080p mid 档加密开/关性能对比（fps/码率/RTT 差值）、natlab 3×3 矩阵成功率表、开关关闭线路字节回归对比
+
+## 验证修复（原地打回第 1 轮）
+
+### 上轮实现结论（自动携带，来自上一轮 implementer 收工结论）
+
+恢复 run：收编遗产分支 fenix/p2p-crossnet-traversal-1794197291 全部 16 任务已提交成果至新基线（遗产基于旧基线，整树合并会反向删除 client-ui-redesign/gaming-uplink 文件，故按文件收编：无漂移交付件直接 checkout，四个基线漂移文件 LanDirectBackend/StreamService/ConnectActivity/device-notes 三方合入；device-notes 冲突解法=保留基线 §9+§2.3，本 SPEC 真机手册重编号 §10 并同步修正 §8.x 交叉引用）。交付面：CryptoCodec AES-128-GCM 片级 AEAD+HKDF 方向子钥+512 重放窗口、Hello/HelloAck 可选协商块（不 bump 版本，老端回落 none）、四后端加密接入、多候选探测+symmetric 端口预测≤64+P2P_MIGRATE 端点迁移、StreamService/连接页加密开关与协商显示、natlab 双 netns 三档 NAT 验证床（setup/run/perf 三脚本）、docs/protocol.md+device-notes §10+verification-report、docs/natlab-matrix.json 实测数据。验证：bin/run_full_suite.py --timeout 3600 四阶段全 PASS；protocol 全量单测 70/70（含 cloudphone.transport.* 加密/打洞套件）；natlab 实证随档（主树 .fenix/verify-evidence/p2p-crossnet-traversal/natlab-noadb-run.{json,log}、docs/natlab-m
+
+- [ ] 先复核失败有效性：逐条核对 `spec/changes/p2p-crossnet-traversal/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
+- [ ] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
+- [ ] 修复后重跑验证确认通过
