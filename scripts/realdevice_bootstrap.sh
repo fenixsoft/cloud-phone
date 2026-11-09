@@ -177,8 +177,9 @@ helper_alive() {  # 助手进程行（ps NAME 列 = nice-name），空串=不存
   adb_q "ps -A 2>/dev/null | grep -F '$HELPER_NICE' | grep -v grep | head -1"
 }
 
-kill_stale() {  # 清理残留助手（端口 22340 占用会误判新 dex）；[x] 技巧规避查询 shell 自匹配
-  adb_q "pkill -f 'ShellHel[p]er' 2>/dev/null" >/dev/null
+kill_stale() {  # 清理残留助手（22340 占用会误判新 dex）。注意 --nice-name 使 /proc/<pid>/cmdline
+                # 仅剩 nice-name 本身（实测），故按 nice-name 匹配；[r] 技巧规避查询 shell 自匹配
+  adb_q "pkill -f 'cloudphone-helpe[r]' 2>/dev/null" >/dev/null
   sleep 1
 }
 
@@ -343,8 +344,130 @@ classify_failure() {
       ;;
   esac
 }
-write_json()           { : ; }                              # 3.2
-print_report()         { : ; }                              # 3.2/3.3/4.1
+# ── 3.2 JSON 摘要落盘（python3 组装保证合法转义；缺 python3 时降级最小摘要）──
+write_json() {
+  local s
+  : >"$STAGE_DIR/stages.tsv"
+  for s in PUSH SPAWN PING CREATE; do
+    [[ -n "${STAGE_STATUS[$s]:-}" ]] && printf '%s\t%s\t%s\t%s\n' "$s" "${STAGE_STATUS[$s]}" "${STAGE_MS[$s]:-0}" "${STAGE_DETAIL[$s]:-}" >>"$STAGE_DIR/stages.tsv"
+  done
+  printf '%s\n' "${VERDICT_EVIDENCE[@]}" >"$STAGE_DIR/verdict-evidence.txt" 2>/dev/null || : >"$STAGE_DIR/verdict-evidence.txt"
+  printf '%s\n' "${EVIDENCE_AVC[@]}"    >"$STAGE_DIR/evidence-avc.txt"    2>/dev/null || : >"$STAGE_DIR/evidence-avc.txt"
+  printf '%s\n' "${EVIDENCE_KILL[@]}"   >"$STAGE_DIR/evidence-kill.txt"   2>/dev/null || : >"$STAGE_DIR/evidence-kill.txt"
+  printf '%s\n' "${EVIDENCE_CRASH[@]}"  >"$STAGE_DIR/evidence-crash.txt"  2>/dev/null || : >"$STAGE_DIR/evidence-crash.txt"
+  if ! command -v python3 >/dev/null; then
+    # 降级：最小合法 JSON（verdict/serial 均为受限字符集 token）
+    printf '{"schema":"realdevice-probe-report/1","verdict":"%s","serial":"%s","mode":"%s","diagnostics_dir":"%s"}\n' \
+      "$VERDICT" "$SERIAL" "$MODE" "$STAGE_DIR" >"$JSON_PATH"
+    warn "python3 缺失，JSON 为最小摘要（诊断侧车文件在 $STAGE_DIR/）"
+    return 0
+  fi
+  SERIAL="$SERIAL" MODE="$MODE" VERDICT="$VERDICT" JSON_PATH="$JSON_PATH" STAGE_DIR="$STAGE_DIR" \
+  ENV_RELEASE="$ENV_RELEASE" ENV_SDK="$ENV_SDK" ENV_ABI="$ENV_ABI" ENV_TYPE="$ENV_TYPE" \
+  GETENFORCE="$GETENFORCE" ID_LINE="$ID_LINE" HELPER_PID="$HELPER_PID" CREATED_DISPLAY="$CREATED_DISPLAY" \
+  CREATE_SHAPE="$CREATE_SHAPE" FAIL_STAGE="$FAIL_STAGE" PONG_LINE="$PONG_LINE" CAPS_LINE="$CAPS_LINE" \
+  T_PUSH="$T_PUSH" T_SPAWN="$T_SPAWN" T_PING="$T_PING" T_CREATE="$T_CREATE" \
+  CREATE_W="$CREATE_W" CREATE_H="$CREATE_H" CREATE_DPI="$CREATE_DPI" \
+  python3 - <<'PYEOF'
+import datetime, json, os, re
+sd = os.environ["STAGE_DIR"]
+def read(f):
+    p = os.path.join(sd, f)
+    if not os.path.exists(p): return []
+    return [l.rstrip("\n") for l in open(p, encoding="utf-8", errors="replace") if l.strip()]
+def tail(f, n=10):
+    ls = read(f)
+    return "\n".join(ls[-n:])
+stages = {}
+for line in read("stages.tsv"):
+    parts = line.split("\t")
+    if len(parts) >= 4:
+        stages[parts[0]] = {"status": parts[1], "duration_ms": int(parts[2] or 0), "detail": parts[3]}
+props, getenforce = {}, ""
+for l in read("build-props-selinux.txt"):
+    if l.startswith("getenforce:"): getenforce = l.split(":", 1)[1].strip()
+    else:
+        m = re.match(r"\[([^\]]+)\]: \[([^\]]*)\]", l)
+        if m: props[m.group(1)] = m.group(2)
+report = {
+    "schema": "realdevice-probe-report/1",
+    "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+    "serial": os.environ["SERIAL"],
+    "mode": os.environ["MODE"],
+    "verdict": os.environ["VERDICT"],
+    "verdict_evidence": read("verdict-evidence.txt"),
+    "fail_stage": os.environ.get("FAIL_STAGE", "") or None,
+    "stages": stages,
+    "timeouts_seconds": {k: int(os.environ[k]) for k in ("T_PUSH", "T_SPAWN", "T_PING", "T_CREATE")},
+    "create_probe": {
+        "width": int(os.environ["CREATE_W"]), "height": int(os.environ["CREATE_H"]),
+        "dpi": int(os.environ["CREATE_DPI"]),
+        "display_id": os.environ.get("CREATED_DISPLAY") or None,
+        "shape": os.environ.get("CREATE_SHAPE", ""),
+    },
+    "device": {
+        "android_release": os.environ.get("ENV_RELEASE", ""),
+        "sdk": os.environ.get("ENV_SDK", ""),
+        "abi": os.environ.get("ENV_ABI", ""),
+        "build_type": os.environ.get("ENV_TYPE", ""),
+        "selinux": os.environ.get("GETENFORCE", "") or getenforce,
+        "id": os.environ.get("ID_LINE", ""),
+    },
+    "build_props": props,
+    "helper": {
+        "pid": os.environ.get("HELPER_PID", "") or None,
+        "pong": os.environ.get("PONG_LINE", ""),
+        "caps": os.environ.get("CAPS_LINE", ""),
+        "spawn_log_tail": tail("helper-spawn-log.txt"),
+    },
+    "diagnostics": {
+        "dir": sd,
+        "files": sorted(os.listdir(sd)) if os.path.isdir(sd) else [],
+        "avc_denied": read("evidence-avc.txt"),
+        "am_kill_like": read("evidence-kill.txt"),
+        "crash_like": read("evidence-crash.txt"),
+    },
+    "next_steps": "按 docs/realdevice-retest-checklist.md 执行真机重测检查表；执行结果回写 docs/device-notes.md（§4/§8）",
+}
+with open(os.environ["JSON_PATH"], "w", encoding="utf-8") as f:
+    json.dump(report, f, ensure_ascii=False, indent=2)
+print(f"[realdevice] JSON 摘要已落盘: {os.environ['JSON_PATH']}（诊断包: {sd}/）")
+PYEOF
+}
+
+# ── 3.2 人读报告（stdout）+ 3.3 构建形态分叉 + 4.1 网络指引 ────────────
+verdict_explains() {
+  case "$VERDICT" in
+    OK)                say "结论解读: 助手四段全链可用（单应用模式基础就绪）→ 下一步按 docs/realdevice-retest-checklist.md §2『单应用会话』逐项验证" ;;
+    MIRROR_LIMIT)      say "结论解读: §2.1 特征——PING 正常、CREATE 段进程被静默杀：镜像/策略限制而非代码缺陷 → 检查表 §1『shell 助手』项，按失败动作抓 sepolicy AVC 复核" ;;
+    SELINUX_DENIED)    say "结论解读: sepolicy 拒绝 → 依据上方 AVC 行排查策略域（su:s0 / platform_app 差异），检查表 §1『shell 助手』失败动作" ;;
+    SHELL_UNAVAILABLE) say "结论解读: app_process 拉起即失败（user 版限制特征）→ 单应用模式不可用，保留 FULLSCREEN（MediaProjection）降级路径；检查表 §1『shell 助手』" ;;
+    NO_DEVICE)         say "结论解读: 无在线设备 → 确认 adb devices 与 USB/WiFi 调试连接后重跑" ;;
+    *)                 say "结论解读: 证据不充分 → 人工分析诊断包 $STAGE_DIR/（logcat 尾/dmesg AVC/getenforce/props/id）" ;;
+  esac
+}
+
+print_report() {
+  local s e
+  echo ""
+  echo "════════ 真机接入分段诊断报告 ════════"
+  echo "serial: $SERIAL  mode: $MODE  android: ${ENV_RELEASE:-?}(api${ENV_SDK:-?})  abi: ${ENV_ABI:-?}  build: ${ENV_TYPE:-?}"
+  echo "分段结论:"
+  for s in PUSH SPAWN PING CREATE; do
+    [[ -n "${STAGE_STATUS[$s]:-}" ]] && printf '  %-7s %-5s (%sms) %s\n' "$s" "${STAGE_STATUS[$s]}" "${STAGE_MS[$s]:-0}" "${STAGE_DETAIL[$s]:-}"
+  done
+  echo "── 总结论: $VERDICT"
+  for e in "${VERDICT_EVIDENCE[@]}"; do echo "  证据: $e"; done
+  verdict_explains
+  build_type_notes
+  network_guidance
+  echo "════════ 报告结束 ════════"
+}
+
+# ── 3.3 user/userdebug 分叉提示（待实现）──────────────────────────────
+build_type_notes() { : ; }
+# ── 4.1 网络通路指引（待实现）────────────────────────────────────────
+network_guidance() { : ; }
 
 cleanup() { [[ -n "$FWD_PORT" ]] && adb -s "$SERIAL" forward --remove "tcp:$FWD_PORT" >/dev/null 2>&1; return 0; }
 
