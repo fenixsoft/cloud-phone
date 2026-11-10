@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudPhone for Windows — 串流控制台（原型）</title>
+<style>
+:root{
+  --bg:#06080c; --surface:#141922; --surface-2:#1b2230; --surface-3:#232c3d;
+  --border:rgba(255,255,255,.07); --border-2:rgba(255,255,255,.12);
+  --text:#e8edf4; --text-dim:#8b95a7; --text-faint:#5a6478;
+  --accent:#4f8cff; --accent-2:#22d3ee; --ok:#34d399; --warn:#fbbf24; --danger:#f87171;
+  --r-sm:8px; --r-md:12px; --r-lg:16px;
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px;
+  --mono:'JetBrains Mono','Cascadia Code',Consolas,monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.proto-banner{background:repeating-linear-gradient(45deg,#3a2f0e,#3a2f0e 12px,#453a12 12px,#453a12 24px);border-bottom:1px solid var(--warn);color:#fde68a;font-size:12px;padding:5px 16px;text-align:center;letter-spacing:.05em;flex-shrink:0;z-index:60}
+.titlebar{display:flex;align-items:center;height:34px;background:#04060a;border-bottom:1px solid var(--border);padding-left:12px;user-select:none;flex-shrink:0;z-index:60}
+.titlebar .app{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim)}
+.titlebar .logo{width:15px;height:15px;border-radius:4px;background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.mode-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(79,140,255,.12);border:1px solid rgba(79,140,255,.4);color:var(--accent-2);font-size:11px;border-radius:999px;padding:2px 10px;cursor:pointer}
+.titlebar .win-btns{margin-left:auto;display:flex;height:100%}
+.titlebar .win-btns button{width:42px;height:100%;background:none;border:none;color:var(--text-dim);font-size:12px;cursor:pointer}
+.titlebar .win-btns button.close:hover{background:#c0392b;color:#fff}
+/* 视口 */
+.viewport{flex:1;position:relative;display:flex;align-items:center;justify-content:center;background:
+  radial-gradient(1200px 500px at 50% -10%,rgba(79,140,255,.07),transparent 60%),var(--bg);overflow:hidden;min-height:0}
+/* 假的云端画面（letterbox 16:9 示例，实际按源端输出等比适配） */
+.screen{aspect-ratio:16/9;height:88%;max-width:94%;border-radius:6px;box-shadow:0 0 0 1px var(--border-2),0 24px 80px rgba(0,0,0,.6);position:relative;overflow:hidden;
+  background:linear-gradient(160deg,#1a2740 0%,#0e1a2e 45%,#101b10 100%)}
+.screen .statusbar{position:absolute;top:0;left:0;right:0;height:22px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;font-size:10px;color:rgba(255,255,255,.75);background:rgba(0,0,0,.25)}
+.screen .scene{position:absolute;inset:22px 0 0;display:flex;align-items:center;justify-content:center}
+.scene .game-title{font-size:26px;font-weight:700;letter-spacing:.2em;color:rgba(255,255,255,.85);text-shadow:0 2px 24px rgba(79,140,255,.5)}
+.scene .game-sub{position:absolute;bottom:24px;width:100%;text-align:center;font-size:11px;color:rgba(255,255,255,.35);letter-spacing:.3em}
+.scene .crosshair{position:absolute;width:14px;height:14px;border:2px solid rgba(255,255,255,.8);border-radius:50%;left:50%;top:48%;transform:translate(-50%,-50%);box-shadow:0 0 12px rgba(255,255,255,.4)}
+.screen .cursor{position:absolute;width:22px;height:22px;left:58%;top:42%;z-index:5;filter:drop-shadow(0 1px 3px rgba(0,0,0,.6))}
+/* HUD */
+.hud{position:absolute;top:14px;left:14px;display:flex;gap:8px;align-items:center;z-index:20}
+.hud .pill{display:flex;align-items:center;gap:6px;background:rgba(10,14,20,.72);backdrop-filter:blur(8px);border:1px solid var(--border-2);border-radius:999px;padding:4px 12px;font-family:var(--mono);font-size:11.5px;color:var(--text-dim)}
+.hud .pill b{color:var(--text);font-weight:500}
+.hud .pill .dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.hud .pill.warn .dot{background:var(--warn)}
+.degraded{position:absolute;top:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:8px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.4);color:var(--warn);font-size:11.5px;border-radius:999px;padding:4px 14px;z-index:20;backdrop-filter:blur(8px)}
+/* 抽屉 */
+.drawer-tab{position:absolute;right:0;top:50%;transform:translateY(-50%);writing-mode:vertical-rl;background:rgba(10,14,20,.8);border:1px solid var(--border-2);border-right:none;border-radius:10px 0 0 10px;padding:14px 6px;font-size:11px;color:var(--text-dim);cursor:pointer;z-index:25;letter-spacing:.15em}
+.drawer{position:absolute;right:12px;top:50%;transform:translateY(-50%);width:230px;background:rgba(13,18,26,.92);backdrop-filter:blur(12px);border:1px solid var(--border-2);border-radius:var(--r-lg);padding:var(--sp-4);z-index:30;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+.drawer h3{font-size:13px;font-weight:600;margin-bottom:var(--sp-3);display:flex;align-items:center;gap:8px}
+.drawer h3 .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 rgba(52,211,153,.4);animation:pulse 2s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(52,211,153,.4)}70%{box-shadow:0 0 0 6px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+.drawer .info{font-size:12px;color:var(--text-dim);display:flex;flex-direction:column;gap:6px;margin-bottom:var(--sp-4)}
+.drawer .info b{color:var(--text);font-weight:500;font-family:var(--mono);font-size:11.5px}
+.drawer .info .row{display:flex;justify-content:space-between;align-items:center}
+.drawer .acts{display:flex;flex-direction:column;gap:8px}
+.db{width:100%;background:var(--surface-2);border:1px solid var(--border-2);color:var(--text);border-radius:var(--r-sm);padding:8px 0;font-size:12.5px;cursor:pointer;text-align:center}
+.db:hover{background:var(--surface-3)}
+.db.suspend{color:var(--warn);border-color:rgba(251,191,36,.35)}
+.db.disconnect{color:var(--danger);border-color:rgba(248,113,113,.35)}
+/* 底部工具坞 */
+.dock{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;background:rgba(10,14,20,.78);backdrop-filter:blur(10px);border:1px solid var(--border-2);border-radius:999px;padding:8px 12px;z-index:20}
+.dock button{display:flex;flex-direction:column;align-items:center;gap:3px;background:none;border:none;color:var(--text-dim);font-size:10px;cursor:pointer;padding:4px 10px;border-radius:10px;min-width:52px}
+.dock button:hover{background:rgba(255,255,255,.06);color:var(--text)}
+.dock button .ic{font-size:16px;line-height:1}
+.dock button.on{color:var(--accent-2);background:rgba(79,140,255,.12)}
+.dock .sep{width:1px;height:26px;background:var(--border-2);margin:0 2px}
+.dock button.disconnect{color:var(--danger)}
+.dock button.disconnect:hover{background:rgba(248,113,113,.1);color:var(--danger)}
+/* 虚拟导航键 */
+.navkeys{position:absolute;bottom:18px;left:18px;display:flex;gap:10px;z-index:20}
+.navkeys button{width:42px;height:42px;border-radius:50%;background:rgba(10,14,20,.7);border:1px solid var(--border-2);color:var(--text-dim);font-size:15px;cursor:pointer;backdrop-filter:blur(8px)}
+.navkeys button:hover{color:var(--text);border-color:var(--accent)}
+.navkeys button:disabled{opacity:.35;cursor:not-allowed}
+.navkeys .tip{font-size:10px;color:var(--text-faint);align-self:center;margin-left:2px;max-width:90px;line-height:1.3}
+/* 键盘面板 popover */
+.kb-panel{position:absolute;bottom:76px;left:50%;transform:translateX(-50%);width:420px;background:rgba(13,18,26,.95);backdrop-filter:blur(12px);border:1px solid var(--border-2);border-radius:var(--r-md);padding:var(--sp-3);z-index:40;box-shadow:0 16px 48px rgba(0,0,0,.5)}
+.kb-panel textarea{width:100%;height:64px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:var(--r-sm);color:var(--text);font-size:13px;padding:8px;resize:none;outline:none;font-family:inherit}
+.kb-panel textarea:focus{border-color:var(--accent)}
+.kb-panel .row{display:flex;align-items:center;gap:8px;margin-top:8px}
+.kb-panel .row .hint{font-size:11px;color:var(--text-faint);flex:1}
+.kb-panel .btn{background:linear-gradient(135deg,var(--accent),#3b6fe0);border:none;color:#fff;border-radius:var(--r-sm);padding:6px 18px;font-size:12.5px;cursor:pointer}
+.kb-panel .ack{font-size:11px;color:var(--ok)}
+/* 音量条 */
+.vol{position:absolute;bottom:76px;right:60px;width:180px;background:rgba(13,18,26,.95);border:1px solid var(--border-2);border-radius:var(--r-md);padding:10px var(--sp-3);z-index:40;backdrop-filter:blur(12px)}
+.vol .t{font-size:11px;color:var(--text-dim);margin-bottom:8px;display:flex;justify-content:space-between}
+.vol input{width:100%;accent-color:var(--accent)}
+/* 底部状态条 */
+.statusbar{display:flex;align-items:center;gap:var(--sp-5);border-top:1px solid var(--border);padding:var(--sp-1) var(--sp-4);font-size:10.5px;color:var(--text-faint);flex-shrink:0;background:#04060a;z-index:60}
+.statusbar kbd{font-family:var(--mono);background:var(--surface-2);border:1px solid var(--border-2);border-radius:3px;padding:0 5px;font-size:10px;color:var(--text-dim)}
+.statusbar .right{margin-left:auto;font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="proto-banner">仿样原型 · 视觉参照、无约束力 —— 串流控制台原型（画面为假数据示意）</div>
+
+<div class="titlebar" data-proto-id="session-titlebar">
+  <span class="app"><span class="logo"></span>CloudPhone</span>
+  <span style="margin-left:14px"><span class="mode-badge" data-proto-id="session-mode-badge">整屏镜像 · 客厅测试机 ▾</span></span>
+  <div class="win-btns"><button>─</button><button>□</button><button class="close">✕</button></div>
+</div>
+
+<div class="viewport" data-proto-id="session-viewport">
+  <!-- 档位回落通告示例 -->
+  <div class="degraded" data-proto-id="session-degraded-banner">⚠ p2p 打洞超时 5s · 已回落 frp 中转（后台继续尝试直连，成功后自动回切）</div>
+
+  <!-- HUD 统计条 -->
+  <div class="hud" data-proto-id="session-hud">
+    <span class="pill"><span class="dot"></span><b>60</b> fps</span>
+    <span class="pill"><b>8.2</b> Mbps</span>
+    <span class="pill">RTT <b>12</b> ms</span>
+    <span class="pill">丢包 <b>0.1</b>%</span>
+    <span class="pill"><b>1600×900</b></span>
+    <span class="pill">lan-direct · <b style="color:var(--ok)">AES</b></span>
+  </div>
+
+  <!-- 云端画面（假数据） -->
+  <div class="screen">
+    <div class="statusbar"><span>18:53</span><span>CloudPhone 单应用串流</span><span>▮▮▮ ᯤ 100%</span></div>
+    <div class="scene">
+      <span class="game-title">CLOUD GAME</span>
+      <span class="crosshair"></span>
+      <span class="game-sub">— 源端画面按宽高比 letterbox 适配，触控坐标归一化回传 —</span>
+    </div>
+    <svg class="cursor" viewBox="0 0 24 24"><path d="M4 2 L4 20 L9 15 L12 22 L15 20.5 L12 14 L19 14 Z" fill="#fff" stroke="#000" stroke-width="1.2"/></svg>
+  </div>
+
+  <!-- 会话抽屉 -->
+  <div class="drawer" data-proto-id="session-drawer">
+    <h3><span class="dot"></span>会话 · 客厅测试机</h3>
+    <div class="info">
+      <div class="row"><span>后端</span><b>p2p 直连</b></div>
+      <div class="row"><span>已连时长</span><b>00:12:47</b></div>
+      <div class="row"><span>档位</span><b>1080P·60 / 8Mbps</b></div>
+      <div class="row"><span>音频</span><b>48kHz AAC · 开</b></div>
+      <div class="row"><span>剪贴板</span><b>双向 · IME 已启用</b></div>
+    </div>
+    <div class="acts">
+      <button class="db suspend" data-proto-id="session-drawer-suspend">⏸ 挂起会话（断开挂机）</button>
+      <button class="db" data-proto-id="session-drawer-resume">▶ 恢复</button>
+      <button class="db disconnect" data-proto-id="session-drawer-disconnect">⏻ 断开并返回首页</button>
+    </div>
+  </div>
+  <div class="drawer-tab" data-proto-id="session-drawer-tab">会话抽屉 ‹</div>
+
+  <!-- 文字输入面板（键盘按钮激活态） -->
+  <div class="kb-panel" data-proto-id="session-input-panel">
+    <textarea placeholder="输入文字，经 TEXT_INPUT 注入源端获焦输入框（支持中文 / emoji）……">你好，云手机 👋</textarea>
+    <div class="row">
+      <span class="hint">IME 主路径 commitText · ASCII 兜底 input text · seq 去重幂等</span>
+      <span class="ack" data-proto-id="session-input-ack">✓ ACK seq=42 · 8ms</span>
+      <button class="btn" data-proto-id="session-input-send">发送</button>
+    </div>
+  </div>
+
+  <!-- 音量 popover -->
+  <div class="vol" data-proto-id="session-volume">
+    <div class="t"><span>🔊 源端音频</span><span>96 kbps AAC</span></div>
+    <input type="range" min="0" max="100" value="80">
+  </div>
+
+  <!-- 虚拟导航键 -->
+  <div class="navkeys" data-proto-id="session-navkeys">
+    <button title="BACK（注入源端）" data-proto-id="session-navkey-back">◁</button>
+    <button disabled title="HOME 协议无对应消息，预留占位" data-proto-id="session-navkey-home">□</button>
+    <button disabled title="RECENTS 协议无对应消息，预留占位" data-proto-id="session-navkey-recents">◫</button>
+    <span class="tip">桌面端：鼠标右键 = BACK</span>
+  </div>
+
+  <!-- 底部工具坞 -->
+  <div class="dock" data-proto-id="session-dock">
+    <button class="on" data-proto-id="session-dock-keyboard"><span class="ic">⌨</span>键盘</button>
+    <button data-proto-id="session-dock-paste"><span class="ic">📋</span>粘贴</button>
+    <button data-proto-id="session-dock-copy"><span class="ic">⎘</span>复制</button>
+    <button data-proto-id="session-dock-volume"><span class="ic">🔊</span>音频</button>
+    <span class="sep"></span>
+    <button data-proto-id="session-dock-screenshot"><span class="ic">📷</span>截屏</button>
+    <button data-proto-id="session-dock-resolution"><span class="ic">贞</span>1080P·60</button>
+    <button data-proto-id="session-dock-rotate"><span class="ic">⟳</span>旋转</button>
+    <button data-proto-id="session-dock-apps"><span class="ic">▦</span>单应用</button>
+    <button data-proto-id="session-dock-fullscreen"><span class="ic">⛶</span>全屏</button>
+    <span class="sep"></span>
+    <button class="disconnect" data-proto-id="session-dock-disconnect"><span class="ic">⏻</span>断开</button>
+  </div>
+</div>
+
+<footer class="statusbar" data-proto-id="session-hotkeys">
+  <span>左键 = 触摸 · 拖拽 = 滑动</span><span>右键 = BACK</span><span>滚轮 = 滚动</span>
+  <span><kbd>F11</kbd> 全屏</span><span><kbd>Ctrl+Shift+X</kbd> 断开</span><span><kbd>Ctrl+Shift+K</kbd> 键盘面板</span>
+  <span class="right">seq 0xA3F2 · 缓冲 2 帧 · latest-wins 已启用</span>
+</footer>
+
+<script src="annotator.js" defer></script>
+</body>
+</html>

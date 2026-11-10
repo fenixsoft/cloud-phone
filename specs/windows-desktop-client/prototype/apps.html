@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CloudPhone for Windows — 单应用列表（原型）</title>
+<style>
+:root{
+  --bg:#0b0e14; --surface:#141922; --surface-2:#1b2230; --surface-3:#232c3d;
+  --border:rgba(255,255,255,.07); --border-2:rgba(255,255,255,.12);
+  --text:#e8edf4; --text-dim:#8b95a7; --text-faint:#5a6478;
+  --accent:#4f8cff; --accent-2:#22d3ee; --ok:#34d399; --warn:#fbbf24; --danger:#f87171;
+  --r-sm:8px; --r-md:12px; --r-lg:16px;
+  --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:24px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font:14px/1.5 "Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;display:flex;flex-direction:column}
+.proto-banner{background:repeating-linear-gradient(45deg,#3a2f0e,#3a2f0e 12px,#453a12 12px,#453a12 24px);border-bottom:1px solid var(--warn);color:#fde68a;font-size:12px;padding:6px 16px;text-align:center;letter-spacing:.05em}
+.titlebar{display:flex;align-items:center;height:36px;background:#07090d;border-bottom:1px solid var(--border);padding-left:12px;user-select:none;flex-shrink:0}
+.titlebar .app{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim)}
+.titlebar .logo{width:16px;height:16px;border-radius:4px;background:linear-gradient(135deg,var(--accent),var(--accent-2))}
+.titlebar .win-btns{margin-left:auto;display:flex;height:100%}
+.titlebar .win-btns button{width:44px;height:100%;background:none;border:none;color:var(--text-dim);font-size:12px;cursor:pointer}
+.titlebar .win-btns button.close:hover{background:#c0392b;color:#fff}
+.header{display:flex;align-items:center;gap:var(--sp-4);padding:var(--sp-5) var(--sp-5) var(--sp-4)}
+.back{background:none;border:1px solid var(--border-2);color:var(--text-dim);border-radius:var(--r-sm);padding:6px 14px;cursor:pointer;font-size:13px}
+.back:hover{color:var(--text);border-color:var(--text-dim)}
+.header h1{font-size:18px;font-weight:600}
+.header .sub{font-size:12px;color:var(--text-faint)}
+.header .spacer{flex:1}
+.search{position:relative}
+.search input{width:260px;background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;color:var(--text);padding:8px 14px 8px 34px;font-size:13px;outline:none}
+.search input:focus{border-color:var(--accent)}
+.search::before{content:"🔍";position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:12px;opacity:.55}
+.main{flex:1;padding:0 var(--sp-5) var(--sp-5)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:var(--sp-3)}
+.tile{position:relative;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--sp-4) var(--sp-2);display:flex;flex-direction:column;align-items:center;gap:10px;cursor:pointer;transition:transform .15s,border-color .15s}
+.tile:hover{transform:translateY(-2px);border-color:var(--accent)}
+.tile .icon{width:52px;height:52px;border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:26px;background:linear-gradient(160deg,#1e2a3f,#131c2b);border:1px solid var(--border-2)}
+.tile .name{font-size:12.5px;color:#fff;text-align:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pin{position:absolute;top:8px;right:8px;background:none;border:none;cursor:pointer;font-size:13px;opacity:.4;transition:opacity .15s}
+.tile:hover .pin{opacity:.9}
+.pin.on{opacity:1}
+.hintbar{margin-top:var(--sp-4);font-size:12px;color:var(--text-faint);display:flex;gap:var(--sp-5);align-items:center}
+.hintbar .pin-legend{display:inline-flex;align-items:center;gap:6px}
+.empty{padding:60px 0;text-align:center;color:var(--text-faint);font-size:13px;display:none}
+</style>
+</head>
+<body>
+<div class="proto-banner">仿样原型 · 视觉参照、无约束力 —— 单应用列表原型（应用为假数据）</div>
+
+<div class="titlebar" data-proto-id="apps-titlebar">
+  <span class="app"><span class="logo"></span>CloudPhone</span>
+  <div class="win-btns"><button>─</button><button>□</button><button class="close">✕</button></div>
+</div>
+
+<header class="header" data-proto-id="apps-header">
+  <button class="back" data-proto-id="apps-back">← 返回控制台</button>
+  <h1>单应用 · 客厅测试机</h1>
+  <span class="sub">源端枚举 LAUNCHER 应用 · AppListRequest → AppList · 3s 无应答可重试</span>
+  <span class="spacer"></span>
+  <div class="search"><input type="text" placeholder="按应用名称过滤…" data-proto-id="apps-search"></div>
+</header>
+
+<div class="main">
+  <div class="grid" data-proto-id="apps-grid">
+    <div class="tile" data-proto-id="apps-tile-genshin"><button class="pin on" title="已加到桌面">📌</button><div class="icon">⚔️</div><div class="name">原神</div></div>
+    <div class="tile" data-proto-id="apps-tile-honorofkings"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🛡️</div><div class="name">王者荣耀</div></div>
+    <div class="tile" data-proto-id="apps-tile-wechat"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">💬</div><div class="name">微信</div></div>
+    <div class="tile" data-proto-id="apps-tile-douyin"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🎵</div><div class="name">抖音</div></div>
+    <div class="tile" data-proto-id="apps-tile-chrome"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🌐</div><div class="name">Chrome</div></div>
+    <div class="tile" data-proto-id="apps-tile-bilibili"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">📺</div><div class="name">哔哩哔哩</div></div>
+    <div class="tile" data-proto-id="apps-tile-taobao"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🛒</div><div class="name">淘宝</div></div>
+    <div class="tile" data-proto-id="apps-tile-qqmusic"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🎧</div><div class="name">QQ音乐</div></div>
+    <div class="tile" data-proto-id="apps-tile-loadgen"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🎮</div><div class="name">负载发生器</div></div>
+    <div class="tile" data-proto-id="apps-tile-files"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">📁</div><div class="name">文件管理器</div></div>
+    <div class="tile" data-proto-id="apps-tile-camera"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">📷</div><div class="name">相机</div></div>
+    <div class="tile" data-proto-id="apps-tile-settings"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">⚙️</div><div class="name">设置</div></div>
+    <div class="tile" data-proto-id="apps-tile-calculator"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">🧮</div><div class="name">计算器</div></div>
+    <div class="tile" data-proto-id="apps-tile-clock"><button class="pin" title="创建桌面快捷方式">📌</button><div class="icon">⏰</div><div class="name">时钟</div></div>
+  </div>
+  <div class="empty" data-proto-id="apps-empty">AppListRequest 3s 无应答 —— <button class="back" style="margin-left:8px">↻ 重试</button></div>
+  <div class="hintbar" data-proto-id="apps-hintbar">
+    <span class="pin-legend">📌 图钉 = 创建桌面快捷方式（.lnk，双击直达单应用串流）</span>
+    <span>点选磁贴 = 以 SINGLE_APP 模式发起会话并进入串流画面</span>
+    <span>源端为单应用不可用环境时展示明确拒绝文案</span>
+  </div>
+</div>
+
+<script src="annotator.js" defer></script>
+</body>
+</html>
