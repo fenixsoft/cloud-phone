@@ -148,3 +148,11 @@
   - 证据：fenixd.log 12:53:48-12:54:05：Recovering interrupted SPEC p2p-crossnet-traversal (was testing)→Recovery: re-triggering verify→implemented→testing→派发 verifier 全量重验；恢复前预算解冻后无任何 impl/code-fix 修复 run 补跑（09:12:45Z 被保全的修复 run 未续做）；verdict_stability.json 相邻两轮 stamp 恒等、round3 相邻轮 diff 为空——与冻结时「进度已保全，解冻后续做」的承诺语义不一致。；触发 run_id=arbiter-p2p-crossnet-traversal-1794230197（签名 p2p-crossnet-traversal::verify_fail_escalation，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 verify_fail_escalation（spec=p2p-crossnet-traversal）：'p2p-crossnet-traversal' 升级闸门连续失败第 3 轮，已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：恢复重验前检查冻结期是否有被保全未执行的修复 run（_frozen_hold 遗产锚点），先重派修复段再进入验证；或恢复触发的首轮重验标记 recovery-round 不计入升级闸门连续失败计数；或恢复时对上轮冻结原因做归因复读，凡属冻结/恢复类机制打断（非修复失败）即清零连败计数。
+
+## 2026-11-10
+### 可改进
+- **[arbiter:client-u] worktree-pre-rmtree-stash-ref-loss**
+  - 影响：任何 impl 后冻结 spec 的实现交付（尤其全套重实现）在分支删除 + worktree 清扫后沦为悬空对象，默认 gc.pruneExpire 窗口内可被 GC 静默清除；本案 run4 交付已处此险，人工裁决前丢失则三套交付折损一套。
+  - 证据：fenixd.log 06:50:38Z 清扫 impl-client-ui-redesign-1794286517 worktree 时留快照并指引「recover via: git stash store 584de3ee…」，但当前 refs/stash 不存在、git for-each-ref --contains 4306e3f 为空、fsck 报悬空 commit——stash ref 为 per-worktree 引用，随 worktree rmtree 一并销毁，快照指引失效，run4 全套重实现（9 提交 c3143e5→4306e3f）现零引用可达。两源互证：worktree_manager 快照日志 ↔ git 引用/对象实测。；触发 run_id=arbiter-client-ui-redesign-1794302874（签名 client-ui-redesign::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 impl_budget_exhausted（spec=client-ui-redesign）：'client-ui-redesign' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：pre-rmtree 快照改存共享引用（主 gitdir refs/preservation/<run_id>）或 git note/独立 bundle；STATE 锚点增设 _last_impl_tip 记录悬空 tip；终态 impl 分支保留至 merge-back 决策后再删。
