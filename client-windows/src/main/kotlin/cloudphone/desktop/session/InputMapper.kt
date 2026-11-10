@@ -95,3 +95,45 @@ object InputMapper {
     private fun NormPoint.toEvent(sessionId: Int, action: InputAction) =
         ControlMessage.InputEvent(sessionId, action, POINTER_MOUSE, x, y)
 }
+
+/**
+ * 键盘字符过滤（design D4：协议 MsgType 无独立按键通道，会话窗口获得键盘焦点时
+ * 可打印字符键经 TEXT_INPUT 直发，非字符键——功能键/修饰键/控制字符——SHALL NOT
+ * 产生注入；scancode 全键盘映射列为 Non-Goal 后续增强）。纯函数，headless 单测覆盖。
+ */
+object KeyboardText {
+    /** 修饰键/功能键按下无有效字符（java.awt.event.KeyEvent.CHAR_UNDEFINED 等价值） */
+    const val CHAR_UNDEFINED = '\uFFFF'
+
+    /** 可打印字符键 → 单字符直发文本；不可打印返回 null（不注入） */
+    fun printableText(ch: Char): String? = if (isPrintable(ch)) ch.toString() else null
+
+    /**
+     * codePoint 形态直发文本（KeyTyped 事件的 utf16CodePoint 可携带 BMP 外增补码位，
+     * 如 emoji）；非法码位返回 null（不注入）。
+     */
+    fun printableText(codePoint: Int): String? {
+        if (!Character.isValidCodePoint(codePoint)) return null
+        if (Character.isSupplementaryCodePoint(codePoint)) {
+            // 增补平面无 C0/C1 控制字符，非字符键（功能键/修饰键）不会走到 KeyTyped 字符路径
+            return String(Character.toChars(codePoint))
+        }
+        return printableText(codePoint.toChar())
+    }
+
+    /**
+     * 可打印判定：字母数字（isLetterOrDigit，含中文等全 Unicode 字母）与空格直发；
+     * ISO 控制字符（Enter/Tab/Escape/Backspace 等 C0/C1）、格式/私有区/代理区/未定义
+     * 码位不注入，其余标点与符号放行。
+     */
+    fun isPrintable(ch: Char): Boolean {
+        if (ch == CHAR_UNDEFINED) return false
+        if (Character.isISOControl(ch)) return false
+        if (Character.isLetterOrDigit(ch) || ch == ' ') return true
+        return when (Character.getType(ch)) {
+            Character.CONTROL.toInt(), Character.FORMAT.toInt(), Character.PRIVATE_USE.toInt(),
+            Character.SURROGATE.toInt(), Character.UNASSIGNED.toInt() -> false
+            else -> true
+        }
+    }
+}
