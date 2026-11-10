@@ -1,82 +1,11 @@
 {
- "status": "success",
- "spec": "client-ui-redesign",
- "mode": "worktree",
- "summary": "恢复续做收口：上轮 13/14，唯一未完成 5.2（两条验收点受测试台限制）。本轮换道复验成功——TCP 控制链弃用 adb forward，改走 emulator 原生 redir（tcp:12400→22333，宿主连通性预检通过），彻底消除半开黑洞。实测：①BACK 线级到达：工具坞 ◀BACK 实点两次源端均收到 t2 recv action=3 sid=5（InputAction.BACK，整屏会话 sid=5）；②单应用会话级 E2E：首页发现卡「单应用」建会话→应用列表 18 磁贴真实加载→实点 LoadGen→START_SESSION(SINGLE_APP)→HelloAck→IdrRequest→虚拟屏出画（截图 452,859B）→徽章「单应用 · CloudPhone LoadGen」+退出渲染→退出→StopSession+重开整屏（shared capture ready）连接保持；③搜索过滤实机 18→1（源端可启动应用 18 个，匹配 1 个）。顺带实测 4.3 联动：设置端口 12400 落盘（onPause 兜底提交路径）→LanScanner 按 12400 扫描→发现卡 10.0.2.2:12400（扫描完成 1219ms）。14/14 勾选，status=success。遗留 pending-interaction 两项（键盘 TEXT_INPUT 协议缺口、抽屉边缘手势测试台时序）不属任务字面验收缺口，findings 登记待后续协议 SPEC/真机。verdict=success。",
- "completed_tasks": [
-  "1.1",
-  "1.2",
-  "2.1",
-  "2.2",
-  "2.3",
-  "2.4",
-  "3.1",
-  "3.2",
-  "3.3",
-  "4.1",
-  "4.2",
-  "4.3",
-  "5.1",
-  "5.2"
- ],
- "verification": {
-  "rescenario_evidence_dir": ".fenix/verify-evidence/client-ui-redesign/",
-  "reverify_scenarios": [
-   {
-    "scenario_id": "back-injection-wire",
-    "status": "pass",
-    "message": "◀BACK 实点两次源端 recv InputEvent + t2 recv action=3 sid=5（21:16:29.944/21:16:31.948）",
-    "evidence": [
-     "s9-after-back.xml",
-     "源端 logcat 实录"
-    ]
-   },
-   {
-    "scenario_id": "single-app-session-e2e",
-    "status": "pass",
-    "message": "磁贴 18 项加载→LoadGen 点选→SINGLE_APP 会话（HelloAck+IdrRequest）→虚拟屏出画→徽章+退出→StopSession+重开整屏连接保持",
-    "evidence": [
-     "s9-applist-live.xml",
-     "s9-single-badge.xml",
-     "s9-single-app-console.png",
-     "s9-after-exit.xml"
-    ]
-   },
-   {
-    "scenario_id": "tile-search-filter",
-    "status": "pass",
-    "message": "搜索输入 load→18 磁贴过滤为 1（CloudPhone LoadGen），状态行「匹配 1 个」",
-    "evidence": [
-     "s9-filter-load.xml",
-     "s9-filter-live.png"
-    ]
-   },
-   {
-    "scenario_id": "settings-discovery-linkage",
-    "status": "pass",
-    "message": "设置默认 TCP 12400 落盘→LanScanner 扫 12400→发现卡 10.0.2.2:12400，扫描完成 1219ms",
-    "evidence": [
-     "s9-settings-port12400.xml",
-     "s9-home-discovered-12400.xml"
-    ]
-   }
-  ],
-  "report": "spec/changes/client-ui-redesign/verification-report.md（含复验轮章节）"
- },
- "findings": [
-  {
-   "type": "pending-interaction",
-   "task": "3.1",
-   "element": "控制台工具坞「键盘」按钮",
-   "current": "协议 INPUT_EVENT 仅 DOWN/UP/MOVE/BACK 四值，无 TEXT_INPUT 消息；本 SPEC 边界禁止扩协议，按钮实现为本地 IME 焦点切换，无法向源端注入文本",
-   "suggestion": "后续协议 SPEC（m3-audio-clipboard-textinput 方向）增补 TEXT_INPUT 消息后接线文本注入"
-  },
-  {
-   "type": "pending-interaction",
-   "task": "3.2",
-   "element": "控制台抽屉边缘唤出手势（24dp 边缘条）",
-   "current": "边缘条+平移动画已实现，工具坞「抽屉」按钮路径全链可用；测试台 input swipe 合成事件未复现唤出（疑 touch slop/时序）",
-   "suggestion": "真机复验边缘手势；如仍不达可调大边缘命中区或延长 slop 容忍"
-  }
- ]
+  "status": "success",
+  "spec": "windows-desktop-client",
+  "summary": "Windows 桌面串流客户端 SPEC 全部 16 项任务实现完毕：client-windows/ Gradle 工程（Kotlin JVM 17 + Compose Desktop 1.6.11 + JavaCV FFmpeg 6.1.1，protocol 复合构建）；2.x 会话核心（SessionController 状态机/VideoPipeline latest-wins 软解/AudioSink 水位丢帧/InputMapper letterbox 归一化/AuxBridge 超时对账/DesktopLanScanner /24 发现/DesktopSourceProfiles 档案）；3.x 三屏与桌面形态（AppWindow 快捷键+标题栏/HomeScreen 表单校验/SessionScreen HUD 与工具坞/AppsScreen 列表与 .lnk 固化）；4.1 jpackage（createDistributable app-image 产出、packageMsi 可见）；4.2 docs/windows-client.md；5.1 win_vm_smoke.sh --self-check 绿。模块内 98 例测试全绿，全量回归经 bin/run_full_suite.py 有界入口执行。tasks.md 16 项已全部勾选，与本文件 completed_tasks 1:1 一致。",
+  "completed_tasks": ["1.1", "1.2", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7", "3.1", "3.2", "3.3", "3.4", "4.1", "4.2", "5.1"],
+  "findings": [
+    "3.4 任务文本写「AppListRequest 1s 超时」，spec.md 权威规则为「源端目标 1s 内回传；客户端 3s 无应答判定失败并显示重试入口」——实现按 spec 取 3s 判定期（requestAppList timeoutMs=3000），与 Android SourceAppsActivity 规则一致",
+    "compose.desktop.application 与 application 插件同用会冲突注册 run 任务，构建脚本已移除 application 插件、mainClass 统一经 compose DSL 声明",
+    "JavaCV FFmpeg natives 按 classifier 仅引 windows-x86_64/linux-x86_64（替代 javacpp-platform 全平台聚合）；jpackage includeAllModules=true 覆盖 Unsafe/native 解包需求"
+  ]
 }
