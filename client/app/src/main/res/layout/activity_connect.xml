@@ -1,0 +1,231 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  连接首页（client-ui-redesign 2.1）：单 Activity 多区块滚动（ScrollView + 动态子视图，
+  零新依赖不引入 RecyclerView）——顶栏 / 网络状态徽章 / 扫描面板 / 发现列表 /
+  档案列表 / 常驻新建连接入口。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/hud_bg">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- 顶栏：标题 / 会话抽屉入口 / 设置入口 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/hud_topbar_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="CloudPhone" />
+
+                <TextView
+                    android:id="@+id/btn_sessions"
+                    style="@style/hud_button_ghost"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:text="会话" />
+
+                <Space android:layout_width="8dp" android:layout_height="1dp" />
+
+                <TextView
+                    android:id="@+id/btn_settings"
+                    style="@style/hud_button_ghost"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:text="设置" />
+            </LinearLayout>
+
+            <!-- 网络状态徽章 -->
+            <TextView
+                android:id="@+id/net_badge"
+                style="@style/badge_base"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_badge_warn"
+                android:text="网络检测中"
+                android:textColor="@color/hud_warn" />
+
+            <!-- 扫描面板 -->
+            <LinearLayout
+                android:id="@+id/scan_panel"
+                style="@style/card_hud"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        style="@style/card_title"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="局域网源端" />
+
+                    <TextView
+                        android:id="@+id/scan_count"
+                        style="@style/hud_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="—" />
+                </LinearLayout>
+
+                <ProgressBar
+                    android:id="@+id/scan_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressTint="@color/hud_accent" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/scan_status"
+                        style="@style/hud_label"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="待扫描" />
+
+                    <TextView
+                        android:id="@+id/btn_rescan"
+                        style="@style/hud_button_ghost"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:text="重试扫描" />
+                </LinearLayout>
+
+                <!-- 未发现空态（默认 GONE）：原因说明 + 手动新建（重试扫描由面板按钮承担） -->
+                <LinearLayout
+                    android:id="@+id/empty_state"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/empty_text"
+                        style="@style/hud_label"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="未发现源端：可能源端未开机、不在同一局域网，或防火墙拦截了 22333 端口。可用手动新建连接（公网/热点场景），或点击「重试扫描」。"
+                        android:lineSpacingExtra="2dp" />
+
+                    <TextView
+                        android:id="@+id/btn_empty_new"
+                        style="@style/hud_button"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="10dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:gravity="center"
+                        android:text="＋ 手动新建连接" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 发现列表（动态挂载 item_device_card.xml） -->
+            <TextView
+                android:id="@+id/section_discovered"
+                style="@style/hud_section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="发现的源端"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/discovered_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone" />
+
+            <!-- 档案区块 -->
+            <TextView
+                android:id="@+id/section_profiles"
+                style="@style/hud_section"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="手动保存的连接" />
+
+            <LinearLayout
+                android:id="@+id/profiles_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <TextView
+                android:id="@+id/no_profiles"
+                style="@style/hud_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:padding="12dp"
+                android:text="暂无保存的连接档案"
+                android:visibility="gone" />
+
+            <!-- 常驻新建连接入口 -->
+            <TextView
+                android:id="@+id/btn_new_connection"
+                style="@style/hud_button"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="＋ 新建连接" />
+
+            <!-- 连接状态行 -->
+            <TextView
+                android:id="@+id/conn_status"
+                style="@style/hud_label"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center"
+                android:visibility="gone" />
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

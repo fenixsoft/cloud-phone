@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- HUD 卡片底（card_* 家族）：圆角 + 描边 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/hud_card" />
+    <stroke android:width="1dp" android:color="@color/hud_border" />
+    <corners android:radius="12dp" />
+</shape>

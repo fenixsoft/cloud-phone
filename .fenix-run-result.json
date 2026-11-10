@@ -1,262 +1,82 @@
 {
  "status": "success",
- "spec": "single-app-realdevice-retest",
- "mode": "fast-track",
- "summary": "全部 11 项任务此前已完成并入库（tasks.md 11/11 已勾选，交付物三件齐备且在分支上）。本轮为真实环境重验 run：上轮 2 场景（probe-only-happy-path-ok / mirror-limit-fault-injection-repro）因 emulator-5554 掉线判 env 豁免，本轮设备在线后 5 场景全部真机重执行——27/27 断言全 pass。关键实证：①S2 probe-only 全链 PUSH skip→SPAWN pass(3160ms,uid=0)→PING pass(28ms,PONG+CAPS)→CREATE pass(3106ms,displayId=25)→结论 OK/RC_PROBE=0，JSON verdict/stages 字段完整；②S3 FI 变体（CREATE 静默自杀）复现 §2.1 特征链：SPAWN/PING pass→CREATE fail(48ms) 进程静默消失（avc=0/crash=0/Enforcing/userdebug）→结论 MIRROR_LIMIT 证据绑定，验后原版 dex 恢复 md5=5a021ace17df97b8a63a5c7489cb5f85 一致；③退出码契约（NO_DEVICE=1/参数错误=2）与指引分叉（真机 lan-direct 零 adb emu、模拟器指向 bootstrap_adb.sh）与检查表 §4 九项 9/9 覆盖均复验通过。verdict=verified，无遗留 product-bug。",
+ "spec": "client-ui-redesign",
+ "mode": "worktree",
+ "summary": "恢复续做收口：上轮 13/14，唯一未完成 5.2（两条验收点受测试台限制）。本轮换道复验成功——TCP 控制链弃用 adb forward，改走 emulator 原生 redir（tcp:12400→22333，宿主连通性预检通过），彻底消除半开黑洞。实测：①BACK 线级到达：工具坞 ◀BACK 实点两次源端均收到 t2 recv action=3 sid=5（InputAction.BACK，整屏会话 sid=5）；②单应用会话级 E2E：首页发现卡「单应用」建会话→应用列表 18 磁贴真实加载→实点 LoadGen→START_SESSION(SINGLE_APP)→HelloAck→IdrRequest→虚拟屏出画（截图 452,859B）→徽章「单应用 · CloudPhone LoadGen」+退出渲染→退出→StopSession+重开整屏（shared capture ready）连接保持；③搜索过滤实机 18→1（源端可启动应用 18 个，匹配 1 个）。顺带实测 4.3 联动：设置端口 12400 落盘（onPause 兜底提交路径）→LanScanner 按 12400 扫描→发现卡 10.0.2.2:12400（扫描完成 1219ms）。14/14 勾选，status=success。遗留 pending-interaction 两项（键盘 TEXT_INPUT 协议缺口、抽屉边缘手势测试台时序）不属任务字面验收缺口，findings 登记待后续协议 SPEC/真机。verdict=success。",
  "completed_tasks": [
   "1.1",
   "1.2",
   "2.1",
   "2.2",
+  "2.3",
+  "2.4",
   "3.1",
   "3.2",
   "3.3",
   "4.1",
+  "4.2",
+  "4.3",
   "5.1",
-  "6.1",
-  "6.2"
+  "5.2"
  ],
- "implementation": {
-  "deliverables": [
-   "scripts/realdevice_bootstrap.sh",
-   "docs/realdevice-retest-checklist.md",
-   "docs/device-notes.md"
-  ],
-  "note": "交付物由前序实现轮完成并已在分支入库（HEAD 含 7a8d891 verification-report 入库）；本轮零生产代码改动，仅真实环境重验"
- },
  "verification": {
-  "scenarios": [
+  "rescenario_evidence_dir": ".fenix/verify-evidence/client-ui-redesign/",
+  "reverify_scenarios": [
    {
-    "scenario_id": "device-discovery-and-exit-codes",
-    "kind": "cli",
-    "description": "设备发现与退出码契约：多设备未指定 --serial 列出候选退 2；--serial 不在线退 2；无设备输出 NO_DEVICE 退 1；--help 输出用法（fakebin adb shim 封闭模拟零设备环境）",
+    "scenario_id": "back-injection-wire",
     "status": "pass",
-    "assertion_results": [
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "evidence_files": [
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-device-discove-help.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-device-discove-fixture.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-device-discove-badserial.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-device-discove-multi.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-device-discove-realdev-list.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-device-discove-nodev.txt"
-     ],
-     "note": "CLI 场景证据=命令输出（无截图属合法形态）；上轮 env 失败的 probe-only-happy-path-ok / mirror-limit-fault-injection-repro 本轮设备在线已真机复验通过"
-    }
+    "message": "◀BACK 实点两次源端 recv InputEvent + t2 recv action=3 sid=5（21:16:29.944/21:16:31.948）",
+    "evidence": [
+     "s9-after-back.xml",
+     "源端 logcat 实录"
+    ]
    },
    {
-    "scenario_id": "probe-only-happy-path-ok",
-    "kind": "cli",
-    "description": "probe-only 全链 happy path：设备侧原版 shellhelper.dex（md5 5a021ace…）下 PUSH 跳过，SPAWN/PING/CREATE 三段全 pass，结论 OK、RC_PROBE=0、JSON 字段完整（真实环境 emulator-5554 实证）",
+    "scenario_id": "single-app-session-e2e",
     "status": "pass",
-    "assertion_results": [
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "file_content",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "file_content",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "file_content",
-      "pass": true,
-      "message": ""
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "evidence_files": [
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-probe-only-hap-fixture-push.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-probe-only-hap-probe.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-s2-probe.json"
-     ],
-     "note": "CLI 场景证据=命令输出（无截图属合法形态）；上轮 env 失败的 probe-only-happy-path-ok / mirror-limit-fault-injection-repro 本轮设备在线已真机复验通过"
-    }
+    "message": "磁贴 18 项加载→LoadGen 点选→SINGLE_APP 会话（HelloAck+IdrRequest）→虚拟屏出画→徽章+退出→StopSession+重开整屏连接保持",
+    "evidence": [
+     "s9-applist-live.xml",
+     "s9-single-badge.xml",
+     "s9-single-app-console.png",
+     "s9-after-exit.xml"
+    ]
    },
    {
-    "scenario_id": "mirror-limit-fault-injection-repro",
-    "kind": "cli",
-    "description": "MIRROR_LIMIT 诊断链复现（2026-11-09 人工裁决接受的故障注入替代验收）：FI 变体（CREATE 静默自杀）上探针复现 SPAWN pass→PING pass→CREATE 进程静默消失→结论 MIRROR_LIMIT→JSON verdict 落盘；验后原版 dex 恢复并核验 md5",
+    "scenario_id": "tile-search-filter",
     "status": "pass",
-    "assertion_results": [
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "file_content",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "evidence_files": [
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-mirror-limit-f-build-fi.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-mirror-limit-f-probe.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-mirror-limit-f-restore.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-s3-fi.json"
-     ],
-     "note": "CLI 场景证据=命令输出（无截图属合法形态）；上轮 env 失败的 probe-only-happy-path-ok / mirror-limit-fault-injection-repro 本轮设备在线已真机复验通过"
-    }
+    "message": "搜索输入 load→18 磁贴过滤为 1（CloudPhone LoadGen），状态行「匹配 1 个」",
+    "evidence": [
+     "s9-filter-load.xml",
+     "s9-filter-live.png"
+    ]
    },
    {
-    "scenario_id": "realdevice-guidance-no-emulator-commands",
-    "kind": "cli",
-    "description": "网络通路指引分叉：真机形态 lan-direct 直连 IP:22333/frp、零 adb emu 命令且标注 forward/redir 仅模拟器；模拟器形态指引 bootstrap_adb.sh 编排",
+    "scenario_id": "settings-discovery-linkage",
     "status": "pass",
-    "assertion_results": [
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "evidence_files": [
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-realdevice-gui-real.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-realdevice-gui-emu.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-s4-guidance-real.txt",
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-s4-guidance-emu.txt"
-     ],
-     "note": "CLI 场景证据=命令输出（无截图属合法形态）；上轮 env 失败的 probe-only-happy-path-ok / mirror-limit-fault-injection-repro 本轮设备在线已真机复验通过"
-    }
-   },
-   {
-    "scenario_id": "checklist-covers-device-notes-gaps",
-    "kind": "cli",
-    "description": "重测检查表完备性：覆盖 device-notes §4 全部 9 项真机差距（COVERAGE=9/9、三栏 9/9、§4 行标注、回写约定）",
-    "status": "pass",
-    "assertion_results": [
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     },
-     {
-      "type": "output_match",
-      "pass": true,
-      "message": ""
-     }
-    ],
-    "screenshots": [],
-    "evidence": {
-     "failed_assertions": [],
-     "evidence_files": [
-      ".fenix/verify-evidence/single-app-realdevice-retest/r3-checklist-cove-coverage.txt"
-     ],
-     "note": "CLI 场景证据=命令输出（无截图属合法形态）；上轮 env 失败的 probe-only-happy-path-ok / mirror-limit-fault-injection-repro 本轮设备在线已真机复验通过"
-    }
+    "message": "设置默认 TCP 12400 落盘→LanScanner 扫 12400→发现卡 10.0.2.2:12400，扫描完成 1219ms",
+    "evidence": [
+     "s9-settings-port12400.xml",
+     "s9-home-discovered-12400.xml"
+    ]
    }
   ],
-  "verdict": "verified",
-  "bugs": [],
-  "env_recovery_note": "上轮 2 个 env 豁免场景本轮设备在线后真机复验全 pass，env 缺口已闭合"
- }
+  "report": "spec/changes/client-ui-redesign/verification-report.md（含复验轮章节）"
+ },
+ "findings": [
+  {
+   "type": "pending-interaction",
+   "task": "3.1",
+   "element": "控制台工具坞「键盘」按钮",
+   "current": "协议 INPUT_EVENT 仅 DOWN/UP/MOVE/BACK 四值，无 TEXT_INPUT 消息；本 SPEC 边界禁止扩协议，按钮实现为本地 IME 焦点切换，无法向源端注入文本",
+   "suggestion": "后续协议 SPEC（m3-audio-clipboard-textinput 方向）增补 TEXT_INPUT 消息后接线文本注入"
+  },
+  {
+   "type": "pending-interaction",
+   "task": "3.2",
+   "element": "控制台抽屉边缘唤出手势（24dp 边缘条）",
+   "current": "边缘条+平移动画已实现，工具坞「抽屉」按钮路径全链可用；测试台 input swipe 合成事件未复现唤出（疑 touch slop/时序）",
+   "suggestion": "真机复验边缘手势；如仍不达可调大边缘命中区或延长 slop 容忍"
+  }
+ ]
 }

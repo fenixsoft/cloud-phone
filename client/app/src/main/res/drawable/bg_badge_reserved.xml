@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 徽章胶囊底：「预留」标注语义 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/hud_reserved_dim" />
+    <corners android:radius="99dp" />
+</shape>

@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设备/档案卡（client-ui-redesign 2.1）：发现卡与档案卡同构布局，isSaved 区分动作集——
+  发现卡（未保存）：连接 + 单应用；档案卡：连接 + 删除（删除始终可用）。
+  无响应档案卡由代码侧做视觉弱化（alpha）并将连接按钮置为不可达禁用态。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/card_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp"
+    android:background="@drawable/bg_card"
+    android:orientation="vertical"
+    android:padding="14dp">
+
+    <!-- 名称 + 状态徽章 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/card_name"
+            style="@style/card_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="源端" />
+
+        <TextView
+            android:id="@+id/card_badge"
+            style="@style/badge_base"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_badge_ok"
+            android:text="在线"
+            android:textColor="@color/hud_ok" />
+    </LinearLayout>
+
+    <!-- 地址（mono 数据读出） -->
+    <TextView
+        android:id="@+id/card_addr"
+        style="@style/hud_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="0.0.0.0:22333" />
+
+    <!-- 后端标识 + 上次连接 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/card_backend"
+            style="@style/badge_base"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_badge_accent"
+            android:text="lan-direct"
+            android:textColor="@color/hud_accent" />
+
+        <TextView
+            android:id="@+id/card_last"
+            style="@style/hud_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="end"
+            android:maxLines="1"
+            android:text="未连接过" />
+    </LinearLayout>
+
+    <!-- 动作行（isSaved 区分动作集） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btn_card_connect"
+            style="@style/hud_button"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="连接" />
+
+        <Space android:layout_width="8dp" android:layout_height="1dp" />
+
+        <TextView
+            android:id="@+id/btn_card_apps"
+            style="@style/hud_button_ghost"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="单应用" />
+
+        <Space android:layout_width="8dp" android:layout_height="1dp" />
+
+        <TextView
+            android:id="@+id/btn_card_delete"
+            style="@style/hud_button_danger"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center"
+            android:text="删除" />
+    </LinearLayout>
+</LinearLayout>

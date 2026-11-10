@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单应用磁贴（client-ui-redesign 4.1）：占位图标 + 应用名称白色文字（无包名行），
+  右上角图钉 = 既有 app-shortcuts 创建桌面快捷方式。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="4dp"
+    android:background="@drawable/bg_card"
+    android:padding="12dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <!-- 占位图标（M3 既有规划项：真实应用图标提取不在本期） -->
+        <ImageView
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:contentDescription="应用图标（占位）"
+            android:src="@android:mipmap/sym_def_app_icon" />
+
+        <TextView
+            android:id="@+id/tile_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="2"
+            android:textColor="@color/hud_text"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 右上角图钉（加到桌面） -->
+    <TextView
+        android:id="@+id/tile_pin"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:clickable="true"
+        android:focusable="true"
+        android:padding="4dp"
+        android:text="📌"
+        android:textSize="14sp" />
+</FrameLayout>

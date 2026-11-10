@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  HUD 主题与样式族（client-ui-redesign 1.1）：
+  全屏深色主题 Theme.CloudPhone.Hud 继承平台暗色 Theme.Material；
+  字号/圆角/间距以样式内联 item 承载（不新增 dimens.xml），命名对齐原型锚点语义
+  （card_* / hud_* / badge_* / dock_* / nav_* / sheet_*）。
+-->
+<resources xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <style name="Theme.CloudPhone.Hud" parent="android:Theme.Material">
+        <item name="android:windowBackground">@color/hud_bg</item>
+        <item name="android:colorBackground">@color/hud_bg</item>
+        <item name="android:statusBarColor">@color/hud_bg</item>
+        <item name="android:navigationBarColor">@color/hud_bg</item>
+        <item name="android:textColorPrimary">@color/hud_text</item>
+        <item name="android:textColorSecondary">@color/hud_dim</item>
+        <item name="android:textColorTertiary">@color/hud_faint</item>
+        <item name="android:colorAccent">@color/hud_accent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+
+    <!-- 卡片族（card_*） -->
+    <style name="card_hud">
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:padding">14dp</item>
+    </style>
+
+    <style name="card_title">
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="card_kv_key">
+        <item name="android:textColor">@color/hud_faint</item>
+        <item name="android:textSize">11sp</item>
+    </style>
+
+    <style name="card_kv_value">
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <!-- 数据读出族（hud_*）：mono 仅用于数据读出 -->
+    <style name="hud_value">
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:fontFamily">monospace</item>
+    </style>
+
+    <style name="hud_label">
+        <item name="android:textColor">@color/hud_dim</item>
+        <item name="android:textSize">12sp</item>
+    </style>
+
+    <style name="hud_section">
+        <item name="android:textColor">@color/hud_dim</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.12</item>
+        <item name="android:paddingLeft">4dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">6dp</item>
+    </style>
+
+    <style name="hud_topbar_title">
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:letterSpacing">0.06</item>
+    </style>
+
+    <!-- 徽章族（badge_*）：胶囊底 + 小号文字 -->
+    <style name="badge_base">
+        <item name="android:textSize">10sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:paddingLeft">8dp</item>
+        <item name="android:paddingRight">8dp</item>
+        <item name="android:paddingTop">3dp</item>
+        <item name="android:paddingBottom">3dp</item>
+    </style>
+
+    <style name="badge_online">
+        <item name="android:background">@drawable/bg_badge_ok</item>
+        <item name="android:textColor">@color/hud_ok</item>
+    </style>
+
+    <style name="badge_offline">
+        <item name="android:background">@drawable/bg_badge_danger</item>
+        <item name="android:textColor">@color/hud_danger</item>
+    </style>
+
+    <style name="badge_scanning">
+        <item name="android:background">@drawable/bg_badge_warn</item>
+        <item name="android:textColor">@color/hud_warn</item>
+    </style>
+
+    <style name="badge_saved">
+        <item name="android:background">@drawable/bg_badge_accent</item>
+        <item name="android:textColor">@color/hud_accent</item>
+    </style>
+
+    <style name="badge_reserved">
+        <item name="android:background">@drawable/bg_badge_reserved</item>
+        <item name="android:textColor">@color/hud_faint</item>
+    </style>
+
+    <style name="badge_mode">
+        <item name="android:background">@drawable/bg_badge_accent</item>
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:paddingTop">6dp</item>
+        <item name="android:paddingBottom">6dp</item>
+    </style>
+
+    <!-- 按钮族 -->
+    <style name="hud_button">
+        <item name="android:background">@drawable/bg_btn_accent</item>
+        <item name="android:textColor">@color/hud_on_accent</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:paddingLeft">16dp</item>
+        <item name="android:paddingRight">16dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+    </style>
+
+    <style name="hud_button_ghost">
+        <item name="android:background">@drawable/bg_btn_ghost</item>
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <style name="hud_button_danger">
+        <item name="android:background">@drawable/bg_btn_danger</item>
+        <item name="android:textColor">@color/hud_danger</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <style name="hud_input">
+        <item name="android:background">@drawable/bg_input</item>
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textColorHint">@color/hud_faint</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:paddingLeft">12dp</item>
+        <item name="android:paddingRight">12dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+    </style>
+
+    <!-- 工具坞族（dock_*） -->
+    <style name="dock_button">
+        <item name="android:background">@drawable/bg_btn_ghost</item>
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:paddingLeft">10dp</item>
+        <item name="android:paddingRight">10dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <style name="dock_button_danger">
+        <item name="android:background">@drawable/bg_btn_danger</item>
+        <item name="android:textColor">@color/hud_danger</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:paddingLeft">10dp</item>
+        <item name="android:paddingRight">10dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <!-- 虚拟导航键族（nav_*） -->
+    <style name="nav_key">
+        <item name="android:background">@drawable/bg_btn_ghost</item>
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:paddingLeft">18dp</item>
+        <item name="android:paddingRight">18dp</item>
+        <item name="android:paddingTop">10dp</item>
+        <item name="android:paddingBottom">10dp</item>
+    </style>
+
+    <!-- 底部弹层族（sheet_*） -->
+    <style name="sheet_title">
+        <item name="android:textColor">@color/hud_text</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="sheet_field_label">
+        <item name="android:textColor">@color/hud_dim</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:paddingBottom">4dp</item>
+    </style>
+
+    <!-- 分段控件项（seg_*） -->
+    <style name="seg_item">
+        <item name="android:background">@drawable/bg_seg_normal</item>
+        <item name="android:textColor">@color/hud_dim</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingLeft">10dp</item>
+        <item name="android:paddingRight">10dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <style name="seg_item_selected">
+        <item name="android:background">@drawable/bg_seg_selected</item>
+        <item name="android:textColor">@color/hud_on_accent</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingLeft">10dp</item>
+        <item name="android:paddingRight">10dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <!-- 底部弹层入位/退场动画（自建 anim：平台 slide_in_up/slide_out_down 为私有资源） -->
+    <style name="sheet_bottom_anim">
+        <item name="android:windowEnterAnimation">@anim/sheet_in</item>
+        <item name="android:windowExitAnimation">@anim/sheet_out</item>
+    </style>
+
+    <style name="Theme.CloudPhone.Sheet" parent="Theme.CloudPhone.Hud">
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:windowAnimationStyle">@style/sheet_bottom_anim</item>
+    </style>
+</resources>

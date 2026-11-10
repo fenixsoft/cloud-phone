@@ -1,0 +1,382 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  设置页（client-ui-redesign 4.3）：六分组——外观 / 串流档位默认值 / 传输偏好 /
+  触控输入 / 安全 / 关于。未实现行统一「预留」徽章且不挂点击监听（点击无效）。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- 顶栏 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btn_back"
+                style="@style/hud_button_ghost"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:text="‹ 返回" />
+
+            <TextView
+                style="@style/hud_topbar_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:text="设置" />
+        </LinearLayout>
+
+        <!-- ── 外观（占位） ── -->
+        <TextView
+            style="@style/hud_section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="外观" />
+
+        <LinearLayout style="@style/card_hud" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/card_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="主题" />
+
+                <TextView
+                    style="@style/hud_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="跟随系统" />
+
+                <TextView style="@style/badge_base" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_badge_reserved" android:text="预留" android:textColor="@color/hud_faint" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/card_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="深色模式" />
+
+                <TextView
+                    style="@style/hud_label"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:text="深色" />
+
+                <TextView style="@style/badge_base" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_badge_reserved" android:text="预留" android:textColor="@color/hud_faint" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ── 串流档位默认值 ── -->
+        <TextView
+            style="@style/hud_section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="串流档位默认值" />
+
+        <LinearLayout style="@style/card_hud" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+            <TextView
+                style="@style/sheet_field_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="分辨率默认档" />
+
+            <LinearLayout
+                android:id="@+id/resolution_seg"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/res_follow"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="跟随本机" />
+
+                <Space android:layout_width="6dp" android:layout_height="1dp" />
+
+                <TextView
+                    android:id="@+id/res_720"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="720p" />
+
+                <Space android:layout_width="6dp" android:layout_height="1dp" />
+
+                <TextView
+                    android:id="@+id/res_1080"
+                    style="@style/seg_item"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="1080p" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/sheet_field_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="帧率默认值" />
+
+                    <LinearLayout
+                        android:id="@+id/fps_seg"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/fps_30"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="30" />
+
+                        <Space android:layout_width="6dp" android:layout_height="1dp" />
+
+                        <TextView
+                            android:id="@+id/fps_60"
+                            style="@style/seg_item"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="60" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <Space android:layout_width="10dp" android:layout_height="1dp" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1.4"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/sheet_field_label"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="码率默认值（Mbps）" />
+
+                    <LinearLayout
+                        android:id="@+id/bitrate_seg"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView android:id="@+id/br_4" style="@style/seg_item" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="4" />
+                        <Space android:layout_width="4dp" android:layout_height="1dp" />
+                        <TextView android:id="@+id/br_8" style="@style/seg_item" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="8" />
+                        <Space android:layout_width="4dp" android:layout_height="1dp" />
+                        <TextView android:id="@+id/br_16" style="@style/seg_item" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="16" />
+                        <Space android:layout_width="4dp" android:layout_height="1dp" />
+                        <TextView android:id="@+id/br_20" style="@style/seg_item" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="20" />
+                    </LinearLayout>
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ── 传输偏好 ── -->
+        <TextView
+            style="@style/hud_section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="传输偏好" />
+
+        <LinearLayout style="@style/card_hud" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+            <TextView
+                style="@style/sheet_field_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="默认 TCP 端口（新建连接与局域网探测共用）" />
+
+            <EditText
+                android:id="@+id/tcp_port_input"
+                style="@style/hud_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLines="1"
+                android:text="22333" />
+
+            <TextView
+                style="@style/sheet_field_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="默认 UDP 端口" />
+
+            <EditText
+                android:id="@+id/udp_port_input"
+                style="@style/hud_input"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:inputType="number"
+                android:maxLines="1"
+                android:text="22334" />
+        </LinearLayout>
+
+        <!-- ── 触控输入（占位） ── -->
+        <TextView
+            style="@style/hud_section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="触控输入" />
+
+        <LinearLayout style="@style/card_hud" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/card_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="触控灵敏度" />
+
+                <TextView style="@style/badge_base" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_badge_reserved" android:text="预留" android:textColor="@color/hud_faint" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/card_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="按压触觉反馈" />
+
+                <TextView style="@style/badge_base" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_badge_reserved" android:text="预留" android:textColor="@color/hud_faint" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ── 安全（预留） ── -->
+        <TextView
+            style="@style/hud_section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="安全" />
+
+        <LinearLayout style="@style/card_hud" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+
+            <TextView
+                style="@style/card_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="配对 token 管理" />
+
+            <TextView style="@style/badge_base" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_badge_reserved" android:text="预留" android:textColor="@color/hud_faint" />
+        </LinearLayout>
+
+        <!-- ── 关于 ── -->
+        <TextView
+            style="@style/hud_section"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="关于" />
+
+        <LinearLayout style="@style/card_hud" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/card_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="版本号" />
+
+                <TextView
+                    android:id="@+id/version_value"
+                    style="@style/hud_value"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="—" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    style="@style/card_title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="检查更新" />
+
+                <TextView style="@style/badge_base" android:layout_width="wrap_content" android:layout_height="wrap_content" android:background="@drawable/bg_badge_reserved" android:text="预留" android:textColor="@color/hud_faint" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

@@ -10,8 +10,10 @@ import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
-import android.widget.Button
-import android.widget.LinearLayout
+import android.view.View
+import android.view.ViewGroup
+import android.widget.BaseAdapter
+import android.widget.GridView
 import android.widget.TextView
 import android.widget.Toast
 import cloudphone.protocol.ControlMessage
@@ -21,45 +23,46 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * 源端应用列表页（client-ux-and-input-latency 4.1）：
- * - 会话在线时发送 AppListRequest，3s 无应答展示失败原因与重试入口；
- * - 每项两个操作：「打开」= SINGLE_APP StartSession 直进串流（源端为单应用不可用
- *   环境时展示既有明确拒绝文案）；「加到桌面」= ShortcutManager.requestPinShortcut
- *   （id=launch-<host>-<port>-<pkg哈希>），钉选被拒/不支持 Toast 降级，列表仍可用。
+ * 源端应用列表页（client-ux-and-input-latency 4.1 / client-ui-redesign 4.1 磁贴化）：
+ * - GridView 磁贴（占位图标 + 名称白色文字，无包名行，零新依赖平台组件）；
+ * - 顶部搜索框按名称实时过滤（适配器层 filter）；
+ * - 每磁贴右上角图钉 = 既有 app-shortcuts 创建桌面快捷方式（requestPinShortcut，
+ *   Launcher 无钉选能力 Toast 降级，列表仍可用）；
+ * - 点选磁贴 = SINGLE_APP StartSession 直进串流（源端为单应用不可用环境时展示
+ *   既有明确拒绝文案）；
+ * - AppListRequest 3s 无应答展示失败原因与重试入口（既有规则不变）。
  */
 class SourceAppsActivity : Activity() {
 
     private lateinit var statusText: TextView
-    private lateinit var listHost: LinearLayout
-    private lateinit var retryButton: Button
+    private lateinit var retryButton: TextView
+    private lateinit var gridView: GridView
+    private lateinit var searchInput: android.widget.EditText
+
+    private var allApps: List<cloudphone.protocol.AppEntry> = emptyList()
+    private var visibleApps: List<cloudphone.protocol.AppEntry> = emptyList()
     private var loadSeq = 0
+    private val adapter = TileAdapter()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(pad, pad, pad, pad)
-        }
-        root.addView(TextView(this).apply { text = "源端应用（打开 / 加到桌面）" })
-        statusText = TextView(this).apply { text = "加载中…" }
-        root.addView(statusText)
-        retryButton = Button(this).apply {
-            text = "重试"
-            setOnClickListener { loadApps() }
-            visibility = android.view.View.GONE
-        }
-        root.addView(retryButton)
-        val sv = android.widget.ScrollView(this)
-        listHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        sv.addView(listHost)
-        root.addView(
-            sv,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT, 1f,
-            ),
-        )
-        setContentView(root)
+        setContentView(R.layout.activity_source_apps)
+        statusText = findViewById(R.id.apps_status)
+        retryButton = findViewById(R.id.btn_apps_retry)
+        gridView = findViewById(R.id.apps_grid)
+        searchInput = findViewById(R.id.apps_search)
+
+        gridView.adapter = adapter
+        findViewById<TextView>(R.id.btn_apps_back).setOnClickListener { finish() }
+        retryButton.setOnClickListener { loadApps() }
+        // 搜索框：按应用名称实时过滤（spec「输入『原神』时列表实时过滤只剩匹配磁贴」）
+        searchInput.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) = Unit
+            override fun afterTextChanged(s: android.text.Editable?) {
+                applyFilter()
+            }
+        })
         loadApps()
     }
 
@@ -68,12 +71,22 @@ class SourceAppsActivity : Activity() {
         ClientSession.onAppList = null
     }
 
+    /** 按名称过滤（大小写不敏感，仅 label；包名不展示也不参与过滤——spec 磁贴无包名行） */
+    private fun applyFilter() {
+        val q = searchInput.text.toString().trim()
+        visibleApps = if (q.isEmpty()) allApps else allApps.filter { it.label.contains(q, ignoreCase = true) }
+        adapter.notifyDataSetChanged()
+        if (allApps.isNotEmpty()) {
+            statusText.text = "源端可启动应用 ${allApps.size} 个" +
+                (if (q.isEmpty()) "" else "，匹配 ${visibleApps.size} 个")
+        }
+    }
+
     /** 发送 AppListRequest 并等待应答（3s 超时判定失败）；网络 I/O 在工作线程 */
     private fun loadApps() {
         val seq = ++loadSeq
         statusText.text = "加载中…"
-        retryButton.visibility = android.view.View.GONE
-        listHost.removeAllViews()
+        retryButton.visibility = View.GONE
         Thread({
             if (!ClientSession.connected) {
                 runOnUiThread { showFailure("无在线会话（先连接源端）") }
@@ -96,42 +109,15 @@ class SourceAppsActivity : Activity() {
                     showFailure("3s 无应答（会话可能已断开）")
                     return@runOnUiThread
                 }
-                statusText.text = "源端可启动应用 ${apps.size} 个"
-                renderApps(apps)
+                allApps = apps
+                applyFilter()
             }
         }, "apps-load").apply { isDaemon = true; start() }
     }
 
     private fun showFailure(reason: String) {
         statusText.text = "列表获取失败：$reason"
-        retryButton.visibility = android.view.View.VISIBLE
-    }
-
-    private fun renderApps(apps: List<cloudphone.protocol.AppEntry>) {
-        listHost.removeAllViews()
-        val pad = (8 * resources.displayMetrics.density).toInt()
-        for (app in apps) {
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row.addView(
-                TextView(this).apply {
-                    text = "${app.label}\n${app.packageName}"
-                    setPadding(pad, pad, pad, pad)
-                },
-                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f),
-            )
-            row.addView(Button(this).apply {
-                text = "打开"
-                setOnClickListener { openApp(app) }
-            })
-            row.addView(Button(this).apply {
-                text = "加到桌面"
-                setOnClickListener { pinShortcut(app) }
-            })
-            listHost.addView(
-                row,
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT),
-            )
-        }
+        retryButton.visibility = View.VISIBLE
     }
 
     /** 「打开」：SINGLE_APP StartSession 直进串流；被拒展示源端既有拒绝文案 */
@@ -150,14 +136,21 @@ class SourceAppsActivity : Activity() {
                     ).show()
                     return@runOnUiThread
                 }
-                startActivity(Intent(this, DecodeRenderActivity::class.java))
+                // 单应用模式进入控制台：徽章用应用名（4.2）
+                startActivity(
+                    Intent(this, DecodeRenderActivity::class.java)
+                        .putExtra("mode", "single")
+                        .putExtra("appName", app.label)
+                        .putExtra("pkg", app.packageName),
+                )
             }
         }, "apps-open").apply { isDaemon = true; start() }
     }
 
     /**
-     * 「加到桌面」：requestPinShortcut；Launcher 无钉选能力 → Toast「当前桌面不支持创建快捷方式」。
-     * 快捷方式 intent = cloudphone://launch deeplink（连接参数 + 目标包名，见 4.2）。
+     * 图钉 =「加到桌面」：requestPinShortcut（既有 app-shortcuts 能力，零改动复用）；
+     * 快捷方式 intent = cloudphone://launch deeplink（连接参数 + 目标包名）；
+     * Launcher 无钉选能力 → Toast 降级，列表仍可用。
      */
     private fun pinShortcut(app: cloudphone.protocol.AppEntry) {
         val sm = getSystemService(ShortcutManager::class.java)
@@ -207,6 +200,22 @@ class SourceAppsActivity : Activity() {
 
     companion object {
         const val PIN_EXTRA_ID = "cloudphone.client.PIN_SHORTCUT_ID"
+    }
+
+    /** 磁贴适配器：占位图标 + 名称白色文字（无包名行），右上角图钉加桌面 */
+    private inner class TileAdapter : BaseAdapter() {
+        override fun getCount(): Int = visibleApps.size
+        override fun getItem(position: Int): Any = visibleApps[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val view = convertView ?: layoutInflater.inflate(R.layout.item_app_tile, parent, false)
+            val app = visibleApps[position]
+            view.findViewById<TextView>(R.id.tile_name).text = app.label
+            view.findViewById<TextView>(R.id.tile_pin).setOnClickListener { pinShortcut(app) }
+            view.setOnClickListener { openApp(app) }
+            return view
+        }
     }
 }
 

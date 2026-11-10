@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单应用列表页（client-ui-redesign 4.1）：顶部搜索框（按名称实时过滤）+
+  GridView 磁贴网格（零新依赖，平台组件）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/hud_bg"
+    android:orientation="vertical">
+
+    <!-- 顶栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/btn_apps_back"
+            style="@style/hud_button_ghost"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="‹ 返回" />
+
+        <TextView
+            style="@style/hud_topbar_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_weight="1"
+            android:text="单应用" />
+    </LinearLayout>
+
+    <!-- 搜索框：按应用名称实时过滤 -->
+    <EditText
+        android:id="@+id/apps_search"
+        style="@style/hud_input"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:hint="按应用名称过滤…"
+        android:inputType="text"
+        android:maxLines="1" />
+
+    <TextView
+        android:id="@+id/apps_status"
+        style="@style/hud_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingTop="8dp"
+        android:paddingEnd="16dp"
+        android:text="加载中…" />
+
+    <TextView
+        android:id="@+id/btn_apps_retry"
+        style="@style/hud_button_ghost"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginTop="6dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:text="重试"
+        android:visibility="gone" />
+
+    <!-- 磁贴网格 -->
+    <GridView
+        android:id="@+id/apps_grid"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:horizontalSpacing="10dp"
+        android:numColumns="3"
+        android:padding="12dp"
+        android:verticalSpacing="10dp" />
+</LinearLayout>
