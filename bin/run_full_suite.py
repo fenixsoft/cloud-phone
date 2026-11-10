@@ -155,6 +155,11 @@ def main():
               ["bash", "-c", "cd source && ./gradlew --console=plain assembleDebug -q"], ROOT, per_phase),
         Phase("build-client",
               ["bash", "-c", "cd client && ./gradlew --console=plain assembleDebug -q"], ROOT, per_phase),
+        # windows-desktop-client SPEC：桌面客户端构建产物与模块单测（98 例，含 FFmpeg 合成流解码）
+        Phase("build-client-windows",
+              ["bash", "-c", "cd client-windows && ./gradlew --console=plain createDistributable -q"], ROOT, per_phase),
+        Phase("client-windows-unit-tests",
+              ["bash", "-c", "cd client-windows && ./gradlew --console=plain test -q"], ROOT, per_phase),
     ]
     if args.with_device:
         phases += [
