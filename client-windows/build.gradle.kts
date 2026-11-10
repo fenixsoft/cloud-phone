@@ -1,5 +1,6 @@
 // cloudphone Windows 桌面客户端构建（design D1/D2）：
 // Kotlin JVM 17 + Compose Desktop；JavaCV 按 classifier 仅引入 windows-x86_64/linux-x86_64 natives
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -7,7 +8,6 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.compose)
-    application
 }
 
 group = "cloudphone"
@@ -45,6 +45,29 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
 }
 
-application {
-    mainClass.set("cloudphone.desktop.MainKt")
+// 4.1 jpackage 打包（compose.desktop.application DSL）：
+// Windows 侧 packageMsi/packageExe；Linux 构建机经 createDistributable 产出 app-image
+// 验证配置（spec 验收）。JavaCV/FFmpeg 经 javacpp 运行时解包 natives，
+// 运行需 jdk.unsupported（Unsafe）；VM 无 GPU 场景默认以软件渲染参数启动（见 docs/windows-client.md）。
+compose.desktop.application {
+    mainClass = "cloudphone.desktop.MainKt"
+    nativeDistributions {
+        targetFormats(TargetFormat.Msi, TargetFormat.Exe)
+        packageName = "CloudPhoneDesktop"
+        packageVersion = "0.1.0"
+        description = "云手机 Windows 桌面串流客户端"
+        vendor = "cloudphone"
+        copyright = "© 2024 cloudphone"
+        includeAllModules = true // JavaCV/FFmpeg natives 与 Unsafe 需要，避免缺模块运行时崩溃
+        linux {
+            iconFile.set(project.file("src/main/resources/icon.png"))
+        }
+        windows {
+            menu = true
+            shortcut = true
+            dirChooser = true
+            perUserInstall = true
+            menuGroup = "CloudPhone"
+        }
+    }
 }
