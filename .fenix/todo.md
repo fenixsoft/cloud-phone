@@ -156,3 +156,8 @@
   - 证据：fenixd.log 06:50:38Z 清扫 impl-client-ui-redesign-1794286517 worktree 时留快照并指引「recover via: git stash store 584de3ee…」，但当前 refs/stash 不存在、git for-each-ref --contains 4306e3f 为空、fsck 报悬空 commit——stash ref 为 per-worktree 引用，随 worktree rmtree 一并销毁，快照指引失效，run4 全套重实现（9 提交 c3143e5→4306e3f）现零引用可达。两源互证：worktree_manager 快照日志 ↔ git 引用/对象实测。；触发 run_id=arbiter-client-ui-redesign-1794302874（签名 client-ui-redesign::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 impl_budget_exhausted（spec=client-ui-redesign）：'client-ui-redesign' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：pre-rmtree 快照改存共享引用（主 gitdir refs/preservation/<run_id>）或 git note/独立 bundle；STATE 锚点增设 _last_impl_tip 记录悬空 tip；终态 impl 分支保留至 merge-back 决策后再删。
+- **[arbiter:client-u] impl-budget-wall-manual-unfreeze-silent-bounce**
+  - 影响：触发信号建议的人工补救路径（「人工重置计数器即重新获得自动修复机会」）无一等通道：只解冻不重置必在分钟级回弹再冻结，空耗一次升级环且静默跳过使人工误判为派发阻塞；错误文案 run 锚点丢失劣化裁决质量。
+  - 证据：fenixd.log 09:04:26Z 批量解冻重置 12 个计数键但不含 _impl_run_budget_used；09:07:14-09:11:54 恢复循环 5 次触发 orphan-ready 重派均被静默跳过（无拒绝日志，对照同秒 single-app-realdevice-retest 有「预算计数 +1 used=2/4」日志）；09:11:55Z 按 4/4 再冻结。另冻结 error 文案「最近实现 run=未知」与归档在案的 run4 锚点相矛盾（锚点丢失）。两源互证：日志时序 ↔ STATE 冻结条目。；触发 run_id=arbiter-client-ui-redesign-1794302874（签名 client-ui-redesign::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 impl_budget_exhausted（spec=client-ui-redesign）：'client-ui-redesign' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：unfreeze_spec 检测 used≥budget 时显式拒绝并提示重置通道，或提供显式 reset_impl_budget 参数（台账留痕）；派发器预算拒绝从静默改为 WARNING 级原因日志；冻结 error 文案回填最近 run 归档锚点。
