@@ -12,3 +12,5 @@
 | [ADR-008](ADR-008-fragment-aead-stream-encryption.md) | accepted | 视频片级 AES-128-GCM AEAD + HKDF 方向子钥，协商走可选字段不 bump 协议版本 |
 | [ADR-009](ADR-009-aux-flows-on-control-tcp-video-first.md) | accepted | 辅助流复用控制 TCP 记录通道不新增传输面，积压丢音频保视频的优先级裁定 |
 | [ADR-010](ADR-010-ime-focus-proxy-clipboard-textinput.md) | accepted | 剪贴板/组合文本注入经源端内置 IME 焦点代理，方向不对称如实降级 |
+| [ADR-011](ADR-011-desktop-client-consumes-protocol-nofork.md) | accepted | 客户端新形态经复合构建消费 protocol 单一事实源，协议零 fork、既有工程零改动 |
+| [ADR-012](ADR-012-windows-vm-smoke-verification-chain.md) | accepted | Windows 实机验证走 dockur/windows VM 脚本化冒烟链，软渲染回退 + 分阶段截图取证 + 不可达显式诊断 |
