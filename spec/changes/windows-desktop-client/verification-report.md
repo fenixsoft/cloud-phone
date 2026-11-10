@@ -1,35 +1,22 @@
 # 验证报告：windows-desktop-client
 
-> ⚠️ 本报告由框架于 2026-11-10T13:59:22Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
-> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-10T13:54:51.311130+00:00+run-result@mtime1794319152145767927
+> ⚠️ 本报告由框架于 2026-11-10T14:14:29Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
+> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-10T14:14:29.036143+00:00+run-result@mtime1794320069096922221
 
-## 结论：❌ 未通过（Bug Found）
+## 结论：✅ 通过（verified）
 
-**状态：bug-found — 29/30 场景通过，1 失败，0 错误（1 个真实产品 Bug）**
+**状态：verified — 30/30 场景通过，0 失败，0 错误（全部场景通过）**
 
-30 场景 29 过 1 失败；唯一失败 input-mapper-back-keyboard-test 归 product-bug（spec:33 可打印字符键 TEXT_INPUT 直发缺失，非场景文件缺陷不走原地修复）；其余交付物/复合构建/单元测试/打包/冒烟诊断场景全绿。
+全绿快道: 30/30 场景通过、0 失败 0 警告——无分类对象，跳过 judge 机械 verified
 
 | 指标 | 数量 |
 | --- | --- |
-| 通过 | 29 |
-| 失败 | 1 |
+| 通过 | 30 |
+| 失败 | 0 |
 | 错误 | 0 |
-| 产品 Bug | 1 |
+| 产品 Bug | 0 |
 | 本链增量 Token（输入） | 0.31M |
 | 本链增量 Token（输出） | 0.09M |
-
-
-## 真实产品 Bug
-
-### BUG-01（severity=major）· exit_code + output_match（cli 源码锚点检查）
-
-- 关联场景：input-mapper-back-keyboard-test
-- 描述：会话窗口物理键盘可打印字符键未按 spec:33 经 TEXT_INPUT 直发：仅 Ctrl+Shift+K 文字面板路径可发 TEXT_INPUT，会话画面区无键盘焦点字符处理，非字符键不注入的过滤逻辑亦无处落地
-- 根因：SessionScreen 视口仅接线鼠标（左键三段/右键 BACK/滚轮），AppWindow KeyEventDispatcher 只解析 F11/Ctrl+Shift 快捷键，物理键盘字符键→AuxBridge.sendTextInput 桥接缺失
-- 证据（场景 input-mapper-back-keyboard-test 结构化证据，引用）：
-  - failed_assertions: [{"type": "exit_code", "selector": "步骤1 check 源码锚点grep", "expected": 0, "actual": 1}, {"type": "output_match", "selector": "combined", "expected": "OK INPUT KEY ANCHORS", "actual": "FAIL printable-filter"}]
-  - screenshots: []
-  - first_failed_step: 步骤1: grep 'isLetterOrDigit\|printable\|可打印\|ISOControl\|char' 于 InputMapper.kt/SessionScreen.kt 无命中，输出 FAIL printable-filter，退出码1
 
 
 ## 场景结果
@@ -45,7 +32,7 @@
 | video-pipeline-latest-wins-test | 解码渲染管线与 latest-wins 兜底：VideoPipeline.kt 以 FFmpeg(JavaCV) H.264 解码 → RGBA → ImageBitmap 交 Compose Canvas，四路计数（接收片数/解码帧数/积压丢弃帧数/上屏帧数）经 StateFlow 供 HUD 与诊断；latest-wins 语义（解码按序保 P 帧参考链完整、上屏仅取最新帧、积压过深快进至下一关键帧边界而非在参考链中间丢帧花屏）、默认关闭的 debug 开关可 dump 原始 H.264 供 VM 冒烟黑屏/花屏取证；VideoPipelineTest 用 JavaCV 编码器合成样例 H.264 流断言解码输出帧与积压丢弃计数且测试全绿（出处：spec.md:17-31「解码渲染管线与 latest-wins」Requirement 与「卡顿兜底」Scenario；tasks 2.2；design.md D2；知识 client-decode-render latest-wins 规则）。 | pass | 0/6 | - |
 | input-mapper-mouse-touch-test | 鼠标输入映射与黑边防护：InputMapper 将左键 press/move/release 映射为 InputAction DOWN/MOVE/UP（视口坐标归一化 65535、分辨率无关）、按住左键拖动等效触摸滑动、滚轮产生连续小步滑动、letterbox 黑边区域点击不产生越界归一化坐标的 INPUT_EVENT（黑边防护钳制）；InputMapperTest 纯函数单测覆盖映射边界与黑边且全绿（出处：spec.md:32-45「鼠标与键盘输入映射」Requirement 与「单击与拖动/黑边区域防护」Scenario；tasks 2.4；知识 client-decode-render 触摸归一化 65535 规则）。 | pass | 0/6 | - |
 | letterbox-viewport-decoded-resolution | letterbox 视口与解码实际分辨率：视口按源分辨率 letterbox 居中、窗口缩放不拉伸比例（宽高比保持、黑边填充剩余区域），HUD 分辨率读数取解码实际输出值而非 START_SESSION 请求值（InputMapper letterbox 映射 + SessionScreen HUD 分辨率投影 + VideoPipeline 解码尺寸 StateFlow 源码锚点，InputMapperTest 映射边界断言由 S8 全绿背书）（出处：spec.md:18「视口 SHALL 按源分辨率 letterbox 居中…HUD 分辨率 SHALL 取解码实际值」与 spec.md:28-30「比例保持」Scenario；tasks 2.4、3.3）。 | pass | 0/2 | - |
-| input-mapper-back-keyboard-test | 右键返回与键盘文字直发：右键单击映射为 BACK 注入（等效 Android 端边缘侧滑返回语义、复用既有注入路径）、窗口获得键盘焦点时可打印字符键经 TEXT_INPUT 直发（等效文字面板语义）、非字符键（功能键/修饰键）不产生注入（协议无独立按键通道）、HOME/RECENTS 保持占位禁用不为扩展协议；InputMapper/SessionScreen 源码与 InputMapperTest 锚点齐备，测试由 S8 全绿背书（出处：spec.md:33「右键 SHALL 等效 BACK…非字符键 SHALL NOT 产生注入…HOME/RECENTS SHALL 保持占位禁用」与 spec.md:39-41「右键返回」Scenario；tasks 2.4、3.3；design.md D4 Non-Goals scancode 增强）。 | failed（已修正） | 2/2 | product-bug |
+| input-mapper-back-keyboard-test | 右键返回与键盘文字直发：右键单击映射为 BACK 注入（等效 Android 端边缘侧滑返回语义、复用既有注入路径）、窗口获得键盘焦点时可打印字符键经 TEXT_INPUT 直发（等效文字面板语义）、非字符键（功能键/修饰键）不产生注入（协议无独立按键通道）、HOME/RECENTS 保持占位禁用不为扩展协议；InputMapper/SessionScreen 源码与 InputMapperTest 锚点齐备，测试由 S8 全绿背书（出处：spec.md:33「右键 SHALL 等效 BACK…非字符键 SHALL NOT 产生注入…HOME/RECENTS SHALL 保持占位禁用」与 spec.md:39-41「右键返回」Scenario；tasks 2.4、3.3；design.md D4 Non-Goals scancode 增强）。 | pass | 0/2 | - |
 | session-controller-connect-auth-test | 会话连接建链与 token 错配显式失败：SessionController 会话状态机经本机源桩 loopback 断言 连接→HELLO/HELLO_ACK→START_SESSION→会话态 建链流程与挂起/恢复/档位切换路径；token 错配呈现 REJECT_BAD_TOKEN 明确失败（非静默、失败原因上抛 UI 状态）不进入会话；protocol 后端回调经 Channel 桥接协程、HUD/会话状态经 StateFlow 暴露；SessionControllerTest 全绿（出处：spec.md:58-60「token 错配」Scenario 与 spec.md:48；tasks 2.1；design.md D7；protocol/src/main/kotlin/cloudphone/protocol/Messages.kt:55-57 HelloStatus.REJECT_BAD_TOKEN=1）。 | pass | 0/6 | - |
 | transport-backend-fallback-crypto | 三传输后端接入与回落通告：lan-direct/p2p/frp 三后端经 protocol 模块选择接入（无重实现），p2p 打洞失败自动回落 frp 建立会话、回落通告条经 StateFlow 呈现、HUD 后端徽章更新为 frp；加密经 enableCrypto(CryptoCodec) 启用（AES-128-GCM 片级 + HKDF 方向子钥 + 512 重放窗口由 protocol 保证）并在 HUD 呈现加密徽章；SessionControllerTest 覆盖回落与加密路径且全绿（出处：spec.md:47-56「三传输后端接入与加密」Requirement 与「p2p 回落 frp」Scenario；tasks 2.1；design.md D7；知识 transport-backends/stream-encryption p2p 5s 回落瀑布与加密语义）。 | pass | 0/4 | - |
 | audio-sink-jitter-test | 音频下行 jitter 语义：AudioSink.kt 将 AUDIO_CHUNK(ADTS AAC-LC) 经 JavaCV 解码为 PCM 16bit/48kHz/stereo，经 AudioOutput 接口（javax.sound.sampled SourceDataLine 播放实现 + 测试用 null-sink）播放；jitter 逐条对齐 aux-channels-m3：120ms 起播水位、播放队列 32 帧上限、控制通道积压>800ms 丢最旧音频帧保视频不阻塞；AudioSinkTest 合成 ADTS 断言解码 PCM 帧数与 jitter 丢弃/起播逻辑且全绿（出处：spec.md:62-71「音频下行」Requirement 与「积压防护」Scenario；tasks 2.3；design.md D3；知识 aux-channels-m3 播放与积压防护规则）。 | pass | 0/6 | - |
@@ -66,13 +53,6 @@
 | jpackage-packaging-config | jpackage 打包配置与产物：build.gradle.kts 含 compose.desktop.application DSL（packageMsi for Windows、主类/vendor/图标配置），Linux 侧 createDistributable 可产出 app-image 验证配置正确且 packageMsi 任务在任务列表可见（Windows 机器上可执行 packageMsi 产出安装包——spec 打包产物 Scenario 的 Windows 侧执行留待 Windows 环境，本场景以 Linux 侧 createDistributable + 任务清单可见性验证配置正确性）（出处：spec.md:151-153「打包产物」Scenario 与 spec.md:145「SHALL 提供 jpackage 打包配置」；tasks 4.1「createDistributable 产物存在且 packageMsi 任务在任务列表可见」；design.md Risks jpackage 需 WiX 行）。 | pass | 0/6 | - |
 | win-vm-smoke-self-check | Windows 冒烟脚本结构与 --self-check 自检（环境依赖；有 fallback: --self-check 无 VM 自检模式，任务 5.1 验收口径——实际 VM 端到端留待验收阶段按 docs 执行）：scripts/win_vm_smoke.sh 可执行、bash -n 语法通过、显式探测 10.0.2.2:22333 可达性（10.0.2.2 为 QEMU slirp 网关映射宿主环回 adb forward）、带 --self-check 无 VM 自检模式且宿主执行退出 0、脚本以软件渲染回退（-Dskiko.renderApi=SOFTWARE）启动客户端、含 RDP/QEMU monitor 截图取证（首页/连接/视频上屏/断开四阶段）与不可达诊断预案（socat 中转/端口映射）。本验证树无 dockur/windows VM 与宿主模拟器源端，端到端链路（会话阶段截图含非黑视频区与 HUD）在本环境不可执行，由 --self-check 与 S30 不可达诊断分支兜底（出处：spec.md:155-160「Windows 实机冒烟验证链路」Requirement 与「冒烟端到端」Scenario；tasks 5.1「宿主执行 --self-check 绿…实际 VM 端到端在验收阶段执行并按 docs 记录」；design.md D8 与 Risks 软渲染回退/socat 预案行）。环境依赖（dockur/windows VM + 宿主模拟器源端 + RDP 8889）；有 fallback: --self-check 无 VM 自检模式。 | pass | 0/3 | - |
 | win-vm-smoke-network-diagnostics | 网络不可达诊断分支（环境依赖；有 fallback: 脚本结构与 --self-check 自检见 win-vm-smoke-self-check，本场景被测对象即诊断分支本身）：在验证树宿主（Linux、无 QEMU slirp 网关）直接执行 scripts/win_vm_smoke.sh（不带 --self-check），10.0.2.2:22333 恒不可达、等价于 spec「VM 到宿主 forward 端口不可达」的 WHEN 条件——脚本应输出可达性探测结果与修复预案提示（dockur 端口映射直连或宿主 socat 中转）并以非 0 退出码收尾，不得静默失败；期望输出含探测目标（10.0.2.2/22333/可达性）与预案关键词，SMOKE_RC 非 0（出处：spec.md:162-164「网络不可达诊断」Scenario「脚本输出可达性探测结果与修复预案提示…退出码非 0」；tasks 5.1「不可达输出诊断+预案非 0 退出」；design.md D8「冒烟脚本第一步显式探测」与 Risks slirp 可达性预案行）。非环境依赖：诊断分支断言在无 VM 的宿主即可机械执行，不依赖 dockur/windows VM 或模拟器源端。 | pass | 0/2 | - |
-
-
-## 断言级豁免清单
-
-以下失败断言被归类为非产品缺陷（不记产品 Bug），逐条列出供人工复核豁免是否掩盖真实缺陷（场景级一句话归因不足以复核）。
-
-无非 product-bug 的被豁免失败断言。
 
 ## 本轮场景集变更
 
