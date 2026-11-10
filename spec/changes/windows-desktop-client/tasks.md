@@ -99,3 +99,16 @@
 - path: specs/windows-desktop-client/prototype/apps.html
   kind: reference
 ```
+
+## 验证修复（原地打回第 1 轮）
+
+### 上轮实现结论（自动携带，来自上一轮 implementer 收工结论）
+
+Windows 桌面串流客户端 SPEC 全部 16 项任务实现完毕：client-windows/ Gradle 工程（Kotlin JVM 17 + Compose Desktop 1.6.11 + JavaCV FFmpeg 6.1.1，protocol 复合构建）；2.x 会话核心（SessionController 状态机/VideoPipeline latest-wins 软解/AudioSink 水位丢帧/InputMapper letterbox 归一化/AuxBridge 超时对账/DesktopLanScanner /24 发现/DesktopSourceProfiles 档案）；3.x 三屏与桌面形态（AppWindow 快捷键+标题栏/HomeScreen 表单校验/SessionScreen HUD 与工具坞/AppsScreen 列表与 .lnk 固化）；4.1 jpackage（createDistributable app-image 产出、packageMsi 可见）；4.2 docs/windows-client.md；5.1 win_vm_smoke.sh --self-check 绿。模块内 98 例测试全绿，全量回归经 bin/run_full_suite.py 有界入口执行（6 pass/0 fail，证据 .fenix/verify-evidence/windows-desktop-client/）。tasks.md 16 项已全部勾选，与本文件 completed_tasks 1:1 一致。本轮为重派收口：复跑 client-windows 单测全绿（HEAD 与上轮验证内容一致、树干净），并修正 findings 为对象数组（上轮字符串数组被产物硬门拒收）。
+
+上轮登记的 findings：
+- deliverable-dispute: spec/changes/windows-desktop-client/tasks.md 任务 3.4 行「AppListRequest（1s 超时显示重试入口）」 — 规划层校准任务 3.4 文本为「客户端 3s 失败判定显示重试入口」；实现以 spec.md 权威 3s 判定期为验收基准，无需代码改动
+
+- [ ] 先复核失败有效性：逐条核对 `spec/changes/windows-desktop-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
+- [ ] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
+- [ ] 修复后重跑验证确认通过
