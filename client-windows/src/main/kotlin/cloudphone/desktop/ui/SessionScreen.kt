@@ -3,6 +3,7 @@ package cloudphone.desktop.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -24,13 +26,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.utf16CodePoint
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cloudphone.desktop.session.HudState
+import cloudphone.desktop.session.KeyboardText
 import cloudphone.desktop.session.SessionController
 import cloudphone.desktop.session.SessionPhase
 import cloudphone.desktop.aux.AuxUiState
@@ -146,6 +153,28 @@ object TextInputStatus {
     }
 }
 
+/**
+ * 键盘直发路由（spec「鼠标与键盘输入映射」：会话窗口获得键盘焦点时，可打印字符键
+ * SHALL 经 TEXT_INPUT 直发——等效文字面板语义；协议无独立按键通道，非字符键
+ * （功能键/修饰键）SHALL NOT 产生注入；HOME/RECENTS 保持占位禁用不变）。
+ */
+object KeyTextRouter {
+    /**
+     * 键盘事件 utf16CodePoint → 直发文本；不可打印（功能键/修饰键按下事件的
+     * CHAR_UNDEFINED、Enter/Escape/Ctrl 组合等控制字符、私有区码位）返回 null（不注入）。
+     * 判别依据：Compose Desktop（CMP 1.6.x）把 AWT KEY_TYPED 映射为 type=Unknown 且
+     * utf16CodePoint=keyChar 的按键事件，可打印性过滤即字符键与非字符键的判别器。
+     */
+    fun typedText(codePoint: Int): String? = KeyboardText.printableText(codePoint)
+
+    /**
+     * 直发门控：文字面板打开（面板自身承载输入，防同击键双注入）或文字注入已降级
+     * （AuxNotice 置灰，textInputAvailable == false）时暂停直发。
+     */
+    fun directSendAllowed(textPanelOpen: Boolean, textInputAvailable: Boolean?): Boolean =
+        !textPanelOpen && textInputAvailable != false
+}
+
 /** 音量 popover 文案（0..1 → 0..100%） */
 object VolumeUi {
     fun percentText(volume: Double): String = "${(volume.coerceIn(0.0, 1.0) * 100).roundToInt()}%"
@@ -213,7 +242,26 @@ fun SessionScreen(
     var textDraft by remember { mutableStateOf("") }
     var rotated by remember { mutableStateOf(false) }
 
-    Box(modifier.fillMaxSize().background(DesktopBg)) {
+    // 视口键盘焦点（spec「鼠标与键盘输入映射」：会话窗口获得键盘焦点时，可打印字符键
+    // 经 TEXT_INPUT 直发——等效文字面板语义；非字符键不注入）。点击画面夺取焦点；
+    // 文字面板关闭后焦点回到画面（直发恢复），面板打开期间由面板承载输入、不直发。
+    val canvasFocus = remember { FocusRequester() }
+    LaunchedEffect(textPanelOpen) { if (!textPanelOpen) canvasFocus.requestFocus() }
+
+    Box(
+        modifier.fillMaxSize().background(DesktopBg)
+            .focusRequester(canvasFocus)
+            .clickable(onClickLabel = "画面聚焦键盘") { canvasFocus.requestFocus() }
+            .onPreviewKeyEvent { e ->
+                val text = KeyTextRouter.typedText(e.utf16CodePoint)
+                if (text != null && KeyTextRouter.directSendAllowed(textPanelOpen, aux.textInputAvailable)) {
+                    onSendText(text)
+                    true
+                } else {
+                    false
+                }
+            },
+    ) {
         // letterbox 视频画布
         VideoCanvas(bitmap = bitmap, videoWidth = videoWidth, videoHeight = videoHeight, rotated = rotated)
 

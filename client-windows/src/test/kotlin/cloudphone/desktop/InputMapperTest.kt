@@ -1,6 +1,7 @@
 package cloudphone.desktop
 
 import cloudphone.desktop.session.InputMapper
+import cloudphone.desktop.session.KeyboardText
 import cloudphone.protocol.ControlMessage
 import cloudphone.protocol.InputAction
 import org.junit.Assert.assertEquals
@@ -137,5 +138,35 @@ class InputMapperTest {
         assertEquals(9, e.sessionId)
         assertEquals(0, e.x)
         assertEquals(0, e.y)
+    }
+
+    // ── 键盘字符过滤（spec「鼠标与键盘输入映射」：可打印字符键 TEXT_INPUT 直发，非字符键不注入） ──
+
+    @Test
+    fun `键盘过滤 - 可打印 ASCII 字母数字标点空格直发`() {
+        assertEquals("a", KeyboardText.printableText('a'))
+        assertEquals("Z", KeyboardText.printableText('Z'))
+        assertEquals("7", KeyboardText.printableText('7'))
+        assertEquals(",", KeyboardText.printableText(','))
+        assertEquals("@", KeyboardText.printableText('@'))
+        assertEquals(" ", KeyboardText.printableText(' '))
+    }
+
+    @Test
+    fun `键盘过滤 - 全 Unicode 字母与增补码位（中文、emoji）直发`() {
+        assertEquals("中", KeyboardText.printableText('中'))
+        assertEquals("é", KeyboardText.printableText('é'))
+        assertEquals("😀", KeyboardText.printableText(0x1F600)) // 增补平面码位 emoji
+    }
+
+    @Test
+    fun `键盘过滤 - 控制字符与未定义键码不注入`() {
+        assertNull(KeyboardText.printableText('\n')) // Enter
+        assertNull(KeyboardText.printableText('\t')) // Tab
+        assertNull(KeyboardText.printableText('\r'))
+        assertNull(KeyboardText.printableText('\u001B')) // Escape
+        assertNull(KeyboardText.printableText('\u007F')) // Delete/Backspace（C1 控制字符）
+        assertNull(KeyboardText.printableText(KeyboardText.CHAR_UNDEFINED)) // 功能键/修饰键
+        assertNull(KeyboardText.printableText(-1)) // 非法码位
     }
 }

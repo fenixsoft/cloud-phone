@@ -109,6 +109,6 @@ Windows 桌面串流客户端 SPEC 全部 16 项任务实现完毕：client-wind
 上轮登记的 findings：
 - deliverable-dispute: spec/changes/windows-desktop-client/tasks.md 任务 3.4 行「AppListRequest（1s 超时显示重试入口）」 — 规划层校准任务 3.4 文本为「客户端 3s 失败判定显示重试入口」；实现以 spec.md 权威 3s 判定期为验收基准，无需代码改动
 
-- [ ] 先复核失败有效性：逐条核对 `spec/changes/windows-desktop-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
-- [ ] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
-- [ ] 修复后重跑验证确认通过
+- [x] 先复核失败有效性：逐条核对 `spec/changes/windows-desktop-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
+- [x] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
+- [x] 修复后重跑验证确认通过

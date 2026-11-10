@@ -6,6 +6,7 @@ import cloudphone.desktop.session.HudState
 import cloudphone.desktop.ui.DockAction
 import cloudphone.desktop.ui.DockLogic
 import cloudphone.desktop.ui.HudFormatter
+import cloudphone.desktop.ui.KeyTextRouter
 import cloudphone.desktop.ui.NavLogic
 import cloudphone.desktop.ui.NoticeLogic
 import cloudphone.desktop.ui.ScreenshotSaver
@@ -164,5 +165,34 @@ class SessionScreenTest {
         val image = javax.imageio.ImageIO.read(saved!!.toFile())
         assertEquals(w, image.width)
         assertEquals(h, image.height)
+    }
+
+    // ── 键盘直发路由（spec「鼠标与键盘输入映射」：可打印字符键 TEXT_INPUT 直发，非字符键不注入） ──
+
+    @Test
+    fun `键盘直发 - 可打印字符（ASCII、中文、emoji）产出直发文本`() {
+        assertEquals("a", KeyTextRouter.typedText('a'.code))
+        assertEquals("中", KeyTextRouter.typedText('中'.code))
+        assertEquals(" ", KeyTextRouter.typedText(' '.code))
+        assertEquals("😀", KeyTextRouter.typedText(0x1F600)) // utf16CodePoint 携带增补码位
+    }
+
+    @Test
+    fun `键盘直发 - 非字符键与控制字符不注入`() {
+        // 功能键/修饰键/未产生字符的按下事件：utf16CodePoint = CHAR_UNDEFINED（0xFFFF）不注入
+        assertNull(KeyTextRouter.typedText(0xFFFF))
+        // 控制字符不注入（协议无独立按键通道）：Enter/Escape/组合键控制字符/非法码位
+        assertNull(KeyTextRouter.typedText('\n'.code)) // Enter
+        assertNull(KeyTextRouter.typedText('\u001B'.code)) // Escape
+        assertNull(KeyTextRouter.typedText(0x01)) // Ctrl+A 等组合键产生的控制字符
+        assertNull(KeyTextRouter.typedText(-1))
+    }
+
+    @Test
+    fun `键盘直发 - 门控：文字面板打开或注入降级时暂停直发`() {
+        assertTrue(KeyTextRouter.directSendAllowed(textPanelOpen = false, textInputAvailable = null))
+        assertTrue(KeyTextRouter.directSendAllowed(textPanelOpen = false, textInputAvailable = true))
+        assertFalse(KeyTextRouter.directSendAllowed(textPanelOpen = true, textInputAvailable = null))
+        assertFalse(KeyTextRouter.directSendAllowed(textPanelOpen = false, textInputAvailable = false))
     }
 }
