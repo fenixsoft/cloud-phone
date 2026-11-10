@@ -56,31 +56,37 @@
   - 调查评估：在处置 m0-a2a-streaming-pipeline 进入验证前置预检时暴露。已核实事实如上；处置本身走升级链自动化完成（零人工落盘），功能上闭环，但「spec 起草时契约必须已可裁决」这一前置条件无人把关，导致每个新 spec 大概率重演一遍代起草流程。与存量关系：active 区两 spec 中仅 m0 触发（client-ux 由并行出题车道供场景），属首日新项目契约冷启动形态；未检索到契约前置起草类既有条目。结论：契约生命周期应从「验证时被动升级」改为「起草时主动落位」，并把 resolved 后信号重复派发修掉。
   - 建议：SPEC 提案：spec 进入 drafted 状态时即校验 verify.yaml 是否可裁决（非全注释模板），不可裁决则立即派一次性代起草并在 spec 卡片标注契约状态；修正已 resolved 信号的重复派发路径；新项目 bootstrap 时预置最小可裁决契约模板。
 - **[arbiter:client-u] env 归因证据门（judge 以未测量的环境量定性 env）**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：env 误判会把产品回归以『环境豁免』永久放行；本场景已因此连续 2 轮 warning 并烧掉 judge+admin 两段链，最终仍需人类。所有依赖 judge env 归因的场景集都受影响。
   - 证据：judge_attribution.json 中 regression-matrix-12-combos 判 env『swiftshader 软渲染确定性天花板（两轮 37.4/38.6）』；但 /tmp/admin-load-sample.txt 显示 load1 5.07~17.60 波动期间该组合 fps 恒定 36.2~37.5、源端 CPU 恒定 285~288%，历史两轮同宿主 1080p 51.8~59.1 PASS（git 21fefb6/07a7ee6），且 judge 历史 smoke 探针全部为 720p（planner-judge-1794160702 转录 7 次 --only lan-direct,game,720p）。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：env 归因必须引用可复核的环境量测（负载/CPU/温度/驱动版本）并要求验证窗口外的对照样本；无对照的 env 结论降级为 inconclusive 并自动进 recheck，不得直接进豁免握手。
 - **[arbiter:client-u] 实现自验以 --only 720p 子集替代验收全矩阵**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：本 spec 的 1080p 性能回归在实现阶段漏检，直到首轮验证（18:12）才暴露，随后连续 2+ 轮 warning 升级、链上消耗两段 run。
   - 证据：commit 7006cc8（任务 6.1『矩阵实跑』）只执行 `--only lan-direct,game,720p`；impl-result.json 的 18 项 completed_tasks 无 12 组合全跑记录；而验收场景 test_scenarios.json#regression-matrix-12-combos 要求 12 条 passed=true（含 1080p）。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：impl 收工门：当 spec 验收含全量矩阵/长场景时，impl-result 必须附该验收场景原命令的完整产物（12/12 或带归因的失败），否则不允许勾 6.x 收工；或把矩阵子集跑标注为 partial 并在 verify 前置拦截。
 - **[arbiter:client-u] 矩阵场景断言只覆盖 progress 首尾条目**
+  - 自进化：问题成立 / 建议合理 / — 不需要
   - 影响：若 run_matrix 退出码语义漂移或中途异常，中间组合失败可能被漏判为 PASS；本轮 1080p 失败仅靠 exit_code 断言兜住，断言与描述不一致。
   - 证据：.fenix/verify-progress/client-ux-and-input-latency/test_scenarios.json 中 regression-matrix-12-combos 的 assertions 仅有 `json_output [0].passed` 与 `json_output [11].passed`，其余 10 组合靠 run_matrix 退出码间接覆盖；场景描述却写『恰 12 条逐条 passed=true』。；触发 run_id=arbiter-client-ux-and-input-latency-1794162973（签名 client-ux-and-input-latency::warning_stale_triage，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：增加聚合断言（一步 python 校验 len==12 且 all(passed)，或 json_output 指向汇总字段），把『逐条 passed』从描述落到断言；同类多组合场景统一模板。
 - **[arbiter:client-u] 升级件自环回派（链终点 escalation alert 二次入 Arbiter 车道）**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：每次 Arbiter 升级都会多派一轮同证据调查（本签名 2 轮，约 15 万 tokens/7 分钟量级），占用单飞串行队列并推迟真正新信号的裁决；升级件（给人类的裁决包）与 Arbiter 回执语义混淆，直到 arbiter_rulings 配额（=2）耗尽才停。
   - 证据：core/pm_engine/family.py:_send_human_escalation_alert 在 store.append 成功后无条件走 narrative_yielded_to_arbiter → ArbiterLane.submit_for_alert，未以 chain_context 非空短路；fenixd.log 实证：18:43:30.431 arbiter 产裁决包升级 → 18:43:30.677 落告警 c6fccc1be3e8（kind=escalation, chain.endpoint_kind=arbiter-escalated）→ 18:43:30.847 'arbiter 触发入队 ... source=escalation-alert'，本 run 与 1794162973 证据完全相同（最近验证仍为 18:31:57Z）。；触发 run_id=arbiter-client-ux-and-input-latency-1794163410（签名 client-ux-and-input-latency::warning_stale_triage，来源 escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：在 family 咽喉对 chain_context 非空的链终点件跳过 submit_for_alert（只保留 narrative 或零补叙）；或在 submit_for_alert 入口检测 entry['chain'] 存在即短路；补单测覆盖「链终点件不产生新的 arbiter 触发」。
 - **[arbiter:client-u] 矩阵进度未记录实际采集/编码几何，跨轮 fps 基线不可比**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：验收矩阵跨轮/跨 commit 比较失真，本次仲裁险些把 +24% 像素的真实负载增长整体误判为产品回归；也直接影响 env 归因与 D6 阈值决策的可信度。
   - 证据：21fefb6 与 07a7ee6 的 docs/validation-report.md.progress.json 仅记 resolution 标签「1080p」与 fps，不记 VD/编码尺寸；cb0536b 后实际为 1072x2400（/tmp/admin-src-logcat.txt：capture: vd=... 1072x2400@30），旧管道为 1920x1080；两轮被当作同一组合直接比较（55.7 vs 36.2fps）。；触发 run_id=arbiter-client-ux-and-input-latency-1794163410（签名 client-ux-and-input-latency::warning_stale_triage，来源 escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：progress JSON 每条组合增记 vdW/vdH/encW/encH/requestedW/H、pipeline commit 与 gpu 模式；报告 markdown 增列实际几何列；跨轮比较按几何分组或显式标注「不可比」。
 - **[arbiter:client-u] 人工裁定落位后升级告警仍回派（human disposition 吸收窗缺失）**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：冻结后由人工以 commit/报告落位终审的 spec 会被升级告警自环回派 Arbiter，每轮消耗一个 run 预算；本次为同签名第二次自环（前次 18:43→18:47 已由 arbiter todo 记录），若 Arbiter 未识别裁定会重复升级空转。
   - 证据：commit 20e3690 于 2026-11-08T21:29:33Z 落盘（verification-report.md 人工裁定「验收通过、SPEC 收口」）；同签名告警 7c3ed1bd8e67 仍于 21:30:50.970Z 由上一轮 Arbiter 基于裁定前快照生成，框架随即于 21:30:51.119Z 以 source=escalation-alert 回派本 run（fenixd.log）；框架代码 grep 'human disposition' 无消费点（/root/fenixd 全量），人工裁定仅以 commit/报告文本存在。；触发 run_id=arbiter-client-ux-and-input-latency-1794173451（签名 client-ux-and-input-latency::judge_rerun_cap，来源 escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
@@ -152,11 +158,13 @@
 ## 2026-11-10
 ### 可改进
 - **[arbiter:client-u] worktree-pre-rmtree-stash-ref-loss**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：任何 impl 后冻结 spec 的实现交付（尤其全套重实现）在分支删除 + worktree 清扫后沦为悬空对象，默认 gc.pruneExpire 窗口内可被 GC 静默清除；本案 run4 交付已处此险，人工裁决前丢失则三套交付折损一套。
   - 证据：fenixd.log 06:50:38Z 清扫 impl-client-ui-redesign-1794286517 worktree 时留快照并指引「recover via: git stash store 584de3ee…」，但当前 refs/stash 不存在、git for-each-ref --contains 4306e3f 为空、fsck 报悬空 commit——stash ref 为 per-worktree 引用，随 worktree rmtree 一并销毁，快照指引失效，run4 全套重实现（9 提交 c3143e5→4306e3f）现零引用可达。两源互证：worktree_manager 快照日志 ↔ git 引用/对象实测。；触发 run_id=arbiter-client-ui-redesign-1794302874（签名 client-ui-redesign::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 impl_budget_exhausted（spec=client-ui-redesign）：'client-ui-redesign' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：pre-rmtree 快照改存共享引用（主 gitdir refs/preservation/<run_id>）或 git note/独立 bundle；STATE 锚点增设 _last_impl_tip 记录悬空 tip；终态 impl 分支保留至 merge-back 决策后再删。
 - **[arbiter:client-u] impl-budget-wall-manual-unfreeze-silent-bounce**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：触发信号建议的人工补救路径（「人工重置计数器即重新获得自动修复机会」）无一等通道：只解冻不重置必在分钟级回弹再冻结，空耗一次升级环且静默跳过使人工误判为派发阻塞；错误文案 run 锚点丢失劣化裁决质量。
   - 证据：fenixd.log 09:04:26Z 批量解冻重置 12 个计数键但不含 _impl_run_budget_used；09:07:14-09:11:54 恢复循环 5 次触发 orphan-ready 重派均被静默跳过（无拒绝日志，对照同秒 single-app-realdevice-retest 有「预算计数 +1 used=2/4」日志）；09:11:55Z 按 4/4 再冻结。另冻结 error 文案「最近实现 run=未知」与归档在案的 run4 锚点相矛盾（锚点丢失）。两源互证：日志时序 ↔ STATE 冻结条目。；触发 run_id=arbiter-client-ui-redesign-1794302874（签名 client-ui-redesign::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 impl_budget_exhausted（spec=client-ui-redesign）：'client-ui-redesign' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
@@ -166,12 +174,14 @@
 
 ### 浪费
 - **供应商配额耗尽后仍连派51败，当日自省被击中且不补跑**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：窗口（因 11-10 自省失败实为约 48 小时）159 个 run 中 51 个失败（32%），数据摘要列出的失败样本 10/10 全部是同一面配额墙（RATE_LIMIT 429 code 1310，限额 2026-11-10 10:43:04 重置）；部分 run 死前已烧掉实质工作（repair run 86 轮/893 秒、planner-plan 41 轮后死），且 11-10 的每日自省 run 因此失败，当日回顾永久缺失。
   - 证据：fenixd.log 首条 429 在 11-09 13:34:06Z（arbiter-p2p-crossnet-traversal-1794231045，这是 p2p 跨网升级件的裁决 run，16 轮 74.2 秒后死）；self_review 组件 11-09 18:04:49Z 记「每日自省失败：2026-11-10」，其后 11-10 01:30/02:03Z 又两次同因失败；self_review_state.json 在失败当刻把 last_run_date 推进到 2026-11-10——失败也计为已跑，调度器不会补跑。
   - 调查评估：跨全部 spec 的基础设施事件，非单 spec 问题。已核实：429 报文自带重置时间戳（「限额将在 2026-11-10 10:43:04 重置」），框架有 provider 级 300 秒 switch-cooldown（add-provider-failover）与 arbiter infra-failed 分级（不烧死人开关资格，fenixd.log 7255 行），但没有任何按重置时间的全局派发冻结——失败形态是「冷却 5 分钟→再试→再死」，失败分布拉满 13.2 小时直到重置。根因归属：系统性缺口（无配额感知熔断），非一次性失误；各车道各自重试放大次数，失败计数器/死人开关资格被 infra 分级保护住了，但 run 预算没被保护。与存量工作关系：11-09 既有条目「配置错误无派发前预检」针对配置失效预检，与本条（配额耗尽感知）互补不重复；admin_infra_breaker.json（基础设施熔断器状态）现仅 spec-review 一条且 closed，breaker 未覆盖配额类故障。结论：重置时间已写在报文里而框架不读，属低成本高收益的止损缺口。
   - 建议：解析 429 code 1310 报文中的重置时间，对该 provider 触发全局派发冻结至重置时刻（复用 infra breaker 通道，单条汇总告警替代逐 run 失败）；自省 run 失败不得推进 last_run_date，失败后按退避补跑当日回顾。
 
 - **规划75分钟产出的15条场景全部因超时字段非法整批拒绝**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：m3-audio-clipboard-textinput 的场景规划 run（planner-plan，测试场景规划 agent）跑 4481 秒、193/341 轮（组中位 1204 秒的 3.7 倍），产出的 15 条场景在写前预校验（场景落盘前的合法性校验闸）15/15 全部非法、零合法可执行，整批丢弃退回重排；后续补 1 轮重排加 3 轮 planner-judge（评审出题 agent）run，该 spec 验证链当天上午空转一轮。
   - 证据：fenixd.log 11-10 03:49:55Z 整批拒绝原文：15 条场景全部「步骤0 timeout 超过上限 1800 秒，收到 60000.0/900000.0/1800000.0/…」——这些值全是 60000ms=60s、300000ms=5min、1800000ms=30min 这类以毫秒计的整分钟值，且 1800000 恰等于上限 1800 秒（30 分钟）本身，指向规划器按毫秒写、校验器按秒读的单位错位；离群 run planner-plan-m3-audio-clipboard-textinput-1794222969-a1 duration 4481.1s、stalls=10 合计 1281.6s（数据摘要第六节）。
   - 调查评估：在处置 m3-audio-clipboard-textinput（音频/剪贴板/文字注入 SPEC）验证准备阶段暴露。已核实：拒绝发生在 11-10 03:49:55Z，距规划 run 产出约 15 小时（其间验证链被 429 配额墙堵住），退回 plan（剩余重排 1 次）后重排与 3 轮 judge 于 03:39–04:49Z 连发，spec 最终未冻结。根因：场景产物 timeout 字段的单位约定在规划器与校验器之间不一致，校验报错只回显数值与上限、未提示单位嫌疑，重排一轮缺少关键纠错信息。与存量工作关系：写前预校验与退回重排机制本身按设计工作（不写空文件、不持久化非法集），缺口只在单位约定与报错质量，检索 todo 与知识域未见既有条目覆盖。结论：一次单位错位烧掉约 75 分钟规划加一轮验证编排，属可机械预防的浪费。
@@ -179,12 +189,14 @@
 
 ### 失误
 - **重试与推送计数越限：上限3次却执行到第4次才冻结**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：两个独立子系统的重试计数越过上限各一次、以「4/3」收场：client-ui-redesign 的调度重试在 11-09 已按 3/3 冻结转人工后，11-10 又执行了第 4 次尝试并以 4/3 再次冻结；m0 的 git push 重试在「已停止自动重试（3/3）」3 分钟后又跑第 4 次。每次多烧一轮派发，且给人工的冻结陈述（已试次数/上限）与事实不符，误导裁决。
   - 证据：fenixd.log 11-09 13:34:43.911Z「All retries exhausted for 'client-ui-redesign' — 冻结转人工（3/3，fp=a812d1171a33，失败指纹）」与 11-10 06:40:28.141Z 同句（4/3，fp=0c9759dd9960）；同一秒内两条「实现尝试预算计数 +1 used=4/4」（13:34:43.066 与 .460，一次失败计了两次）；m0 push 在 11-09 01:53:43Z（3/3，「已停止自动重试」）与 01:56:46Z（4/3）两条 ERROR。
   - 调查评估：跨 spec 的框架记账缺陷。已核实事实如上；越限的具体代码路径未逐行核实，多假说并存：①上限判断先增后查/比较符有误；②重试重武装（rearm，配置热重载后放行新重试）或解冻路径放行新尝试但不清零计数；③同一失败被两个入口各计一次（13:34:43 的双 +1 与此吻合）。与存量工作关系：todo 既有条目「升级闸门冻结与code-fix-fastlane派发竞态（0工作量修复轮计入失败轮）」与「impl-budget-wall-manual-unfreeze-silent-bounce」分别覆盖 fastlane 竞态计数与解冻不重置预算，本条的 4/3 是同族记账缺陷在调度重试计数与 push 重试计数上的新实例，互补不重复。结论：上限语义被破坏会连带损害升级链可信度，应统一修复并加单测。
   - 建议：重试计数改为「先比较后原子递增」（cap 判断用 ≥），解冻/重武装路径显式清零对应计数键并留痕；给 push 与 impl 两条计数路径补越限单测；冻结文案中的 used/上限取自同一计数源。
 
 - **散件WIP收编提交落地52秒后，同一处置又被记失败**
+  - 自进化：问题成立 / 建议合理 / — 不需要
   - 影响：admin（管理员处置 agent）于 20:31:04 以提交 86e5fe3 收编主树 5 个散件（p2p-crossnet-traversal 验证轮遗留的 natlab 矩阵数据、投影授权截图等），52 秒后其处置动作 commit_stray_wip（一键提交信号清单内散件）执行失败并记 ERROR——目标实际已达成，处置台账却留下失败记录与一条噪声 ERROR。
   - 证据：master 分支 reflog：86e5fe3 提交于 2026-11-10 20:31:04 +0800，说明自述按 maintree_stray_wip_stale（主树散件无主滞留盘点信号）指纹 37e2bf7d0956714b 认领入库；fenixd.log 12:31:56Z（即 20:31:56 本地）「处置 choice 执行失败 choice_id=commit_stray_wip spec='cloud-phone'：信号清单内文件已全部不在当刻工作区改动中……不产生空提交」。
   - 调查评估：在处置 cloud-phone 项目级散件信号时暴露。已核实：失败守卫本身工作正确（清单为空不做空提交），同指纹告警一次性、改动消失后盘点自动复位，无功能后果，损失仅账面。根因：同一 admin run 内「自行 git 收编」与「调用处置执行器」先后作用于同一目标、无幂等短路，执行器把「文件已不在（因为刚被提交）」当失败而非成功空操作。与存量工作关系：与既有条目「处置动作回执缺下游落地校验」（声称成功无落地）方向相反（已落地却记失败），同属处置回执语义缺陷族，互补。结论：低危害高确定性的小修，不值得单独立项，可与处置回执语义修复合并处理。
@@ -192,24 +204,28 @@
 
 ### 可改进
 - **推送成功判据校验过时的main分支，36个提交滞留本地**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：pm_engine 的收尾推送成功判据（D1：git push origin main）推的是本地 main 分支，而实际工作自 11-09 起全部落在 master——7 次「Main push succeeded」里除首次建立远端外均为空转成功（本地 main 引用整个时段只停在两个值上），origin/main 停在 11-09 16:21 的合并提交、落后本地 94 个提交，origin/master 停在 11-10 18:36、落后 36 个提交；windows-desktop-client 全套交付（合并、验证报告、知识蒸馏、code-review 修复）仅存于本地与 fenix/* 特性分支，单机故障即丢一整天交付。
   - 证据：engine.py 3333/3446 行 `_git_push_ref("main")` 执行 `git push origin main`；main 分支 reflog 仅两条：11-09 09:26 自 master 创建（969d7a7）→ 11-10 16:56 被「branch: Reset to origin/main」（0023fdf），期间零移动，而同期「Main push succeeded」7 次（11-09 02:02Z m0 至 11-10 14:14Z windows-desktop）；实测 rev-list 计数 origin/main..master=94、origin/master..master=36；11-10 05:03Z p2p 推送被远端以 non-fast-forward 拒绝（本地 main 落后远端），约两小时后被人工式复位后才推成功。
   - 调查评估：在处置 windows-desktop-client 收尾推送时暴露（推送「成功」而交付未上远端）。已核实事实如上；origin/main 如何在本地 main 不动的情况下领先来源未核实——多假说：人工或其他 clone 外带推送/复位，两次外带干预（复位 main、origin/master 推进到 623978c）都发生在框架推送失败之后。根因：推送成功判据与工作落地分支脱钩（工作在 master、判据校验 main），pushed 状态不再证明交付可达远端——STATE.md 8 个 spec 全标 pushed 与远端 36 提交缺口并存即自证。与存量工作关系：todo 既有条目「code-fix fastlane 修复 commit 停留侧分支，主树不落位」讲修复件不进主树基线，本条是收尾推送判据错引用，同属交付落位域但机制不同，互补。结论：本窗最大资产风险，pushed 状态当前不可信。
   - 建议：推送门改为推送实际集成分支（检出分支或配置的 base ref），推送前后比对远端 SHA 断言 tip 前进；done-spec 推送出现 Everything up-to-date 空转成功时发单条告警；daemon 启动时对账本地领先提交数并上报。
 
 - **死人开关9次触发全部无告警落账，半成品升级包静默**
+  - 自进化：问题不成立 / 建议不合理 / — 不需要
   - 影响：arbiter（全局裁决 agent）的死人开关（同签名连败达阈后停止自主尝试、把半成品调查包升级人工的保险机制）窗口内触发 9 次，全部 alert=None——升级只落 arbiter 台账与日志，admin 告警面（人工查看的唯一告警流）没有对应记录，人工无法从告警得知有半成品裁决包待消费。
   - 证据：arbiter.py 1408–1429 行：`alert_id = trigger.get("alert_id")`，仅当触发源带 alert_id 才调 `_upgrade_alert`，否则只写 ledger 与 ERROR 日志；fenixd.log 窗口内 10 条「死人开关触发」全部带 alert=None（11-09 01:01–01:31Z 七连发：single-app/gaming/p2p/m3-audio 的 redispatch_loop_detected 与 spec-review-incomplete，另有 13:35Z client-ui、13:55Z m3-audio）；.fenix/admin_alerts.json 全部 150 条记录中检索不到任何死人开关半成品包条目。
   - 调查评估：触发背景是 dsh 版本漂移与凭据缺失引发的裁决/评审连败潮（见另一条目），死人开关本身正确止住了自主重试。已核实：经 chain-handoff（升级链移交）进入 arbiter 的 trigger 不带 alert_id，升级分支被 if 短路，只剩台账加日志。根因：升级动作把「改写既有告警」当唯一通路，缺「无告警则新建」的兜底。与存量工作关系：todo 既有条目「升级件自环回派」「escalate 裁决终态化后同签名秒级再派发」覆盖升级链的回派与去重，本条是同一升级面上的可见性缺口（包根本没进人工面），互补不重复。结论：九连发里人工一次都没被主动告知，保险机制的「升级」半边形同虚设。
   - 建议：死人开关升级在 alert_id 缺失时回退为新建 admin 告警（kind=escalation，关联台账条目 id 与半成品包摘要）；补单测：trigger 无 alert_id 必产生告警记录。
 
 - **（恶化）API停滞84个run合计9.8小时，判停仍未启用**
+  - 自进化：问题成立 / 建议合理 / — 不需要
   - 影响：复发敞口：本窗 84 个 run 记录到 API 停滞（单轮请求往返超 60 秒的等待），合计 35229 秒（约 9.8 小时）纯等待，单轮最长 580.1 秒、10 个 run 单轮 ≥300 秒、25 个 run 单轮 ≥200 秒；停滞几乎全部由成功收尾的 run 承担，零告警零止损，较上窗（16 run/2.5 小时）明显放大。
   - 证据：数据摘要第六节 API 停滞聚合逐行回源：84 行 total 求和 35229.2s，max 列 ≥300 秒共 10 行（含 planner-judge-client-ux-and-input-latency-1794169117-a1 的 580.1s、impl-windows-desktop-client-1794311717-a1 的 336.9s）；arbiter-single-app-realdevice-retest-1794225773 duration 953.9s 中停滞占 748.6s（78%）；fenixd.log 侧仍只有逐条 WARNING（如「API round-trip stall: 121.1s」）无任何干预动作。
   - 调查评估：本条为 11-09 既有条目「停滞监督面缺位：判停关闭加成功豁免，2.5小时停滞零止损」的恶化续报（read_todo 未注入，判定依本人只读复核 .fenix/todo.md）。复核确认 config.yaml 仍无 agents.run_stall_budget_* 三键（core/config.py 525 行起缺省关闭逻辑未变），成功终态豁免也未改。口径注记：上窗 16 run/9044s 出自离群 run 深扫子集，本窗 84 run 为 stalls>0 全集，口径不完全可比，但「零止损、零聚合观测」结论两边一致且量级上行。与存量工作关系：不重复立项，沿用既有条目四点提案（灰度启用判停、窗口级投影、provider 健康计数、判活通道）。结论：恶化趋势成立，既有提案优先级应上调。
   - 建议：（不另立新案）按既有条目推进 SPEC：灰度启用 run_stall_budget 判停并按本窗 p90 校准阈值；日回顾聚合面新增窗口级停滞合计观测行；≥300 秒停滞轮计入 provider 健康度计数。
 
 - **凭据缺失与版本漂移击穿预检缝隙，两波秒挂触发死人开关**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：11-09 白天两波车道级启动失败：上午 dsh 版本漂移（harness 升到 0.2.2-rc.1，超出兼容白名单 0.2.0-rc.2，配套 bundle 插件拒载）叠加 deepseek 路由无 API key，裁决与评审 run 连败并触发 7 次死人开关；午后 repair 角色（修复 agent）因未分配 provider 链回落 harness 默认配置（同样无 key 的 deepseek 路由）秒挂 3 连击 ×2 个 spec，两车道各进 300 秒冷却——直接可数至少 9 个 run 零产出死亡。
   - 证据：fenixd.log 11-09 01:01:36Z「harness 前置健康检查拦截 dispatch: dsh 版本 '0.2.2-rc.1' 不在兼容白名单」拦截了部分派发，但同分钟 arbiter-single-app-realdevice-retest-1794186096/-1794186099 仍被派发并以插件不兼容 + MISSING_CREDENTIAL llm-deepseek（deepseek 官方路由无凭据）死亡，spec-review-gaming-uplink-1080p 两条 run 同因死亡（01:03:51/56Z）；07:45:11Z「harness dsh 未分配 provider 链，回落 harness 默认配置（role=repair）」后 repair-m3-audio-clipboard-textinput-1794210310 a1–a3 秒挂（存活 3 秒）进冷却，08:05Z p2p 车道同形态再演。
   - 调查评估：跨车道基础设施失误，发生在多 spec 并行收尾期。已核实：版本预检存在但只覆盖它管理的派发入口，arbiter 车道未被拦截；凭据缺失要到 dsh spawn 时点才暴露；harness-default 回落仅 WARNING 且每进程只提醒一次，repair 角色无显式链无人拦截；秒挂计数与 300 秒冷却按设计兜住了扩大。根因归属：执行层升级/配置失误 + 预检面三处系统性残缺（车道覆盖、凭据存在性、回落路径静默）。与存量工作关系：11-09 既有条目「配置错误无派发前预检，全角色失效仍连发19分钟」的提案方向被本窗证实，本条补其三点新机制细节（本条为补强证据，非重复立项）；当日自愈路径（凭据何时补、版本如何对齐）无留痕，未核实。结论：预检面应从版本白名单扩展到凭据与链路存在性，回落路径应显式化。
