@@ -1,0 +1,24 @@
+[versions]
+# 实测兼容组合（design Open Questions 回填）：Kotlin 2.0.0 × Compose Multiplatform 1.6.11
+# （Compose 1.6.11 是随 Kotlin 2.0.0 对齐发布的版本线）、coroutines 1.8.1、serialization 1.7.1
+kotlin = "2.0.0"
+compose = "1.6.11"
+coroutines = "1.8.1"
+serializationJson = "1.7.1"
+javacpp = "1.5.10"
+ffmpeg = "6.1.1-1.5.10"
+junit = "4.13.2"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serializationJson" }
+javacpp = { module = "org.bytedeco:javacpp", version.ref = "javacpp" }
+ffmpeg = { module = "org.bytedeco:ffmpeg", version.ref = "ffmpeg" }
+junit = { module = "junit:junit", version.ref = "junit" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+compose = { id = "org.jetbrains.compose", version.ref = "compose" }
