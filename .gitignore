@@ -8,6 +8,12 @@ __pycache__/
 # Worktrees (managed by fenixd)
 .claude/worktrees/
 
+# 本地工具状态（admin 认领 maintree_untracked_stray_escalated 0181f897bba707d0：
+# .claude/agents 为指向 fenixd 的 agent 配置符号链接、.local 为 gh CLI 设备状态，
+# 均为运行时本地状态，不入库）
+.claude/
+.local/
+
 # 运行时/敏感目录（.fenix/config.yaml 含 API Key，绝不提交）
 # 用 /* 而非 .fenix/：目录整体排除后无法用 ! 放行其下入库文件
 .fenix/*
