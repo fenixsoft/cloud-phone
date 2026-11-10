@@ -19,13 +19,24 @@ import argparse
 import faulthandler
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
+from collections import deque
+from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPORT = os.path.join(ROOT, "build", "full-suite-report.json")
+
+# 环境特定端点/路径：默认值维持原字面量，可经 CLI 参数（--frp-host 等）或同名环境变量覆盖，
+# 换环境（换出口 IP / 无外网 STUN / JDK 升级换路径）无需改源码
+FRP_HOST = os.environ.get("FRP_HOST", "112.74.85.74")
+FRP_PORT = os.environ.get("FRP_PORT", "22333")
+STUN_HOST = os.environ.get("STUN_HOST", "stun.l.google.com")
+STUN_PORT = os.environ.get("STUN_PORT", "19302")
+JDK_HOME = os.environ.get("JAVA_HOME", "/opt/jdk/jdk-17.0.20.1+1")
 
 
 class Phase:
@@ -58,15 +69,18 @@ def run_phase(phase, baseline):
         phase.status, phase.detail = "FAIL", f"启动失败: {e}"
         return classify(phase, baseline)
 
-    tail = []
+    tail = deque(maxlen=400)  # 只保留尾部 N 行，内存上界恒定
+    n_seen = 0
     timed_out = False
 
     def _drain():
         # 输出读取放在 daemon 线程：子进程持管道挂死也不再阻塞主线程的超时判定
+        nonlocal n_seen
         try:
             for line in proc.stdout:
+                n_seen += 1
                 tail.append(line.rstrip())
-                if len(tail) <= 400:
+                if n_seen <= 400:
                     print("  " + line.rstrip(), flush=True)
         except (ValueError, OSError):
             pass  # 主线程收尾关闭管道后的残余 I/O 错误
@@ -84,31 +98,45 @@ def run_phase(phase, baseline):
         except subprocess.TimeoutExpired:
             pass  # 极端不可中断态；daemon 读线程不阻塞主流程退出
     reader.join(timeout=5)
+    output_ready = not reader.is_alive()
+    if not output_ready:
+        # 读线程 join 超时仍在写 tail：放弃本次输出采集，避免与读线程并发读写
+        tail = None
     try:
         proc.stdout.close()
     except (OSError, ValueError):
         pass
     phase.seconds = round(time.time() - t0, 1)
     if not timed_out:
-        out = "\n".join(tail)
-        if proc.returncode == 0:
-            if any("[SKIP-ENV]" in ln for ln in tail):
-                # 冒烟探测环境不可达：脚本 exit 0 但带 [SKIP-ENV] 标记 → 记 SKIP
-                phase.status = "SKIP"
-                phase.detail = "环境不可达，未验证\n" + out[-500:]
+        if output_ready:
+            out = "\n".join(tail)
+            if proc.returncode == 0:
+                if any("[SKIP-ENV]" in ln for ln in tail):
+                    # 冒烟探测环境不可达：脚本 exit 0 但带 [SKIP-ENV] 标记 → 记 SKIP
+                    phase.status = "SKIP"
+                    phase.detail = "环境不可达，未验证\n" + out[-500:]
+                else:
+                    phase.status, phase.detail = "PASS", out[-500:]
             else:
-                phase.status, phase.detail = "PASS", out[-500:]
+                phase.status, phase.detail = "FAIL", f"exit={proc.returncode}\n{out[-1500:]}"
         else:
-            phase.status, phase.detail = "FAIL", f"exit={proc.returncode}\n{out[-1500:]}"
+            phase.status = "PASS" if proc.returncode == 0 else "FAIL"
+            phase.detail = "输出采集未完成（读线程超时未退出）"
+            if proc.returncode != 0:
+                phase.detail += f"，exit={proc.returncode}"
     else:
-        phase.status, phase.detail = "FAIL", f"超时（>{phase.timeout_s}s，已 kill）"
+        detail = f"超时（>{phase.timeout_s}s，已 kill）"
+        if output_ready and tail:
+            detail += "\n" + "\n".join(tail)[-500:]  # 保留卡点前最后的输出供排障
+        phase.status, phase.detail = "FAIL", detail
     return classify(phase, baseline)
 
 
 def classify(phase, baseline):
     if phase.status == "FAIL" and baseline:
         for key, reasons in baseline.items():
-            if key == phase.name and any(r in phase.detail for r in reasons):
+            if key == phase.name and any(
+                    isinstance(r, str) and r in phase.detail for r in reasons):
                 phase.known_fail = True
                 phase.status = "known-fail"
                 break
@@ -124,9 +152,32 @@ def main():
                     help="追加设备在线阶段：3 后端连接冒烟 + 矩阵关键组合")
     ap.add_argument("--source-serial", default="emulator-5554")
     ap.add_argument("--client-serial", default="emulator-5556")
+    ap.add_argument("--frp-host", default=FRP_HOST,
+                    help="frp 公网入口主机（env: FRP_HOST）")
+    ap.add_argument("--frp-port", default=FRP_PORT,
+                    help="frp 公网入口端口（env: FRP_PORT）")
+    ap.add_argument("--stun-host", default=STUN_HOST,
+                    help="公网 STUN 服务器主机（env: STUN_HOST）")
+    ap.add_argument("--stun-port", default=STUN_PORT,
+                    help="公网 STUN 服务器端口（env: STUN_PORT）")
+    ap.add_argument("--jdk-home", default=JDK_HOME,
+                    help="protocol 单测 JAVA_HOME 兜底默认值（env: JAVA_HOME）")
     ap.add_argument("--baseline", default=None,
                     help="已知失败分类 JSON（键=阶段名，须与阶段名精确相等；值=已知失败原因列表）")
     args = ap.parse_args()
+
+    if args.timeout <= 0:
+        print(f"错误: --timeout 必须为正整数（秒），收到: {args.timeout}",
+              file=sys.stderr, flush=True)
+        sys.exit(2)
+    # serial 只允许安全字符集，防止 shell 元字符经阶段命令注入任意命令
+    for opt in ("source_serial", "client_serial"):
+        serial = getattr(args, opt)
+        if not re.fullmatch(r"[\w.:\-]+", serial):
+            print(f"错误: --{opt.replace('_', '-')} 含非法字符: {serial!r}"
+                  f"（仅允许字母/数字/下划线/点/冒号/连字符）",
+                  file=sys.stderr, flush=True)
+            sys.exit(2)
 
     baseline = {}
     if args.baseline:
@@ -141,12 +192,20 @@ def main():
                 print(f"错误: baseline JSON 解析失败 {args.baseline}: {e}",
                       file=sys.stderr, flush=True)
                 sys.exit(2)
+            if not isinstance(baseline, dict) or not all(
+                    isinstance(reasons, list)
+                    and all(isinstance(r, str) for r in reasons)
+                    for reasons in baseline.values()):
+                print(f"错误: baseline 结构不合规 {args.baseline}: "
+                      f"顶层须为对象，且每个值为字符串列表",
+                      file=sys.stderr, flush=True)
+                sys.exit(2)
 
     per_phase = max(60, args.timeout // 3)
     phases = [
         Phase("protocol-unit-tests",
               ["bash", "-c",
-               "cd protocol && JAVA_HOME=${JAVA_HOME:-/opt/jdk/jdk-17.0.20.1+1} "
+               f"cd protocol && JAVA_HOME=${{JAVA_HOME:-{args.jdk_home}}} "
                "./gradlew --console=plain test --tests 'cloudphone.protocol.*' -q"],
               ROOT, per_phase),
         Phase("build-protocol",
@@ -168,6 +227,8 @@ def main():
                   ROOT, per_phase),
             Phase("matrix-lan-game-720p",
                   ["bash", "-c",
+                   # pipefail：管道以 tail 收尾会吞掉 run_matrix.py 的非零退出码
+                   "set -o pipefail; "
                    f"python3 scripts/run_matrix.py --serials {args.source_serial},{args.client_serial} "
                    "--only lan-direct,game,720p 2>&1 | tail -20"],
                   ROOT, per_phase),
@@ -177,7 +238,7 @@ def main():
                    "import socket,struct,time,sys\n"
                    "# frp 公网入口 TCP 冒烟：HELLO 应答即通（token 校验在服务端）\n"
                    "try:\n"
-                   "    s=socket.create_connection(('112.74.85.74',22333),timeout=5)\n"
+                   f"    s=socket.create_connection(('{args.frp_host}',{args.frp_port}),timeout=5)\n"
                    "    s.close(); print('frp tcp 入口可达')\n"
                    "except Exception as e:\n"
                    "    print('[SKIP-ENV] frp 入口不可达（宿主 frpc 未运行），未验证:',e); sys.exit(0)\n"
@@ -190,7 +251,7 @@ def main():
                    "import socket, os, struct\n"
                    "s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.settimeout(3)\n"
                    "txid=os.urandom(12)\n"
-                   "s.sendto(b'\\x00\\x01\\x00\\x00'+txid,('stun.l.google.com',19302))\n"
+                   f"s.sendto(b'\\x00\\x01\\x00\\x00'+txid,('{args.stun_host}',{args.stun_port}))\n"
                    "try:\n"
                    "    d,_=s.recvfrom(256); print('STUN 应答', len(d),'B → p2p 打洞前置可达')\n"
                    "except socket.timeout:\n"
@@ -216,7 +277,7 @@ def main():
     failed = sum(1 for r in results if r.status == "FAIL")
     skipped = sum(1 for r in results if r.status == "SKIP")
     report = {
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "timeout_budget_s": args.timeout,
         "with_device": args.with_device,
         "summary": {"pass": passed, "known_fail": known, "fail": failed, "skip": skipped,
