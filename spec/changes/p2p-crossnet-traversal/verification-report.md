@@ -1,42 +1,29 @@
 # 验证报告：p2p-crossnet-traversal
 
-> ⚠️ 本报告由框架于 2026-11-09T13:04:39Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
-> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-09T13:02:40.064731+00:00+run-result@mtime1794229470491736696
+> ⚠️ 本报告由框架于 2026-11-10T04:20:46Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
+> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-10T04:20:46.461900+00:00+run-result@mtime1794284446500925509
 
-## 结论：❌ 未通过（Bug Found）
+## 结论：✅ 通过（verified）
 
-**状态：bug-found — 24/25 场景通过，1 失败，0 错误（1 个真实产品 Bug）**
+**状态：verified — 25/25 场景通过，0 失败，0 错误（全部场景通过）**
 
-25 场景：24 pass / 1 fail / 0 warning。裁决：product-bug 1（crypto-deliverables-exist：natlab_run.py 可执行位缺失，minor，免复现确定性缺陷）；test-defect 0、flaky 0、env 0。其余 24 场景（含上轮修复的 encrypt-off/ei-ei/no-adb 场景）全部通过。修复建议：chmod +x scripts/natlab_run.py 并以 100755 模式入库。
+全绿快道: 25/25 场景通过、0 失败 0 警告——无分类对象，跳过 judge 机械 verified
 
 | 指标 | 数量 |
 | --- | --- |
-| 通过 | 24 |
-| 失败 | 1 |
+| 通过 | 25 |
+| 失败 | 0 |
 | 错误 | 0 |
-| 产品 Bug | 1 |
-| 本链增量 Token（输入） | 0.99M |
-| 本链增量 Token（输出） | 0.14M |
-
-
-## 真实产品 Bug
-
-### BUG-01（severity=minor）· exit_code
-
-- 关联场景：crypto-deliverables-exist
-- 描述：交付物 scripts/natlab_run.py 缺可执行位（实测 -rw-r--r--，git 模式 100644），tasks.md Deliverables 要求 natlab_setup.sh/natlab_run.py 均带可执行位（natlab_setup.sh 已为 755/100755）
-- 根因：实现交付时未对 scripts/natlab_run.py 执行 chmod +x，交付物核查脚本 [ -x ] 检查失败使整步 exit 1
-- 证据（场景 crypto-deliverables-exist 结构化证据，引用）：
-  - failed_assertions: [{"type": "exit_code", "expected": 0, "actual": 1}, {"type": "output_match", "mode": "contains", "expected": "DELIVERABLES_OK", "actual": "MISSING exec bit: scripts/natlab_run.py"}]
-  - screenshots: []
-  - first_failed_step: 步骤1: 交付物核查脚本打印 MISSING exec bit: scripts/natlab_run.py 后 exit 1（文件本体存在，仅可执行位缺失）
+| 产品 Bug | 0 |
+| 本链增量 Token（输入） | 1.38M |
+| 本链增量 Token（输出） | 0.20M |
 
 
 ## 场景结果
 
 | 场景 | 描述 | 状态 | 失败断言 | 分类 |
 | --- | --- | --- | --- | --- |
-| crypto-deliverables-exist | 本 SPEC 全部交付物齐备且带 SPEC 标记：protocol 新增 CryptoCodec.kt/CryptoCodecTest.kt，scripts 新增 natlab_setup.sh/natlab_run.py（可执行位），docs/protocol.md 存在且含加密章节；修改件 P2pBackend/LanDirectBackend/FrpBackend 引用 CryptoCodec、SourceProfiles 含 encryptOn、Messages.kt 含协商字段；任一缺失即非零退出并打印 MISSING 路径（出处：tasks.md Deliverables YAML；proposal Impact 影响代码面） | failed（已修正） | 2/3 | product-bug |
+| crypto-deliverables-exist | 本 SPEC 全部交付物齐备且带 SPEC 标记：protocol 新增 CryptoCodec.kt/CryptoCodecTest.kt，scripts 新增 natlab_setup.sh/natlab_run.py（可执行位），docs/protocol.md 存在且含加密章节；修改件 P2pBackend/LanDirectBackend/FrpBackend 引用 CryptoCodec、SourceProfiles 含 encryptOn、Messages.kt 含协商字段；任一缺失即非零退出并打印 MISSING 路径（出处：tasks.md Deliverables YAML；proposal Impact 影响代码面） | pass | 0/3 | - |
 | crypto-codec-tests-green | CryptoCodec 单元测试全绿：protocol 模块 ./gradlew test --tests "*CryptoCodecTest*" 覆盖 AES-128-GCM 片级加解密往返（空片/最大片/counter 边界）、AAD 篡改拒绝、HKDF 方向子钥派生，BUILD SUCCESSFUL 且产出测试结果 XML（出处：tasks 1.1/1.2；specs/stream-encryption「片级 AEAD 加密」加密往返 Scenario；CryptoCodecTest.kt）。环境依赖（Gradle 发行版与依赖经镜像下载，首次构建较久）；有 fallback: 镜像 distributionUrl 已配置（protocol/gradle/wrapper/gradle-wrapper.properties:3） | pass | 0/3 | - |
 | probe-frame-plaintext-invariant | 探针帧 sequence=0 恒明文不变量：PUNCH_PROBE_SEQUENCE 常量为 0（P2pBackend.kt:98-100 打洞探针发送现状锚点）且加密路径显式豁免（CryptoCodec/P2pBackend 按 sequence==0 或 PUNCH_PROBE 跳过加解密），打洞期对端尚无密钥仍可互通（出处：specs/stream-encryption「协商与兼容」探针帧 sequence=0 SHALL 恒明文；design D3 明文边界） | pass | 0/2 | - |
 | multi-candidate-probe-surface | 多候选并行探测落地：StunClient 从单结果 discoverSrflx（StunClient.kt:129 现状锚点）扩展为多节点 SRFLX 汇总 + 本地多网卡候选（含 IPv6），P2pBackend 并行 out-probe 且 IPv6 直连优先，每级独立耗时统计进 Diagnostics（结构化字段可核）（出处：tasks 2.1；specs/p2p-nat-traversal「打洞增强链」Requirement；design D2 ①②） | pass | 0/2 | - |
@@ -61,13 +48,6 @@
 | backends-crypto-integration-regression | 四后端接入加密编解码且 none 路径回归不变：TransportBackend/P2pBackend/LanDirectBackend/FrpBackend 均引用 CryptoCodec（视频片与控制通道按 direction 加密），协商结果 none 时路径逐字节与现状一致；TransportLoopbackTest+P2pAndStunTest 既有用例（含 p2p punch 成功与超时回落 frp）全绿作回归门（出处：tasks 1.4；proposal 兼容性「未启用加密路径行为与现状逐字节一致」；knowledge transport 域 transport-backends 统一抽象规则；TransportBackend.kt:84） | pass | 0/4 | - |
 | encrypt-off-wire-bytes-identical | 加密开关关闭字节回归：encryptOn=false 时线路字节与加密功能合入前一致（无额外字段、无 16B tag）；机械核对 CryptoCodecTest 结果 XML 含开关关闭/字节一致/回归类具名用例且零失败，CryptoCodec.kt 编码路径存在 disabled 直通分支（出处：specs/stream-encryption「加密开关」开关关闭回归 Scenario；tasks 5.3 开关关闭线路字节回归对比；design D4） | pass | 0/2 | - |
 | endpoint-migration-session-binding | 端点迁移会话连续性：会话绑定 sessionId 而非网络地址，信令更新对端地址走显式 setRemote，sequence=0 探针复用于重连，统计连续不重置；transport 源码含 setRemote/sessionId 锚点，测试源码含迁移/地址更新具名用例且 P2pAndStunTest 全绿（出处：tasks 2.3；specs/p2p-nat-traversal「端点迁移」网络切换恢复 Scenario；design D2 ⑤） | pass | 0/3 | - |
-
-
-## 断言级豁免清单
-
-以下失败断言被归类为非产品缺陷（不记产品 Bug），逐条列出供人工复核豁免是否掩盖真实缺陷（场景级一句话归因不足以复核）。
-
-无非 product-bug 的被豁免失败断言。
 
 ## 本轮场景集变更
 
