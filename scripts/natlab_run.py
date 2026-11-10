@@ -20,7 +20,8 @@
 用法：
   python3 scripts/natlab_run.py                    # 全量（矩阵+预测对比+迁移）
   --rounds N          每组合轮数（默认 2）
-  --profiles a,b,c    限定档位子集（默认 ei,ap-rr,symmetric）
+  --profiles a,b,c    限定档位子集（默认 ei,ap-rr,symmetric；prediction_toggle 固定追加
+                      sym-seq 作业，不受子集影响）
   --client-timeout S  单轮客户端超时秒（默认 15；迁移场景自动加倍）
   --data-out PATH     数据文件（默认 docs/natlab-matrix.json）
   --keep              收尾不拆拓扑（默认 natlab_setup.sh down）
@@ -73,21 +74,28 @@ class Peer:
         self._cursor = 0
         self._cv = threading.Condition()
         cmd = ["ip", "netns", "exec", ns, PEER_BIN, *args]
-        self.p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        self.p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                  errors="replace")  # 非 UTF-8 字节以 U+FFFD 代替，不让采集线程崩溃（同 bin/run_full_suite.py）
         self._t = threading.Thread(target=self._read, daemon=True)
         self._t.start()
 
     def _read(self):
-        for line in self.p.stdout:
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                ev = json.loads(line)
-            except ValueError:
-                continue
+        try:
+            for line in self.p.stdout:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                with self._cv:
+                    self.events.append(ev)
+                    self._cv.notify_all()
+        except Exception as e:
+            # 采集线程异常退出前补一条本地错误事件，避免事件流中断无痕
             with self._cv:
-                self.events.append(ev)
+                self.events.append({"event": "error", "reader_error": f"stdout 采集线程异常退出：{e!r}"})
                 self._cv.notify_all()
 
     def drain(self):
@@ -96,6 +104,15 @@ class Peer:
             new = self.events[self._cursor:]
             self._cursor = len(self.events)
             return list(new)
+
+    def snapshot(self):
+        """当前全部事件的加锁副本：外部消费方一律走此接口，不直接访问 events。"""
+        with self._cv:
+            return list(self.events)
+
+    def is_running(self):
+        """对端进程是否仍在运行。"""
+        return self.p.poll() is None
 
     def wait_event(self, name, timeout):
         deadline = time.time() + timeout
@@ -135,11 +152,12 @@ def _parse_trace(raw):
 
 def classify(cli):
     """按客户端事件流给出结论：direct / prediction / frp_fallback / fail。"""
-    result = next((e for e in reversed(cli.events) if e.get("event") == "result"), None)
-    established = [e for e in cli.events if e.get("event") == "punch_established"]
-    fallback = any(e.get("event") == "punch_fallback" for e in cli.events)
+    events = cli.snapshot()
+    result = next((e for e in reversed(events) if e.get("event") == "result"), None)
+    established = [e for e in events if e.get("event") == "punch_established"]
+    fallback = any(e.get("event") == "punch_fallback" for e in events)
     prediction_stage = next(
-        (s for e in cli.events if e.get("event") == "result"
+        (s for e in events if e.get("event") == "result"
          for s in _parse_trace(e.get("punch_trace")).get("stages", [])
          if s.get("stage") == "port_prediction"), None)
     prediction_hit = bool(prediction_stage) and str(prediction_stage.get("detail", "")).startswith("hit")
@@ -175,7 +193,7 @@ def restore_client_ip(profile):
 
 
 def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
-              client_timeout=15.0, frames=5, stun=None):
+              client_timeout=15.0, frames=5):
     """跑一轮组合；返回轮记录 dict。"""
     restore_client_ip(cl_prof)          # 迁移场景残留复位（幂等）
     sh_setup("profile", cl_prof, "cl")
@@ -204,17 +222,17 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
     result = None
     try:
         while time.time() < deadline:
-            with cli._cv:
-                result = next((e for e in cli.events if e.get("event") == "result"), None)
-                frames_ev = next((e for e in cli.events if e.get("event") == "frames"), None)
-                errored = any(e.get("event") == "error" for e in cli.events)
+            events = cli.snapshot()
+            result = next((e for e in events if e.get("event") == "result"), None)
+            frames_ev = next((e for e in events if e.get("event") == "frames"), None)
+            errored = any(e.get("event") == "error" for e in events)
             if result is not None:
                 break
             if migration and not switched and frames_ev is not None:
                 time.sleep(0.5)                      # 让后续若干帧继续走老路径
                 switch_client_ip(cl_prof)
                 switched = True
-            if errored and cli.p.poll() is not None:
+            if errored and not cli.is_running():
                 break
             time.sleep(0.2)
     finally:
@@ -223,6 +241,7 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
         time.sleep(0.3)
 
     outcome, punch_ms, result, prediction_stage = classify(cli)
+    events = cli.snapshot()
     rec = {
         "cl": cl_prof, "srv": srv_prof, "outcome": outcome,
         "prediction_enabled": prediction,
@@ -235,10 +254,10 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
         "migrated": bool(result and result.get("migrated")),
     }
     if outcome == "fail":
-        rec["events_tail"] = [e for e in cli.events if e.get("event") in
+        rec["events_tail"] = [e for e in events if e.get("event") in
                               ("result", "error", "punch_fallback", "connected")][-4:]
     if migration:
-        seqs = [e.get("sequence") for e in cli.events if e.get("event") == "frames"]
+        seqs = [e.get("sequence") for e in events if e.get("event") == "frames"]
         rec.update({
             "migration_ip_switched": switched,
             "reconnects": result.get("reconnects") if result else None,
@@ -265,17 +284,18 @@ def run_stun():
     return stuns
 
 
-def matrix(data, profiles, rounds, prediction, client_timeout, stun):
+def matrix(data, profiles, rounds, prediction, client_timeout):
     print(f"── 3×3 矩阵：{profiles} × {profiles}，每组合 {rounds} 轮 ──")
     for cl in profiles:
         for srv in profiles:
             rounds_rec = []
             for i in range(rounds):
-                rec = run_combo(cl, srv, prediction=prediction, client_timeout=client_timeout, stun=stun)
+                rec = run_combo(cl, srv, prediction=prediction, client_timeout=client_timeout)
                 rounds_rec.append(rec)
                 print(f"  [{cl}×{srv}] round{i + 1}: {rec['outcome']} punch_ms={rec.get('punch_ms')}"
                       + (f" prediction={rec.get('prediction_stage')}" if rec.get("prediction_stage") else ""))
             wins = [r for r in rounds_rec if r["outcome"] in ("direct", "prediction")]
+            punch_vals = [r["punch_ms"] for r in wins if r["punch_ms"]]
             data["matrix"].append({
                 "client": cl, "server": srv, "rounds": rounds_rec,
                 "direct": sum(r["outcome"] == "direct" for r in rounds_rec),
@@ -283,14 +303,13 @@ def matrix(data, profiles, rounds, prediction, client_timeout, stun):
                 "frp_fallback": sum(r["outcome"] == "frp_fallback" for r in rounds_rec),
                 "fail": sum(r["outcome"] in ("fail", "infra_fail") for r in rounds_rec),
                 "success_rate": round(len(wins) / len(rounds_rec), 3),
-                "avg_punch_ms": round(sum(r["punch_ms"] for r in wins if r["punch_ms"]) / len(wins), 1)
-                if wins and any(r["punch_ms"] for r in wins) else None,
+                "avg_punch_ms": round(sum(punch_vals) / len(punch_vals), 1) if punch_vals else None,
                 "session_established_rate": round(
                     sum(1 for r in rounds_rec if r["ok"]) / len(rounds_rec), 3),
             })
 
 
-def prediction_toggle(data, profiles, client_timeout, stun):
+def prediction_toggle(data, profiles, client_timeout):
     """预测开关对比：随机 symmetric 对（全域随机，预测窗口大概率不 arm）+
     sym-seq 有界池化对（窗口可与分配段相交，命中率实验档）。
     sym-seq 对启用侧跑多轮以估算命中率；每对再以 --no-prediction 复跑对照。"""
@@ -299,9 +318,9 @@ def prediction_toggle(data, profiles, client_timeout, stun):
     jobs = [(cl, srv, 1) for cl, srv in pairs]
     jobs += [("sym-seq", "sym-seq", 4), ("sym-seq", "symmetric", 2)]
     for cl, srv, n_on in jobs:
-        on_rounds = [run_combo(cl, srv, prediction=True, client_timeout=client_timeout, stun=stun)
+        on_rounds = [run_combo(cl, srv, prediction=True, client_timeout=client_timeout)
                      for _ in range(n_on)]
-        off = run_combo(cl, srv, prediction=False, client_timeout=client_timeout, stun=stun)
+        off = run_combo(cl, srv, prediction=False, client_timeout=client_timeout)
         armed = sum(1 for r in on_rounds if r["prediction_stage"])
         hits = sum(1 for r in on_rounds if str(r["prediction_stage"] or "").startswith("hit"))
         direct_on = sum(1 for r in on_rounds if r["outcome"] in ("direct", "prediction"))
@@ -318,10 +337,10 @@ def prediction_toggle(data, profiles, client_timeout, stun):
               f" | off: {off['outcome']}")
 
 
-def migration_scenario(data, client_timeout, stun):
+def migration_scenario(data, client_timeout):
     print("── 端点迁移：ei×ei 直连后 client 出口 IP 切换（10.200.1.2→10.200.1.3）──")
     rec = run_combo("ei", "ei", prediction=True, migration=True,
-                    client_timeout=max(client_timeout * 2, 25.0), frames=5, stun=stun)
+                    client_timeout=max(client_timeout * 2, 25.0), frames=5)
     data["migration"] = rec
     print(f"  迁移恢复={rec.get('session_continuous')} 重连={rec.get('reconnects')} "
           f"恢复帧={rec.get('resumed_frames')} 帧序列={rec.get('frame_sequences')}")
@@ -340,7 +359,8 @@ def print_table(data):
 def main():
     ap = argparse.ArgumentParser(description="natlab 3×3 NAT 打洞矩阵验证（纯 JVM，无 adb 依赖）")
     ap.add_argument("--rounds", type=int, default=2)
-    ap.add_argument("--profiles", default=",".join(PROFILES))
+    ap.add_argument("--profiles", default=",".join(PROFILES),
+                    help="档位子集（默认 ei,ap-rr,symmetric）；prediction_toggle 固定追加 sym-seq 作业，不受子集影响")
     ap.add_argument("--client-timeout", type=float, default=15.0)
     ap.add_argument("--data-out", default=os.path.join(REPO, "docs", "natlab-matrix.json"))
     ap.add_argument("--keep", action="store_true")
@@ -371,10 +391,10 @@ def main():
         stun = run_stun()
         if not args.skip_matrix:
             matrix(data, profiles, args.rounds, prediction=True,
-                   client_timeout=args.client_timeout, stun=stun)
-        prediction_toggle(data, profiles, args.client_timeout, stun)
+                   client_timeout=args.client_timeout)
+        prediction_toggle(data, profiles, args.client_timeout)
         if not args.skip_migration:
-            migration_scenario(data, args.client_timeout, stun)
+            migration_scenario(data, args.client_timeout)
     except Exception as e:
         print(f"[natlab_run] 基础设施失败：{e}", file=sys.stderr)
         code = 1
@@ -383,7 +403,9 @@ def main():
             for s in stun:
                 s.kill()
 
-    os.makedirs(os.path.dirname(args.data_out), exist_ok=True)
+    data_dir = os.path.dirname(args.data_out)
+    if data_dir:
+        os.makedirs(data_dir, exist_ok=True)
     with open(args.data_out, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     print(f"\n数据文件：{args.data_out}")
