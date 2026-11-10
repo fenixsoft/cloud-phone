@@ -15,7 +15,7 @@ Windows 客户端 SHALL 作为独立 Gradle 工程 `client-windows/`（Kotlin JV
 - **THEN** 无任何改动（client-windows 为纯新增顶层目录）
 
 ### Requirement: 解码渲染管线与 latest-wins
-视频片 SHALL 经 FFmpeg(JavaCV) H.264 解码为 RGBA 帧并经 Compose Canvas 上屏；渲染 SHALL 采用 latest-wins 语义（单消费者仅保留最新待解码帧，积压帧丢弃并计数）；视口 SHALL 按源分辨率 letterbox 居中，窗口缩放不拉伸比例；HUD 分辨率 SHALL 取解码实际值而非 START_SESSION 请求值。
+视频片 SHALL 经 FFmpeg(JavaCV) H.264 解码为 RGBA 帧并经 Compose Canvas 上屏；渲染 SHALL 采用 latest-wins 语义：解码按序进行（保 P 帧参考链完整，对齐 client-decode-render 既有语义），上屏仅取最新帧，积压的陈旧帧解码后丢弃并计数；积压过深时解码输入 SHALL 快进至下一关键帧边界（丢弃帧计数），MUST NOT 在参考链中间直接丢弃待解码帧（解码器缺参考帧会产生花屏）；视口 SHALL 按源分辨率 letterbox 居中，窗口缩放不拉伸比例；HUD 分辨率 SHALL 取解码实际值而非 START_SESSION 请求值。
 
 #### Scenario: 视频端到端上屏
 - **WHEN** 客户端与源端建立会话且源端推流
@@ -30,7 +30,7 @@ Windows 客户端 SHALL 作为独立 Gradle 工程 `client-windows/`（Kotlin JV
 - **THEN** 画面按源宽高比 letterbox 缩放，无拉伸变形，黑边填充剩余区域
 
 ### Requirement: 鼠标与键盘输入映射
-左键 press/move/release SHALL 映射为 InputAction DOWN/MOVE/UP（坐标按视口映射归一化 65535，letterbox 黑边区域点击不产生越界坐标）；按住左键拖动 SHALL 等效触摸滑动；滚轮 SHALL 产生连续小步滑动；右键 SHALL 等效 BACK（复用 Android 端 BACK 注入路径）；HOME/RECENTS SHALL 保持占位禁用（对齐 Android 端现状）。
+左键 press/move/release SHALL 映射为 InputAction DOWN/MOVE/UP（坐标按视口映射归一化 65535，letterbox 黑边区域点击不产生越界坐标）；按住左键拖动 SHALL 等效触摸滑动；滚轮 SHALL 产生连续小步滑动；右键 SHALL 等效 BACK（复用 Android 端 BACK 注入路径）；HOME/RECENTS SHALL 保持占位禁用（对齐 Android 端现状）；会话窗口获得键盘焦点时，可打印字符键 SHALL 经 TEXT_INPUT 直发（等效文字面板语义），协议无独立按键通道，非字符键（功能键/修饰键）SHALL NOT 产生注入（scancode 全键盘映射列为后续增强，见 design Non-Goals）。
 
 #### Scenario: 单击与拖动
 - **WHEN** 用户在画面区左键单击/按住拖动
@@ -120,11 +120,11 @@ Windows 客户端 SHALL 作为独立 Gradle 工程 `client-windows/`（Kotlin JV
 - **THEN** 回到首页，源端会话终止，档案保持
 
 ### Requirement: 单应用串流
-单应用入口 SHALL 发送 AppListRequest 并在 1s 内期望回传（超时显示重试入口）；单应用列表 SHALL 呈现磁贴网格（图标占位+应用名，不显示包名），支持名称搜索；选择磁贴 SHALL 进入单应用串流并显示单应用徽章，可退出回列表；磁贴 SHALL 支持固化为桌面快捷方式。
+单应用入口 SHALL 发送 AppListRequest（源端目标 1s 内回传；客户端 3s 无应答判定失败并显示重试入口，对齐 Android 端 SourceAppsActivity 既有规则与 app-shortcuts 知识页两条时限）；单应用列表 SHALL 呈现磁贴网格（图标占位+应用名，不显示包名），支持名称搜索；选择磁贴 SHALL 进入单应用串流并显示单应用徽章，可退出回列表；磁贴 SHALL 支持固化为桌面快捷方式。
 
 #### Scenario: 列表回传
 - **WHEN** 用户进入单应用列表且源端在线
-- **THEN** 1s 内磁贴呈现应用名列表；超时则显示重试入口而非空列表静默
+- **THEN** 磁贴在源端回传后呈现应用名列表（源端目标 1s 内回传）；3s 无应答显示重试入口而非空列表静默
 
 #### Scenario: 单应用串流
 - **WHEN** 用户点击某应用磁贴

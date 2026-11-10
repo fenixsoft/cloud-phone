@@ -4,7 +4,7 @@
 
 CloudPhone 现有四个 Gradle 工程：`protocol/`（零 Android 依赖纯 Kotlin JVM 库：Messages/Framing + LanDirect/P2p/Frp 三后端 + CryptoCodec/Stats/Diagnostics/StunClient）、`source/`（Android 源端服务）、`client/`（Android 客户端，经 `includeBuild("../protocol")` 复合构建 + `implementation("cloudphone:protocol:0.1.0")` 依赖替换引用协议）、`source/loadgen`。用户需要 Windows 桌面形态客户端，功能与 Android 客户端全对齐。验收环境：用户自有 dockur/windows VM（宿主已有 `~/win-vm/` 操作指引，RDP 127.0.0.1:8889）。UI 真相源为本 change 原型（`specs/windows-desktop-client/prototype/`，plain 仿样层、视觉参照无约束力）。
 
-知识库依据（起草时已核对）：protocol/stream-protocol-core（大端 C 兼容布局、HELLO/HELLO_ACK 500ms、REJECT_BAD_TOKEN、加密协商不 bump 版本、未知 MsgType 整段丢弃）、transport 三页（lan-direct RTT≤5ms / p2p 打洞增强链 / frp 112.74.85.74:22333 TCP+22334 UDP；AES-128-GCM 片级+HKDF 方向子钥+重放 512 窗口，探针 seq=0 恒明文）、aux-channels-m3（AAC-LC 48kHz stereo 96kbps 20ms 帧、jitter 120ms 起播/队列 32 帧、静音 3s 降 1fps keepalive、积压>800ms 清音频、TEXT_INPUT ACK 5s/CLIPBOARD 10s）、client 五能力页（latest-wins、触摸归一化 65535、档案去重、档位矩阵 320–2560 校验、AppListRequest 1s 回传）。
+知识库依据（起草时已核对）：protocol/stream-protocol-core（大端 C 兼容布局、HELLO/HELLO_ACK 500ms、REJECT_BAD_TOKEN、加密协商不 bump 版本、未知 MsgType 整段丢弃）、transport 三页（lan-direct RTT≤5ms / p2p 打洞增强链 / frp 112.74.85.74:22333 TCP+22334 UDP；AES-128-GCM 片级+HKDF 方向子钥+重放 512 窗口，探针 seq=0 恒明文）、aux-channels-m3（AAC-LC 48kHz stereo 96kbps 20ms 帧、jitter 120ms 起播/队列 32 帧、静音 3s 降 1fps keepalive、积压>800ms 清音频、TEXT_INPUT ACK 5s/CLIPBOARD 10s）、client 五能力页（latest-wins、触摸归一化 65535、档案去重、档位矩阵 320–2560 校验、AppListRequest 源端 1s 回传目标 + 客户端 3s 失败判定）。
 
 ## Goals / Non-Goals
 
@@ -27,7 +27,7 @@ CloudPhone 现有四个 Gradle 工程：`protocol/`（零 Android 依赖纯 Kotl
 - *备选*：JavaFX/Swing 手写布局（生态弱、与原型差距大）；Electron/其它语言（放弃 Kotlin 协议复用，违背单一事实源）。*理由*：Compose Desktop 是 Kotlin 官方桌面栈，与 protocol 同语言同工具链，协议消费零成本。
 
 ### D2 解码渲染：JavaCV(FFmpeg) H.264 软解 → Compose ImageBitmap，latest-wins 单消费者
-视频片经 TransportBackend 到达后送 FFmpeg 解码（`javacv-platform` 按 classifier 只带 windows-x86_64 与 linux-x86_64，避免全平台数百 MB）；解码循环为单消费者协程：仅保留最新待解码帧（积压即丢弃并计数），解出 RGBA 后转 `org.jetbrains.skia.Image`→`ImageBitmap` 交 Compose Canvas 绘制；视口按源分辨率 letterbox 居中（沿用 client-decode-render 语义），HUD 分辨率取解码实际值。
+视频片经 TransportBackend 到达后送 FFmpeg 解码（`javacv-platform` 按 classifier 只带 windows-x86_64 与 linux-x86_64，避免全平台数百 MB）；解码循环为单消费者协程：解码按序进行（保 P 帧参考链完整，对齐 client-decode-render 的 latest-wins 语义——Android 端是「解码照常、仅上屏最新帧」），上屏仅取最新帧、积压陈旧帧解码后丢弃并计数，积压过深时解码输入快进至下一关键帧边界（不在参考链中间丢帧，避免花屏），解出 RGBA 后转 `org.jetbrains.skia.Image`→`ImageBitmap` 交 Compose Canvas 绘制；视口按源分辨率 letterbox 居中（沿用 client-decode-render 语义），HUD 分辨率取解码实际值。
 - *备选*：vlcj（拖整个 VLC 运行时）；ffmpeg CLI 子进程管道（进程管理/崩溃恢复脆弱）。*理由*：JavaCV 与 JVM 进程内线程模型契合，帧指针→位图拷贝一次即可，吞吐足够 1080P60。
 
 ### D3 音频下行：JavaCV AAC 解码 + javax.sound.sampled 播放，jitter 语义逐条对齐
@@ -35,7 +35,7 @@ AUDIO_CHUNK(ADTS) → FFmpeg AAC 解码为 PCM 16bit/48kHz/stereo → `SourceDat
 - *备选*：Java Sound 直接喂 ADTS（JRE 不带 AAC 解码器，必死）；单独引 fobs4jmf 之类古董库（不维护）。*理由*：与 D2 共用 JavaCV，不增新依赖家族。
 
 ### D4 输入映射：鼠标/键盘 → INPUT_EVENT 桌面语义表
-左键 press/move/release → InputAction DOWN/MOVE/UP（坐标归一化 65535，letterbox 视口内换算）；按住拖动即滑动；滚轮 → 连续小步 DOWN/UP 模拟滑动；**右键 = BACK**（Android 端边缘侧滑手势的桌面等效，复用 Android 客户端 sendRemoteBack 的注入路径）；键盘焦点时物理按键经 TEXT_INPUT/按键通道回传；Ctrl+Shift+K 唤起文字输入面板（ACK 对账 5s）。HOME/RECENTS 维持占位禁用（对齐 Android 端现状）。
+左键 press/move/release → InputAction DOWN/MOVE/UP（坐标归一化 65535，letterbox 视口内换算）；按住拖动即滑动；滚轮 → 连续小步 DOWN/UP 模拟滑动；**右键 = BACK**（Android 端边缘侧滑手势的桌面等效，复用 Android 客户端 sendRemoteBack 的注入路径）；键盘焦点时可打印字符键经 TEXT_INPUT 直发（协议 MsgType 无独立按键通道，非字符键不注入；scancode 全键盘映射列为后续增强）；Ctrl+Shift+K 唤起文字输入面板（ACK 对账 5s）。HOME/RECENTS 维持占位禁用（对齐 Android 端现状）。
 - *备选*：Robot 本地注入（方向反了，桌面端是远端注入）；引入 scancode 全键盘映射 v1 就做（协议按键覆盖待定，列为 Non-Goal 的后续增强）。*理由*：先对齐 Android 已有能力，语义表直接映射现有 InputAction 枚举，协议零改动。
 
 ### D5 档案持久化：`~/.cloudphone/profiles.json`（用户目录 JSON 文件）

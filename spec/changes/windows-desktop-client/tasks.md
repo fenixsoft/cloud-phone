@@ -2,13 +2,13 @@
 
 ## 1. 工程脚手架与依赖锁定
 
-- [ ] 1.1 创建 `client-windows/` Gradle 工程：settings.gradle.kts（`includeBuild("../protocol")`）、build.gradle.kts（Kotlin JVM 17 + org.jetbrains.compose + javacv-platform 仅 windows-x86_64/linux-x86_64 classifier + kotlinx-coroutines）、gradle.properties、自有 gradle/libs.versions.toml 锁定 Compose/Kotlin 实测兼容组合；从 client/ 拷贝 gradle wrapper；验收=`./gradlew build` 绿（空 Main）
+- [ ] 1.1 创建 `client-windows/` Gradle 工程：settings.gradle.kts（`includeBuild("../protocol")`）、build.gradle.kts（Kotlin JVM 17 + org.jetbrains.compose + javacv-platform 仅 windows-x86_64/linux-x86_64 classifier + kotlinx-coroutines + kotlinx-serialization-json（profiles.json 持久化用，对齐 D5））、gradle.properties、自有 gradle/libs.versions.toml 锁定 Compose/Kotlin 实测兼容组合；从 client/ 拷贝 gradle wrapper；验收=`./gradlew build` 绿（空 Main）
 - [ ] 1.2 `Main.kt` 应用骨架：窗口启动、`-Dskiko.renderApi=SOFTWARE` 软渲染回退参数文档化、深色主题占位；验收=headless 环境构建绿 + 启动入口可被单测冒烟（无显示环境跳过实际渲染）
 
 ## 2. 会话核心（协议消费，无 UI）
 
 - [ ] 2.1 `SessionController.kt`（client-windows/src/main/kotlin/cloudphone/desktop/session/SessionController.kt）会话状态机：连接→HELLO/START_SESSION→会话态（挂起/恢复/断开、档位循环重发 START_SESSION 不断链、HUD StateFlow、AuxNotice 上抛），protocol 后端回调经 Channel 桥接协程；验收=`SessionControllerTest.kt` 单测经本机源桩 loopback 断言 HELLO/START_SESSION/挂起恢复/档位切换/REJECT_BAD_TOKEN 路径
-- [ ] 2.2 `VideoPipeline.kt`：TransportBackend 视频片 → JavaCV FFmpeg H.264 解码 → RGBA → ImageBitmap；latest-wins 单消费者（积压丢帧计数）；验收=`VideoPipelineTest.kt` 单测用 JavaCV 编码器合成样例 H.264 流，断言解码输出帧与积压丢弃计数
+- [ ] 2.2 `VideoPipeline.kt`：TransportBackend 视频片 → JavaCV FFmpeg H.264 解码 → RGBA → ImageBitmap；latest-wins 单消费者（解码按序保 P 帧参考链、上屏仅最新帧；逐级计数：接收片数/解码帧数/积压丢弃帧数/上屏帧数，经 StateFlow 供 HUD 与诊断；提供默认关闭的 debug 开关将原始 H.264 输入片 dump 到本地文件，供 VM 冒烟黑屏/花屏取证）；验收=`VideoPipelineTest.kt` 单测用 JavaCV 编码器合成样例 H.264 流，断言解码输出帧与积压丢弃计数
 - [ ] 2.3 `AudioSink.kt`：AUDIO_CHUNK(ADTS) → JavaCV AAC 解码 PCM 48kHz/stereo → AudioOutput 接口（javax.sound SourceDataLine 实现 + 测试用 null-sink），jitter 120ms 水位/队列 32 帧/积压>800ms 丢最旧；验收=`AudioSinkTest.kt` 单测合成 ADTS 断言解码 PCM 帧数与 jitter 丢弃/起播逻辑
 - [ ] 2.4 `InputMapper.kt`：视口坐标→归一化 65535（letterbox 映射、黑边防护）、左键 DOWN/MOVE/UP、拖动滑动、滚轮小步、右键=BACK 注入路径；验收=`InputMapperTest.kt` 纯函数单测覆盖映射边界与黑边
 - [ ] 2.5 `AuxBridge.kt`：CLIPBOARD_SET/GET/TEXT（10s 超时降级）、TEXT_INPUT{seq} ACK 对账（5s 超时）、AuxNotice→UI 状态；验收=`AuxBridgeTest.kt` mock transport 单测覆盖超时与回执路径
@@ -45,6 +45,8 @@
 - path: client-windows/gradlew
   kind: new
 - path: client-windows/gradle/wrapper/gradle-wrapper.properties
+  kind: new
+- path: client-windows/gradle/wrapper/gradle-wrapper.jar
   kind: new
 - path: client-windows/src/main/kotlin/cloudphone/desktop/Main.kt
   kind: new
