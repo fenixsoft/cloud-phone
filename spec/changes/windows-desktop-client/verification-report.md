@@ -1,0 +1,82 @@
+# 验证报告：windows-desktop-client
+
+> ⚠️ 本报告由框架于 2026-11-10T13:59:22Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
+> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-10T13:54:51.311130+00:00+run-result@mtime1794319152145767927
+
+## 结论：❌ 未通过（Bug Found）
+
+**状态：bug-found — 29/30 场景通过，1 失败，0 错误（1 个真实产品 Bug）**
+
+30 场景 29 过 1 失败；唯一失败 input-mapper-back-keyboard-test 归 product-bug（spec:33 可打印字符键 TEXT_INPUT 直发缺失，非场景文件缺陷不走原地修复）；其余交付物/复合构建/单元测试/打包/冒烟诊断场景全绿。
+
+| 指标 | 数量 |
+| --- | --- |
+| 通过 | 29 |
+| 失败 | 1 |
+| 错误 | 0 |
+| 产品 Bug | 1 |
+| 本链增量 Token（输入） | 0.31M |
+| 本链增量 Token（输出） | 0.09M |
+
+
+## 真实产品 Bug
+
+### BUG-01（severity=major）· exit_code + output_match（cli 源码锚点检查）
+
+- 关联场景：input-mapper-back-keyboard-test
+- 描述：会话窗口物理键盘可打印字符键未按 spec:33 经 TEXT_INPUT 直发：仅 Ctrl+Shift+K 文字面板路径可发 TEXT_INPUT，会话画面区无键盘焦点字符处理，非字符键不注入的过滤逻辑亦无处落地
+- 根因：SessionScreen 视口仅接线鼠标（左键三段/右键 BACK/滚轮），AppWindow KeyEventDispatcher 只解析 F11/Ctrl+Shift 快捷键，物理键盘字符键→AuxBridge.sendTextInput 桥接缺失
+- 证据（场景 input-mapper-back-keyboard-test 结构化证据，引用）：
+  - failed_assertions: [{"type": "exit_code", "selector": "步骤1 check 源码锚点grep", "expected": 0, "actual": 1}, {"type": "output_match", "selector": "combined", "expected": "OK INPUT KEY ANCHORS", "actual": "FAIL printable-filter"}]
+  - screenshots: []
+  - first_failed_step: 步骤1: grep 'isLetterOrDigit\|printable\|可打印\|ISOControl\|char' 于 InputMapper.kt/SessionScreen.kt 无命中，输出 FAIL printable-filter，退出码1
+
+
+## 场景结果
+
+| 场景 | 描述 | 状态 | 失败断言 | 分类 |
+| --- | --- | --- | --- | --- |
+| win-deliverables-present | 交付物齐备性门：tasks.md Deliverables YAML 全部 29 个新建路径（client-windows 工程与 wrapper 文件 7 + 主源码 13 + 测试 7 + scripts/win_vm_smoke.sh + docs/windows-client.md）外加 3 个 reference 原型页（specs/windows-desktop-client/prototype/{index,session,apps}.html）在验证树内逐个存在，任一缺失即非零退出并打印 MISSING 路径（出处：spec/changes/windows-desktop-client/tasks.md Deliverables YAML 36-101 行）。 | pass | 0/6 | - |
+| protocol-reuse-composite-config | 协议层复用与工程形态（零 fork）：client-windows/settings.gradle.kts 含 includeBuild("../protocol")（与 client/settings.gradle.kts:13 复合构建引用同款）、build.gradle.kts 依赖坐标 cloudphone:protocol:0.1.0（镜像 client/app/build.gradle.kts:32）、JVM 17 工具链、javacv-platform 仅 windows-x86_64/linux-x86_64 两 classifier（避免全平台数百 MB）、kotlinx-serialization-json（D5 档案持久化）、自有 gradle/libs.versions.toml 锁定 Compose/Kotlin 实测组合；且 client-windows/src 下无任何 package cloudphone.protocol / cloudphone.transport 源文件——协议消息/帧编解码/三传输后端/加密全部复用 protocol 模块不重实现（出处：spec/changes/windows-desktop-client/specs/windows-desktop-client/spec.md:5-6「协议层复用与工程形态」Requirement；tasks 1.1；design.md D1）。 | pass | 0/4 | - |
+| existing-projects-zero-impact | 既有工程零影响：对 protocol/、source/、client/ 做 git status/diff HEAD 均无任何改动（client-windows 为纯新增顶层目录），且仓库根不存在新增 settings.gradle.kts（根构建图不加模块、client-windows 自成一体）——Android 客户端不感知桌面端存在（出处：spec.md:13-15「既有工程零影响」Scenario；design.md Migration Plan「根 settings 不加模块」）。 | pass | 0/2 | - |
+| gradle-composite-build-green | 复合构建解析与构建绿：在 client-windows/ 执行 gradlew build，依赖图中的 cloudphone:protocol:0.1.0 被复合构建替换为本地 protocol/ 模块（../protocol 相对验证树内解析），构建成功 BUILD SUCCESSFUL——任务 1.1/1.2 验收「./gradlew build 绿」（出处：spec.md:8-11「复合构建解析」Scenario；tasks 1.1、1.2）。 | pass | 0/4 | - |
+| main-skeleton-software-render | 应用骨架与软渲染回退（headless 可构建）：Main.kt 具备窗口启动入口且处理/文档化 -Dskiko.renderApi=SOFTWARE 软件渲染回退（VM 无 GPU、Direct3D 初始化失败的兜底），docs/windows-client.md 说明该启动参数；Theme.kt 落深色控制台主题色板（bg #0b0e14 / surface #141922 / accent #4f8cff→#22d3ee）（出处：tasks 1.2、3.1；design.md Risks「VM 内无 GPU → -Dskiko.renderApi=SOFTWARE」行）。 | pass | 0/3 | - |
+| docs-windows-client-content | 用户手册覆盖面：docs/windows-client.md 说明 JRE 17 要求与构建/运行方式、-Dskiko.renderApi=SOFTWARE 软件渲染回退参数、防火墙出站规则（出站 UDP 打洞；lan-direct 纯出站 TCP 是主验收路径）、档案文件位置（~/.cloudphone/profiles.json）、jpackage 打包步骤与安装包体积预期、Windows VM 冒烟验证步骤（win_vm_smoke.sh / 10.0.2.2:22333 经 adb forward / dockur RDP 127.0.0.1:8889）、已知限制（HOME/RECENTS 占位等）（出处：spec.md:145「文档 SHALL 说明 JRE 要求、防火墙出站规则、VM 冒烟验证步骤」；tasks 4.2 全条目清单；design.md Risks 防火墙/jpackage 体积行）。 | pass | 0/4 | - |
+| video-pipeline-latest-wins-test | 解码渲染管线与 latest-wins 兜底：VideoPipeline.kt 以 FFmpeg(JavaCV) H.264 解码 → RGBA → ImageBitmap 交 Compose Canvas，四路计数（接收片数/解码帧数/积压丢弃帧数/上屏帧数）经 StateFlow 供 HUD 与诊断；latest-wins 语义（解码按序保 P 帧参考链完整、上屏仅取最新帧、积压过深快进至下一关键帧边界而非在参考链中间丢帧花屏）、默认关闭的 debug 开关可 dump 原始 H.264 供 VM 冒烟黑屏/花屏取证；VideoPipelineTest 用 JavaCV 编码器合成样例 H.264 流断言解码输出帧与积压丢弃计数且测试全绿（出处：spec.md:17-31「解码渲染管线与 latest-wins」Requirement 与「卡顿兜底」Scenario；tasks 2.2；design.md D2；知识 client-decode-render latest-wins 规则）。 | pass | 0/6 | - |
+| input-mapper-mouse-touch-test | 鼠标输入映射与黑边防护：InputMapper 将左键 press/move/release 映射为 InputAction DOWN/MOVE/UP（视口坐标归一化 65535、分辨率无关）、按住左键拖动等效触摸滑动、滚轮产生连续小步滑动、letterbox 黑边区域点击不产生越界归一化坐标的 INPUT_EVENT（黑边防护钳制）；InputMapperTest 纯函数单测覆盖映射边界与黑边且全绿（出处：spec.md:32-45「鼠标与键盘输入映射」Requirement 与「单击与拖动/黑边区域防护」Scenario；tasks 2.4；知识 client-decode-render 触摸归一化 65535 规则）。 | pass | 0/6 | - |
+| letterbox-viewport-decoded-resolution | letterbox 视口与解码实际分辨率：视口按源分辨率 letterbox 居中、窗口缩放不拉伸比例（宽高比保持、黑边填充剩余区域），HUD 分辨率读数取解码实际输出值而非 START_SESSION 请求值（InputMapper letterbox 映射 + SessionScreen HUD 分辨率投影 + VideoPipeline 解码尺寸 StateFlow 源码锚点，InputMapperTest 映射边界断言由 S8 全绿背书）（出处：spec.md:18「视口 SHALL 按源分辨率 letterbox 居中…HUD 分辨率 SHALL 取解码实际值」与 spec.md:28-30「比例保持」Scenario；tasks 2.4、3.3）。 | pass | 0/2 | - |
+| input-mapper-back-keyboard-test | 右键返回与键盘文字直发：右键单击映射为 BACK 注入（等效 Android 端边缘侧滑返回语义、复用既有注入路径）、窗口获得键盘焦点时可打印字符键经 TEXT_INPUT 直发（等效文字面板语义）、非字符键（功能键/修饰键）不产生注入（协议无独立按键通道）、HOME/RECENTS 保持占位禁用不为扩展协议；InputMapper/SessionScreen 源码与 InputMapperTest 锚点齐备，测试由 S8 全绿背书（出处：spec.md:33「右键 SHALL 等效 BACK…非字符键 SHALL NOT 产生注入…HOME/RECENTS SHALL 保持占位禁用」与 spec.md:39-41「右键返回」Scenario；tasks 2.4、3.3；design.md D4 Non-Goals scancode 增强）。 | failed（已修正） | 2/2 | product-bug |
+| session-controller-connect-auth-test | 会话连接建链与 token 错配显式失败：SessionController 会话状态机经本机源桩 loopback 断言 连接→HELLO/HELLO_ACK→START_SESSION→会话态 建链流程与挂起/恢复/档位切换路径；token 错配呈现 REJECT_BAD_TOKEN 明确失败（非静默、失败原因上抛 UI 状态）不进入会话；protocol 后端回调经 Channel 桥接协程、HUD/会话状态经 StateFlow 暴露；SessionControllerTest 全绿（出处：spec.md:58-60「token 错配」Scenario 与 spec.md:48；tasks 2.1；design.md D7；protocol/src/main/kotlin/cloudphone/protocol/Messages.kt:55-57 HelloStatus.REJECT_BAD_TOKEN=1）。 | pass | 0/6 | - |
+| transport-backend-fallback-crypto | 三传输后端接入与回落通告：lan-direct/p2p/frp 三后端经 protocol 模块选择接入（无重实现），p2p 打洞失败自动回落 frp 建立会话、回落通告条经 StateFlow 呈现、HUD 后端徽章更新为 frp；加密经 enableCrypto(CryptoCodec) 启用（AES-128-GCM 片级 + HKDF 方向子钥 + 512 重放窗口由 protocol 保证）并在 HUD 呈现加密徽章；SessionControllerTest 覆盖回落与加密路径且全绿（出处：spec.md:47-56「三传输后端接入与加密」Requirement 与「p2p 回落 frp」Scenario；tasks 2.1；design.md D7；知识 transport-backends/stream-encryption p2p 5s 回落瀑布与加密语义）。 | pass | 0/4 | - |
+| audio-sink-jitter-test | 音频下行 jitter 语义：AudioSink.kt 将 AUDIO_CHUNK(ADTS AAC-LC) 经 JavaCV 解码为 PCM 16bit/48kHz/stereo，经 AudioOutput 接口（javax.sound.sampled SourceDataLine 播放实现 + 测试用 null-sink）播放；jitter 逐条对齐 aux-channels-m3：120ms 起播水位、播放队列 32 帧上限、控制通道积压>800ms 丢最旧音频帧保视频不阻塞；AudioSinkTest 合成 ADTS 断言解码 PCM 帧数与 jitter 丢弃/起播逻辑且全绿（出处：spec.md:62-71「音频下行」Requirement 与「积压防护」Scenario；tasks 2.3；design.md D3；知识 aux-channels-m3 播放与积压防护规则）。 | pass | 0/6 | - |
+| audio-volume-unavailable-notice | 播放端音量控制与不可用明示：音量控制在播放端做 PCM 缩放（SessionScreen 音量 popover 滑杆驱动、即时生效且不影响传输与解码），音频不可用时给出明确原因文案（非静默无声，AuxNotice/降级原因上抛 UI）；SessionScreen 源码锚点 + 测试源引用 SessionScreen 状态投影 + 全量测试绿（出处：spec.md:73-75「音量调节」Scenario 与 spec.md:63「音频不可用 SHALL 给出明确原因文案（非静默无声）」；tasks 2.3、3.3）。 | pass | 0/4 | - |
+| aux-bridge-timeout-ack-test | 辅助通道桥接超时与回执对账：AuxBridge.kt 承载 CLIPBOARD_SET/CLIPBOARD_GET/CLIPBOARD_TEXT（客户端等待回执 10s 超时降级提示、非静默）与 TEXT_INPUT{seq,utf8} 每条等待 ACK{seq}（5s 超时提示失败）、AuxNotice→UI 状态映射；AuxBridgeTest 以 mock transport 单测覆盖超时与回执两条路径且全绿（出处：spec.md:77-90「剪贴板与文字输入」Requirement 与「粘贴到源端」Scenario；tasks 2.5；知识 aux-channels-m3 超时纪律 TEXT_INPUT ACK 5s/CLIPBOARD 10s）。 | pass | 0/6 | - |
+| text-panel-unicode-auxnotice-grey | 文字面板与 AuxNotice 驱动置灰：Ctrl+Shift+K 唤起文字输入面板、发送经 TEXT_INPUT 注入完整 Unicode（含中文/emoji，源端 seq 去重由源端保证）、面板呈现 ACK{seq} 等待/成功/失败状态、AuxNotice 降级通告驱动对应工具坞按钮置灰并显示原因；SessionScreen 源码锚点 + 测试源引用 SessionScreen 状态投影 + 全量测试绿（出处：spec.md:78「AuxNotice 降级 SHALL 驱动对应工具坞按钮置灰并显示原因」与 spec.md:84-86「中文注入」Scenario；tasks 3.3；design.md D4）。 | pass | 0/4 | - |
+| desktop-profiles-persistence-test | 桌面档案持久化：DesktopSourceProfiles.kt 读写 ~/.cloudphone/profiles.json（kotlinx-serialization），host+tcpPort+backend 去重（同键更新既有档案刷新 lastConnectedAt 不产生重复条目）、连接成功自动入库、名称/档位偏好随档，token 仅存本机文件且不出日志（对齐 source-profiles 私有存储约束）；SourceProfilesTest 于临时目录覆盖去重与入库时机且全绿——「新建并连接入库、重启应用后仍在」由文件持久化 + 重读断言覆盖（出处：spec.md:93「档案 SHALL 持久化到 ~/.cloudphone/profiles.json…连接成功自动入库」与 spec.md:95-97「新建并连接入库」Scenario；tasks 2.7；design.md D5；知识 source-profiles 去重键/自动保存时机规则）。 | pass | 0/6 | - |
+| lan-scanner-probe-test | LAN 发现扫描器：DesktopLanScanner.kt 以 java.net.NetworkInterface 推导 /24 候选（替代 Android 版 Context 触点，纯 JVM 删除式移植）、对候选地址 TCP 22333 仅 connect 探测（单址 300ms、并发 64、总时长 10s、host+port 去重、结果不写档案）、扫描进度 ≤10Hz 节流呈现；LanScannerTest 对本机 ServerSocket 探测命中与超时排除且全绿——「≤10s 内发现卡片出现源端、扫描结果不写档案」由探测命中/排除与去重断言覆盖（出处：spec.md:99-101「局域网发现」Scenario 与 spec.md:93「扫描面板（进度 ≤10Hz 节流）…扫描结果 SHALL NOT 写入档案」；tasks 2.6；design.md D6；知识 client-ui-redesign 探测纪律/探测不握手规则）。 | pass | 0/6 | - |
+| home-screen-form-defaults-validation | 新建连接表单与默认档：常驻新建连接抽屉表单字段布局落地——连接名称（可选）/主机地址（独占一行）/TCP+UDP 端口同行并排（默认 22333,22334）/传输后端三选 lan-direct·p2p·frp（默认 lan-direct）/配对 token 密码态输入/高级选项折叠区（默认 跟随本机·60fps·8Mbps）；HomeScreen 表单校验与状态投影单测引用且全量测试绿（出处：spec.md:93「新建表单 SHALL 含名称/主机（独占行）/TCP+UDP 端口并排（默认 22333,22334）/后端三选（默认 lan-direct）/token 密码态/高级折叠（档位默认跟随本机、60fps、8Mbps）」；tasks 3.2；知识 client-ui-redesign 手动新建表单字段布局规则）。 | pass | 0/4 | - |
+| home-screen-cards-empty-state | 首页卡片三态与空态引导：扫描面板（进度 ≤10Hz 节流、扫描中/有发现/未发现三态完整）、发现卡片（连接/单应用入口、结果不写档案、与既有档案 host+port 匹配标注已保存）、档案卡片（连接/删除，探测无响应的档案卡片连接按钮置灰而删除按钮始终可用）、未发现空态引导（可能原因说明+手动新建连接+重试扫描）落地；HomeScreen 状态投影单测引用且全量测试绿（出处：spec.md:103-105「档案置灰」Scenario 与 spec.md:99-101「局域网发现」；tasks 3.2；知识 client-ui-redesign 发现呈现三态完整/空态引导/无响应置灰规则）。 | pass | 0/4 | - |
+| gear-matrix-custom-validation | 档位矩阵与自定义本地校验：档位 跟随本机/720P/1080P/自定义 × 30/60fps × 4/8/16/20Mbps 全矩阵可选；自定义本地校验 width 320–2560 / height 240–2560 且 aspect-exact（自定义宽高比与跟随本机目标一致，对齐交给源端、客户端只做范围与比例校验），校验失败表单内联报错且不发 START_SESSION（如 width=300 越界即被拦截）；HomeScreen 校验单测引用且全量测试绿（出处：spec.md:133-142「档位选择与校验」Requirement 与「自定义档位合法」Scenario（width=300 越界内联报错）；tasks 3.2；知识 resolution-passthrough 客户端本地校验区间 320–2560/240–2560 规则）。 | pass | 0/4 | - |
+| session-screen-hud-dock-projection | 控制台呈现投影：SessionScreen.kt letterbox Canvas 渲染 VideoPipeline 帧、玻璃拟态 HUD 胶囊（fps/码率/RTT/丢包/解码实际分辨率/后端+加密徽章）、回落通告条、底部工具坞（键盘/截屏/档位循环/旋转本地/单应用/断开，AuxNotice 驱动置灰）、虚拟导航键（BACK 可用注入、HOME/RECENTS 占位禁用）、右侧会话抽屉（挂起/恢复/断开）落地；HUD 状态投影/工具坞置灰逻辑单测引用 SessionScreen 且全量测试绿（出处：spec.md:107-108「控制台 SHALL 呈现：letterbox 画面、玻璃拟态 HUD…底部工具坞…虚拟导航键、右侧会话抽屉」；tasks 3.3；知识 client-ui-redesign 控制台/工具坞吸底/导航键占位规则）。 | pass | 0/4 | - |
+| session-suspend-resume-gear-disconnect | 挂起/恢复/档位循环/断开会话编排：SessionController 挂起停止视频消费但保持控制链（可恢复）、恢复重新拉流上屏且 HUD 恢复更新、会话中档位循环按 1080P·60→720P·60→1080P·30→自定义 序列以新参数重发 START_SESSION 而控制链不断开（源端参数变化才重建管线经 IDR 秒回）、断开终止源端会话并回首页（档案保持）；SessionControllerTest 断言四条编排路径且全绿——「断开回首页（按钮或 Ctrl+Shift+X）」由控制器状态投影 + S24 快捷键覆盖（出处：spec.md:110-120「挂起与恢复/会话中切换档位/断开回首页」三 Scenario；tasks 2.1、3.3；知识 resolution-passthrough 会话中档位循环重发 START_SESSION 不断链规则）。 | pass | 0/4 | - |
+| session-screenshot-save-test | 会话截屏落盘：工具坞截屏动作保存当前解码帧到本地文件（保存客户端本地、会话不中断），保存路径/写出逻辑落地（ImageIO/PNG 或等价写出）；源码锚点 + 测试源引用 + 全量测试绿（出处：spec.md:108「截屏 SHALL 保存当前帧到本地文件」；tasks 3.3「截屏保存当前帧」；知识 client-ui-redesign 截屏保存本地 toast 确认会话不中断规则）。 | pass | 0/4 | - |
+| app-window-hotkeys-fullscreen-theme | 桌面窗口形态与快捷键：自定义窗口标题栏（最小化/关闭）、全屏切换（F11 或按钮）、快捷键 F11 全屏 / Ctrl+Shift+X 断开回首页 / Ctrl+Shift+K 键盘面板、深色控制台主题（色板见 S5 主题锚点）落地；AppWindow 快捷键/全屏状态逻辑单测引用且全量测试绿（出处：spec.md:144-149「桌面形态与打包」Requirement 与「快捷键」Scenario；tasks 3.1）。深色主题色板由 main-skeleton-software-render 场景锚定。 | pass | 0/4 | - |
+| apps-screen-list-retry-search | 单应用列表与失败重试：进入单应用发送 AppListRequest（源端目标 1s 内回传为源端侧语义，客户端不裁源端时限）、3s 无应答判定失败并显示重试入口而非空列表静默（对齐 Android 端 SourceAppsActivity 既有规则）、磁贴网格呈现（图标通用占位+应用名、不显示包名）、搜索框按名称实时过滤落地；AppsScreen 列表状态/重试逻辑单测引用且全量测试绿（出处：spec.md:122-127「单应用串流」Requirement 与「列表回传」Scenario；tasks 3.4；知识 app-shortcuts 枚举 1s 回传目标/3s 失败判定/磁贴去包名规则）。 | pass | 0/4 | - |
+| single-app-badge-exit-shortcut | 单应用串流与磁贴固化：点选磁贴以该应用发起单应用串流会话并显示单应用徽章（「单应用 · <应用名>」）、徽章/退出动作返回列表（会话语义对齐 Android 端）、磁贴支持固化为桌面快捷方式（Windows .lnk 写用户桌面目录，等效 Android requestPinShortcut + cloudphone://launch 直达语义的桌面形态）落地；AppsScreen 状态单测引用且全量测试绿（出处：spec.md:123「磁贴 SHALL 支持固化为桌面快捷方式」与 spec.md:129-131「单应用串流」Scenario；tasks 3.4；知识 app-shortcuts 快捷方式直达语义）。 | pass | 0/4 | - |
+| jpackage-packaging-config | jpackage 打包配置与产物：build.gradle.kts 含 compose.desktop.application DSL（packageMsi for Windows、主类/vendor/图标配置），Linux 侧 createDistributable 可产出 app-image 验证配置正确且 packageMsi 任务在任务列表可见（Windows 机器上可执行 packageMsi 产出安装包——spec 打包产物 Scenario 的 Windows 侧执行留待 Windows 环境，本场景以 Linux 侧 createDistributable + 任务清单可见性验证配置正确性）（出处：spec.md:151-153「打包产物」Scenario 与 spec.md:145「SHALL 提供 jpackage 打包配置」；tasks 4.1「createDistributable 产物存在且 packageMsi 任务在任务列表可见」；design.md Risks jpackage 需 WiX 行）。 | pass | 0/6 | - |
+| win-vm-smoke-self-check | Windows 冒烟脚本结构与 --self-check 自检（环境依赖；有 fallback: --self-check 无 VM 自检模式，任务 5.1 验收口径——实际 VM 端到端留待验收阶段按 docs 执行）：scripts/win_vm_smoke.sh 可执行、bash -n 语法通过、显式探测 10.0.2.2:22333 可达性（10.0.2.2 为 QEMU slirp 网关映射宿主环回 adb forward）、带 --self-check 无 VM 自检模式且宿主执行退出 0、脚本以软件渲染回退（-Dskiko.renderApi=SOFTWARE）启动客户端、含 RDP/QEMU monitor 截图取证（首页/连接/视频上屏/断开四阶段）与不可达诊断预案（socat 中转/端口映射）。本验证树无 dockur/windows VM 与宿主模拟器源端，端到端链路（会话阶段截图含非黑视频区与 HUD）在本环境不可执行，由 --self-check 与 S30 不可达诊断分支兜底（出处：spec.md:155-160「Windows 实机冒烟验证链路」Requirement 与「冒烟端到端」Scenario；tasks 5.1「宿主执行 --self-check 绿…实际 VM 端到端在验收阶段执行并按 docs 记录」；design.md D8 与 Risks 软渲染回退/socat 预案行）。环境依赖（dockur/windows VM + 宿主模拟器源端 + RDP 8889）；有 fallback: --self-check 无 VM 自检模式。 | pass | 0/3 | - |
+| win-vm-smoke-network-diagnostics | 网络不可达诊断分支（环境依赖；有 fallback: 脚本结构与 --self-check 自检见 win-vm-smoke-self-check，本场景被测对象即诊断分支本身）：在验证树宿主（Linux、无 QEMU slirp 网关）直接执行 scripts/win_vm_smoke.sh（不带 --self-check），10.0.2.2:22333 恒不可达、等价于 spec「VM 到宿主 forward 端口不可达」的 WHEN 条件——脚本应输出可达性探测结果与修复预案提示（dockur 端口映射直连或宿主 socat 中转）并以非 0 退出码收尾，不得静默失败；期望输出含探测目标（10.0.2.2/22333/可达性）与预案关键词，SMOKE_RC 非 0（出处：spec.md:162-164「网络不可达诊断」Scenario「脚本输出可达性探测结果与修复预案提示…退出码非 0」；tasks 5.1「不可达输出诊断+预案非 0 退出」；design.md D8「冒烟脚本第一步显式探测」与 Risks slirp 可达性预案行）。非环境依赖：诊断分支断言在无 VM 的宿主即可机械执行，不依赖 dockur/windows VM 或模拟器源端。 | pass | 0/2 | - |
+
+
+## 断言级豁免清单
+
+以下失败断言被归类为非产品缺陷（不记产品 Bug），逐条列出供人工复核豁免是否掩盖真实缺陷（场景级一句话归因不足以复核）。
+
+无非 product-bug 的被豁免失败断言。
+
+## 本轮场景集变更
+
+当前稳定场景集共 30 个（第 1 轮）。
+
+- 首轮写入 30 个场景
+
