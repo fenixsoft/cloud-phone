@@ -9,3 +9,4 @@
 | client | 客户端：解码渲染、触摸回传与手势语义、源端档案、串流档位、应用列表与快捷方式、触摸延迟 |
 | transport | 传输：lan-direct / p2p / frp 三网络路径、NAT 诊断与传输统计 |
 | validation | 验证：负载生成 App、一键验收矩阵、端到端延迟双口径测量与可用判定线 |
+| aux-channels | 辅助通道：远端 App 音频下行、剪贴板双向同步（IME 焦点代理）、完整 Unicode 文字注入三体验通道 |

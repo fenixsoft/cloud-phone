@@ -10,3 +10,5 @@
 | [ADR-006](ADR-006-natlab-netns-regression-bed.md) | accepted | 打洞逻辑以 natlab（netns + iptables 三档 NAT + JVM 协议级对端）矩阵数据回归，模拟器/真机不进 netns |
 | [ADR-007](ADR-007-hole-punch-fallback-chain.md) | accepted | 打洞按 v6 直连→多候选→端口预测→FRP 兜底逐级回退，会话绑 sessionId 支持端点迁移 |
 | [ADR-008](ADR-008-fragment-aead-stream-encryption.md) | accepted | 视频片级 AES-128-GCM AEAD + HKDF 方向子钥，协商走可选字段不 bump 协议版本 |
+| [ADR-009](ADR-009-aux-flows-on-control-tcp-video-first.md) | accepted | 辅助流复用控制 TCP 记录通道不新增传输面，积压丢音频保视频的优先级裁定 |
+| [ADR-010](ADR-010-ime-focus-proxy-clipboard-textinput.md) | accepted | 剪贴板/组合文本注入经源端内置 IME 焦点代理，方向不对称如实降级 |
