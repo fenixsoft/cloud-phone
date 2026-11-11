@@ -62,8 +62,17 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
                 } catch (_: IOException) {
                     return@Thread
                 }
-                installChannel(socket, restored = sourceSawClient)
-                sourceSawClient = true
+                // 一个坏连接绝不能杀死 accept 线程：16:26 事故中 installChannel 内部
+                // （getInputStream）抛出的非 accept 异常未捕获，accept 线程静默死亡 →
+                // 监听 socket 仍在内核 backlog 层接受 TCP，但应用层永不处理 → 客户端
+                // TCP 可连、HELLO 永无应答（源端僵尸监听，重启进程才能恢复）。
+                try {
+                    installChannel(socket, restored = sourceSawClient)
+                    sourceSawClient = true
+                } catch (t: Throwable) {
+                    stats.onBadEvent(TransportStats.BadEvent.STREAM_ERROR, "accept install: ${t.message}")
+                    runCatching { socket.close() }
+                }
             }
         }, "lan-accept").apply { isDaemon = true; start() }
     }
@@ -114,9 +123,20 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
         onStreamEvent?.onEvent(StreamEvent.CONNECTED, "lan-direct ${socket.inetAddress?.hostAddress}:${socket.port}")
     }
 
-    /** pending 通道首条控制记录：晋升为现役通道（last-HELLO-wins），旧通道延迟退役 */
+    /** pending 通道首条控制记录：会话占用检查后晋升为现役通道（旧通道延迟退役） */
     private fun onChannelControl(ch: TcpStreamChannel, payload: ByteArray) {
         if (pendingChannels.remove(ch)) {
+            val busyText = sourceBusyText
+            val hasIncumbent = synchronized(this) { channel != null }
+            if (hasIncumbent && busyText.isNotEmpty()) {
+                val wantsTakeover = wantsTakeover(payload)
+                if (!wantsTakeover) {
+                    rejectPendingChannel(ch, busyText, "lan-direct")
+                    return
+                }
+                // 抢占：跳过占用拒绝走正常晋升（晋升逻辑本身会退役现役通道，其客户端收 DISCONNECTED）
+                stats.onBadEvent(TransportStats.BadEvent.RECONNECT, "lan-direct takeover preempted incumbent")
+            }
             val wasActive: Boolean
             synchronized(this) {
                 val old = channel
@@ -135,11 +155,16 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
         onControl?.onControl(payload)
     }
 
-    /** 通道断开：现役通道死亡才向全局报 DISCONNECTED；pending/退役通道静默清理 */
+    /** 通道断开：现役通道死亡才向全局报 DISCONNECTED 并清引用；pending/退役通道静默清理 */
     private fun onChannelDead(ch: TcpStreamChannel, reason: IOException) {
         if (pendingChannels.remove(ch)) return
-        val active = synchronized(this) { channel }
-        if (ch === active && !closed.get()) {
+        val wasActive = synchronized(this) {
+            if (ch === channel) {
+                channel = null // 占用闸门依据：死通道不清引用会让后续客户端永远 REJECT_BUSY
+                true
+            } else false
+        }
+        if (wasActive && !closed.get()) {
             stats.onBadEvent(TransportStats.BadEvent.DISCONNECT, reason.message ?: "io")
             onStreamEvent?.onEvent(StreamEvent.DISCONNECTED, reason.message ?: "io")
         }
@@ -158,6 +183,38 @@ class LanDirectBackend(config: TransportConfig) : TransportBackendBase(config) {
             }
         }, "lan-old-channel-reap").apply { isDaemon = true; start() }
     }
+
+    /** 解析 HELLO 抢占标志（非 HELLO/解析失败一律 false，保持占用保护默认语义） */
+    private fun wantsTakeover(payload: ByteArray): Boolean =
+        runCatching {
+            (cloudphone.protocol.decodeControlMessage(payload) as? cloudphone.protocol.ControlMessage.Hello)?.takeover == true
+        }.getOrDefault(false)
+
+    /**
+     * 会话占用拒绝：对 pending 通道回明文 HelloAck(REJECT_BUSY) 后延迟回收。
+     * ack 经 writeControl 立即出栈（握手期未协商加密恒明文）；retireChannel 的 3s 延迟
+     * 关闭保证对端先读到拒绝应答再见 FIN。
+     */
+    private fun rejectPendingChannel(ch: TcpStreamChannel, reason: String, tag: String) {
+        pendingChannels.remove(ch)
+        try {
+            ch.writeControl(cloudphone.protocol.encodeControlMessage(rejectBusyAck(reason)))
+        } catch (_: Exception) {
+        }
+        stats.onBadEvent(TransportStats.BadEvent.REJECT_BUSY, "$tag: $reason")
+        retireChannel(ch)
+    }
+
+    private fun rejectBusyAck(reason: String) = cloudphone.protocol.ControlMessage.HelloAck(
+        status = cloudphone.protocol.HelloStatus.REJECT_BUSY,
+        reason = reason,
+        sessionId = 0,
+        width = 0, height = 0, fps = 0, bitrateKbps = 0,
+        encoder = "",
+        displayId = -1,
+        p2pAnswer = "",
+        hungSessions = emptyList(),
+    )
 
     /** 每通道回调包装：把控制记录路由到晋升逻辑，视频照旧上抛 */
     private inner class ChannelPlumbing : ChannelCallbacks {

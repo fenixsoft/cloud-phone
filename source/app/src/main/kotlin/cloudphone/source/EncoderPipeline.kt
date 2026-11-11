@@ -61,10 +61,11 @@ class EncoderPipeline(
         companion object {
             fun normalized(width: Int, height: Int, fps: Int, bitrateKbps: Int): SessionParams {
                 // 分辨率对齐到偶数（编码器要求）；帧率限 15..60；码率限 1..20Mbps。
-                // 上限 2560：竖屏 aspect-exact（如 1080x2400 手机屏）需要长边 >1440，
-                // 旧 1440 封顶会把竖屏真实宽高比压扁（画面扭曲根因之一）
-                val w = width.coerceIn(320, 2560).let { if (it % 2 != 0) it + 1 else it }
-                val h = height.coerceIn(240, 2560).let { if (it % 2 != 0) it + 1 else it }
+                // 上限 4320：竖屏 aspect-exact（如 1080x2400 手机屏）需要长边 >2560，
+                // 旧 2560 封顶会把 2688 砍成 2560 → VD 比例 0.475≠主屏 0.45，
+                // 镜像合成器贴左上放内容、右侧/底部留大黑带（真机「不是全屏」根因）。
+                val w = width.coerceIn(320, 4320).let { if (it % 2 != 0) it + 1 else it }
+                val h = height.coerceIn(240, 4320).let { if (it % 2 != 0) it + 1 else it }
                 return SessionParams(w, h, fps.coerceIn(15, 60), bitrateKbps.coerceIn(1000, 20000))
             }
 

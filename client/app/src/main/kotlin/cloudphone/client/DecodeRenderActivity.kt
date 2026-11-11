@@ -9,9 +9,12 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
@@ -56,10 +59,15 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class DecodeRenderActivity : Activity() {
 
-    private lateinit var surfaceView: SurfaceView
+    private lateinit var surfaceView: AspectFitSurfaceView
     private lateinit var statsView: StatsView
     private lateinit var rootLayout: FrameLayout
     private lateinit var dockContent: LinearLayout
+    private lateinit var hudBarFrame: LinearLayout
+    private lateinit var dockRootFrame: LinearLayout
+    private lateinit var fullscreenFab: TextView
+    private lateinit var fullscreenToggleBtn: TextView
+    private var fullscreenMode = false
     private lateinit var tierButton: TextView
     private lateinit var suspendOverlay: LinearLayout
     private lateinit var suspendLabel: TextView
@@ -143,6 +151,13 @@ class DecodeRenderActivity : Activity() {
                 }
             }
         }
+        // 重连终止（被占用拒绝/次数耗尽）：明确告知后退出渲染页，回连接页展示原因
+        ClientSession.onReconnectStopped = { reason ->
+            runOnUiThread {
+                Toast.makeText(this, reason, Toast.LENGTH_LONG).show()
+                finish()
+            }
+        }
         ClientSession.onStats = { stats ->
             handler.post { statsView.update(stats, delayStats()) }
         }
@@ -181,19 +196,25 @@ class DecodeRenderActivity : Activity() {
             ),
         )
 
-        // 顶部 HUD 统计条
+        // 顶部 HUD 统计条（横排：stats 占满 + 右侧「断开」——原在底部工具坞与系统手势区重叠难按）
         val hudBar = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             setBackgroundColor(0x66000000.toInt())
         }
         statsView = StatsView(this)
         hudBar.addView(
             statsView,
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(44),
-            ),
+            LinearLayout.LayoutParams(0, dp(44), 1f),
         )
+        hudBar.addView(TextView(this).apply {
+            text = "断开"
+            setDockStyle(R.drawable.bg_btn_danger, 0xFFEF4444.toInt())
+            setOnClickListener { disconnectToHome() }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            marginEnd = dp(10)
+        })
+        hudBarFrame = hudBar
         rootLayout.addView(
             hudBar,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP),
@@ -253,7 +274,7 @@ class DecodeRenderActivity : Activity() {
         )
         suspendOverlay.visibility = View.GONE
 
-        // 底部工具坞（把手 + 内容两段；可收起避免遮挡触控区）
+        // 底部工具坞（把手 + 内容两段；可收起避免遮挡触控区；全屏模式下作为悬浮菜单叠加在画面上）
         val dockRoot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundResource(R.drawable.bg_dock)
@@ -306,6 +327,8 @@ class DecodeRenderActivity : Activity() {
         tierButton = dockButton(currentTierLabel()) { cycleTier() }
         row1.addView(tierButton, rowParams())
         row1.addView(dockButton("旋转") { toggleRotation() }, rowParams())
+        fullscreenToggleBtn = dockButton("全屏") { toggleFullscreen() }
+        row1.addView(fullscreenToggleBtn, rowParams())
         dockContent.addView(row1, dockRowParams())
 
         // 工具坞行 2：单应用 / 抽屉 / 断开
@@ -314,11 +337,6 @@ class DecodeRenderActivity : Activity() {
             startActivity(Intent(this@DecodeRenderActivity, SourceAppsActivity::class.java))
         }, rowParams())
         row2.addView(dockButton("抽屉") { openDrawer() }, rowParams())
-        row2.addView(TextView(this@DecodeRenderActivity).apply {
-            text = "断开"
-            setDockStyle(R.drawable.bg_btn_danger, 0xFFEF4444.toInt())
-            setOnClickListener { disconnectToHome() }
-        }, rowParams())
         dockContent.addView(row2, dockRowParams())
 
         // M3 辅助通道控制行（键盘=TEXT_INPUT 注入面板/粘贴/复制/静音 + 状态行）：
@@ -331,6 +349,29 @@ class DecodeRenderActivity : Activity() {
             dockRoot,
             FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM),
         )
+        dockRootFrame = dockRoot
+
+        // 全屏模式的悬浮呼出键（右缘中部半透明 ☰，点按呼出工具坞菜单）
+        fullscreenFab = TextView(this).apply {
+            text = "☰"
+            textSize = 22f
+            setTextColor(0xFFE2E8F0.toInt())
+            gravity = Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x77202A3A.toInt())
+            }
+            alpha = 0.45f
+            setOnClickListener {
+                dockRootFrame.visibility = View.VISIBLE
+                it.visibility = View.GONE
+            }
+        }
+        rootLayout.addView(
+            fullscreenFab,
+            FrameLayout.LayoutParams(dp(52), dp(52), Gravity.CENTER_VERTICAL or Gravity.END).apply { marginEnd = dp(6) },
+        )
+        fullscreenFab.visibility = View.GONE
 
         // 会话抽屉：右缘唤出条（24dp，横向拖拽唤出）+ 遮罩 + 自绘滑出面板
         val edgeStrip = View(this)
@@ -475,6 +516,54 @@ class DecodeRenderActivity : Activity() {
             setDockStyle(R.drawable.bg_btn_ghost, 0xFFF8FAFC.toInt())
             setOnClickListener { onClick() }
         }
+
+    /**
+     * 全屏切换：隐藏顶部 HUD 与工具坞，画面裁切铺满整屏（短边撑满），系统栏沉浸；
+     * 悬浮 ☰ 键呼出工具坞（叠加在画面上，此时无系统栏遮挡）。「断开」常驻顶部 HUD 条。
+     */
+    private fun toggleFullscreen() {
+        fullscreenMode = !fullscreenMode
+        surfaceView.fillMode = fullscreenMode
+        surfaceView.requestLayout()
+        if (fullscreenMode) {
+            hudBarFrame.visibility = View.GONE
+            dockRootFrame.visibility = View.GONE
+            fullscreenFab.visibility = View.VISIBLE
+            hideSystemBars()
+        } else {
+            hudBarFrame.visibility = View.VISIBLE
+            dockRootFrame.visibility = View.VISIBLE
+            fullscreenFab.visibility = View.GONE
+            showSystemBars()
+        }
+        fullscreenToggleBtn.text = if (fullscreenMode) "退出全屏" else "全屏"
+    }
+
+    private fun hideSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            // Android 11+：deprecated systemUiVisibility 会被新平台忽略，必须走 WindowInsetsController
+            window.setDecorFitsSystemWindows(false)
+            window.insetsController?.let { c ->
+                c.hide(WindowInsets.Type.systemBars())
+                c.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+    }
+
+    private fun showSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.setDecorFitsSystemWindows(true)
+            window.insetsController?.show(WindowInsets.Type.systemBars())
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+    }
 
     private fun toggleDock() {
         dockContent.visibility = if (dockContent.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -1154,6 +1243,7 @@ class DecodeRenderActivity : Activity() {
         stopPipeline()
         ClientSession.onFrame = null
         ClientSession.onConnectionLost = null
+        ClientSession.onReconnectStopped = null
         ClientSession.onStats = null
         // M3：辅助通道释放
         aux.stopAudio()
@@ -1177,6 +1267,8 @@ class DecodeRenderActivity : Activity() {
     inner class AspectFitSurfaceView(context: android.content.Context) : SurfaceView(context) {
         private var videoW = 0
         private var videoH = 0
+        /** false=等宽适配（信箱留白）；true=裁切铺满（全屏模式，短边撑满、长边溢出裁切） */
+        var fillMode = false
 
         fun setVideoSize(w: Int, h: Int) {
             if (w == videoW && h == videoH) return
@@ -1194,7 +1286,14 @@ class DecodeRenderActivity : Activity() {
             val ph = View.MeasureSpec.getSize(hSpec)
             val videoAspect = videoW.toDouble() / videoH
             val parentAspect = pw.toDouble() / ph
-            val (w, h) = if (videoAspect > parentAspect) {
+            val (w, h) = if (fillMode) {
+                // 铺满：取更大的缩放，溢出边由父容器裁切（Gravity.CENTER 对称裁）
+                if (videoAspect > parentAspect) {
+                    (ph * videoAspect).toInt() to ph
+                } else {
+                    pw to (pw / videoAspect).toInt()
+                }
+            } else if (videoAspect > parentAspect) {
                 pw to (pw / videoAspect).toInt()
             } else {
                 (ph * videoAspect).toInt() to ph

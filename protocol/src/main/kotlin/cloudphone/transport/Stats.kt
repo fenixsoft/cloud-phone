@@ -19,6 +19,7 @@ class TransportStats(private val now: () -> Long = { System.currentTimeMillis() 
         PUNCH_FALLBACK_FRP,    // 打洞失败回落 frp（会话不中断）
         UDP_TO_TCP_DEGRADE,    // UDP 视频通道连续失败降级 TCP 复用
         STREAM_ERROR,          // 协议流损坏（长度前缀非法等）
+        REJECT_BUSY,           // 源端会话占用保护：新客户端被 REJECT_BUSY 拒绝（防双端互踢风暴）
     }
 
     data class BadEventRecord(val event: BadEvent, val atMs: Long, val detail: String)

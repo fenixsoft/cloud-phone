@@ -136,6 +136,15 @@ abstract class TransportBackendBase(final override val config: TransportConfig) 
     final override fun controlSink(): ControlSink? = onControl
     final override fun videoSink(): VideoSink? = onVideo
 
+    /**
+     * 源端会话占用保护：现役客户端通道在位时，新客户端连接回 REJECT_BUSY 拒绝而非抢占。
+     * 背景：双端自动重连客户端对同一源端 last-HELLO-wins 抢占会形成互踢风暴（A 接管→B 1s
+     * 重连抢回→A 4s 重连再抢回…），两端 UI 永远显示"连接断开，正在重连"。占用保护下
+     * 后接入者得到明确 REJECT_BUSY 文案并停止自动重连，当前观看端保持稳定；
+     * 换设备观看 = 先断开当前观看端。置空串可关闭保护恢复旧行为。
+     */
+    @Volatile var sourceBusyText: String = "源端正被其他设备观看，请先断开当前观看端"
+
     protected val closed = AtomicBoolean(false)
     private val nextSequence = AtomicLong(1)
 
@@ -219,6 +228,11 @@ class TcpStreamChannel(
             } catch (e: ProtocolException) {
                 stats.onBadEvent(TransportStats.BadEvent.STREAM_ERROR, e.message ?: "protocol")
                 if (reading && !retired) onError(IOException(e.message, e))
+            } catch (t: Throwable) {
+                // 分发回调里的意外异常（decode/晋升/竞态）不能让读线程无声死亡：
+                // 必须走 onError 让通道按断流处理并释放占用，否则现役通道成僵尸
+                stats.onBadEvent(TransportStats.BadEvent.STREAM_ERROR, "reader: ${t.javaClass.simpleName}")
+                if (reading && !retired) onError(IOException(t.message ?: "reader error", t))
             } finally {
                 reading = false
             }

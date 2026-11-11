@@ -110,8 +110,12 @@ class InputComposer(private val context: Context) {
     companion object {
         /** 输入窗口时长（5.3：触摸后 5s） */
         const val INPUT_WINDOW_MS: Long = 5000
-        /** 合成驱动节拍 5fps */
-        const val TICK_INTERVAL_MS: Long = 200
+        /**
+         * 合成驱动节拍 5.5：5fps（200ms）→ 60fps（16ms，vsync 对齐由 Choreographer 保证）。
+         * 触摸→画面变化上限从 ~200ms 降到 ~16ms（合成+编码 ~20ms 之外的最大等待项）。
+         * 仅输入窗口 5s 内运转，静屏零开销。
+         */
+        const val TICK_INTERVAL_MS: Long = 16
 
         @SuppressLint("StaticFieldLeak")
         @Volatile private var instance: InputComposer? = null

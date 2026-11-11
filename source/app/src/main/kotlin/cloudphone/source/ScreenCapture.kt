@@ -68,7 +68,7 @@ class ScreenCapture(
             PipelineCounters.capturedFrames.set(0)
             true
         } catch (e: Exception) {
-            android.util.Log.w("cloudphone-source", "capture start failed: ${e.javaClass.simpleName}: ${e.message}")
+            android.util.Log.w("cloudphone-source", "capture start failed: ${e.javaClass.simpleName}: ${e.message}", e)
             PipelineCounters.onBadEvent(
                 PipelineCounters.BadEvent.CAPTURE_FAILURE, "start: ${e.message}",
             )
@@ -87,15 +87,22 @@ class ScreenCapture(
         val dw = metrics.widthPixels
         val dh = metrics.heightPixels
         if (dw <= 0 || dh <= 0) return requested
-        val shortTarget = minOf(requested.width, requested.height)
-        val scale = shortTarget.toDouble() / minOf(dw, dh)
+        // 编码器长边软限：c2.android.avc.encoder 实测 configure 高 >2560 直接 IAE
+        // （真机「不是全屏」根因链：aspectExact 2688 → normalized 硬砍 2560 →
+        //  VD 比例 0.475≠主屏 0.45 → 镜像贴左上放内容、右侧/底部留大黑带）。
+        // 修复：scale 同步受编码器上限约束，短边随长边一起降，比例永不破坏。
+        val maxLong = 2560
+        val scale = minOf(
+            minOf(requested.width, requested.height).toDouble() / minOf(dw, dh),
+            maxLong.toDouble() / maxOf(dw, dh),
+        )
         fun align16(v: Double) = ((v / 16).toInt() * 16).coerceAtLeast(16)
         val w = align16(dw * scale)
         val h = align16(dh * scale)
         if (w == requested.width && h == requested.height) return requested
         android.util.Log.i(
             "cloudphone-source",
-            "capture: aspect-exact ${dw}x${dh} -> ${w}x${h} (tier short=$shortTarget)",
+            "capture: aspect-exact ${dw}x${dh} -> ${w}x${h} (tier short=${minOf(requested.width, requested.height)}, maxLong=$maxLong)",
         )
         return EncoderPipeline.SessionParams.normalized(w, h, requested.fps, requested.bitrateKbps)
     }

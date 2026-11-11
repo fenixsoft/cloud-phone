@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,14 +36,25 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.utf16CodePoint
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.isPrimaryPressed
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cloudphone.desktop.session.HudState
+import cloudphone.desktop.session.InputMapper
 import cloudphone.desktop.session.KeyboardText
 import cloudphone.desktop.session.SessionController
 import cloudphone.desktop.session.SessionPhase
 import cloudphone.desktop.aux.AuxUiState
 import cloudphone.desktop.aux.TextInputResult
+import cloudphone.protocol.ControlMessage
+import cloudphone.protocol.InputAction
 import cloudphone.protocol.TransportKind
 import java.nio.file.Files
 import java.nio.file.Path
@@ -180,6 +193,144 @@ object VolumeUi {
     fun percentText(volume: Double): String = "${(volume.coerceIn(0.0, 1.0) * 100).roundToInt()}%"
 }
 
+// ═══════════════ 视口鼠标输入接线（design D4/D8；画布本体保持纯渲染） ═══════════════
+// 实现位置说明（与既有「由 AppWindow 层 AWT 监听注入」注释的偏离）：AWT 层拿不到画布
+// bounds，letterbox 视口几何不可得；改为挂在本文件画布容器的 modifier 链上——
+// 链序置于 clickable 之后（同一节点更内层）→ Main 派发先于 clickable 消费，也先于
+// 子控件（工具坞/导航/面板）冒泡；子控件已消费的按下事件直接跳过，不注入视频。
+
+/**
+ * 视口坐标 → 归一化视频坐标（[InputMapper.mapToVideo] 的 rotated 感知包装）：
+ * 非旋转态直接复用 InputMapper letterbox 几何；本地旋转态按 [VideoCanvas] rotated
+ * 分支同一几何（pre-image rect 绕中心顺时针旋转 90° 显示）做逆映射，黑边返回 null。
+ */
+private fun AwaitPointerEventScope.mapViewportPoint(
+    videoWidth: Int,
+    videoHeight: Int,
+    rotated: Boolean,
+    px: Double,
+    py: Double,
+): InputMapper.NormPoint? {
+    if (!rotated) {
+        return InputMapper.mapToVideo(InputMapper.Viewport(videoWidth, videoHeight, size.width, size.height), px, py)
+    }
+    if (videoWidth <= 0 || videoHeight <= 0) return null
+    val w = size.width.toDouble()
+    val h = size.height.toDouble()
+    val s = minOf(w / videoHeight, h / videoWidth)
+    val preW = videoHeight * s
+    val preH = videoWidth * s
+    val preL = (w - preW) / 2
+    val preT = (h - preH) / 2
+    val dispW = preH
+    val dispH = preW
+    val dispL = (w - dispW) / 2
+    val dispT = (h - dispH) / 2
+    if (px < dispL || px >= dispL + dispW || py < dispT || py >= dispT + dispH) return null
+    val cx = w / 2
+    val cy = h / 2
+    val ux = cx - (py - cy) // 逆旋转（逆时针 90°绕中心）
+    val uy = cy + (px - cx)
+    val nx = ((ux - preL) / preW).coerceIn(0.0, 1.0)
+    val ny = ((uy - preT) / preH).coerceIn(0.0, 1.0)
+    return InputMapper.NormPoint((nx * InputMapper.NORM_MAX).roundToInt(), (ny * InputMapper.NORM_MAX).roundToInt())
+}
+
+private fun AwaitPointerEventScope.toVideoEvent(
+    c: PointerInputChange,
+    action: InputAction,
+    controller: SessionController,
+    videoWidth: Int,
+    videoHeight: Int,
+    rotated: Boolean,
+): ControlMessage.InputEvent? {
+    val p = mapViewportPoint(videoWidth, videoHeight, rotated, c.position.x.toDouble(), c.position.y.toDouble())
+        ?: return null
+    return ControlMessage.InputEvent(
+        sessionId = controller.currentSessionId,
+        action = action,
+        pointerId = InputMapper.POINTER_MOUSE,
+        x = p.x,
+        y = p.y,
+    )
+}
+
+private suspend fun AwaitPointerEventScope.drainUntilRelease() {
+    while (true) {
+        val e = awaitPointerEvent()
+        if (e.changes.all { !it.pressed }) break
+    }
+}
+
+/**
+ * 左键三段（DOWN/MOVE/UP，拖动=滑动）+ 右键 BACK 注入；滚轮走 [Modifier.sessionWheelInput]。
+ * 消费状态不作为拦截依据：根链上的 clickable（聚焦用）在 Main 派发中先于本 handler 消费 DOWN，
+ * 若按 isConsumed 拦截则画布点击永远到不了注入层（VM 实测复现）。
+ * 注入条件=坐标映射进视频矩形（dock/HUD/抽屉等画布外控件天然被映射排除）+ 已连接。
+ */
+private fun Modifier.sessionPointerInput(
+    controller: SessionController,
+    videoWidth: Int,
+    videoHeight: Int,
+    rotated: () -> Boolean,
+): Modifier = pointerInput(videoWidth, videoHeight) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val sid = controller.currentSessionId
+        val buttons = currentEvent.buttons
+        when {
+            sid == 0 -> drainUntilRelease()
+            buttons.isSecondaryPressed -> {
+                controller.sendControl(InputMapper.back(sid))
+                drainUntilRelease()
+            }
+            buttons.isPrimaryPressed -> {
+                toVideoEvent(down, InputAction.DOWN, controller, videoWidth, videoHeight, rotated())
+                    ?.let { controller.sendControl(it) }
+                while (true) {
+                    val e = awaitPointerEvent()
+                    val c = e.changes.firstOrNull() ?: break
+                    if (c.changedToUpIgnoreConsumed()) {
+                        toVideoEvent(c, InputAction.UP, controller, videoWidth, videoHeight, rotated())
+                            ?.let { controller.sendControl(it) }
+                        break
+                    }
+                    toVideoEvent(c, InputAction.MOVE, controller, videoWidth, videoHeight, rotated())
+                        ?.let { controller.sendControl(it) }
+                }
+            }
+            else -> drainUntilRelease()
+        }
+    }
+}
+
+/** 滚轮一格=小步滑动（滚轮仅非旋转态生效；rotated 态 [InputMapper.wheelStep] 几何不适用，忽略） */
+private fun Modifier.sessionWheelInput(
+    controller: SessionController,
+    videoWidth: Int,
+    videoHeight: Int,
+    rotated: () -> Boolean,
+): Modifier = pointerInput(videoWidth, videoHeight) {
+    awaitPointerEventScope {
+        while (true) {
+            val e = awaitPointerEvent()
+            if (e.type != PointerEventType.Scroll) continue
+            val c = e.changes.firstOrNull() ?: continue
+            if (rotated() || controller.currentSessionId == 0) continue
+            val notches = c.scrollDelta.y.roundToInt()
+            if (notches == 0) continue
+            val viewport = InputMapper.Viewport(videoWidth, videoHeight, size.width, size.height)
+            InputMapper.wheelStep(
+                viewport,
+                c.position.x.toDouble(),
+                c.position.y.toDouble(),
+                notches,
+                controller.currentSessionId,
+            ).forEach { controller.sendControl(it) }
+        }
+    }
+}
+
 /** 截屏保存（当前帧 PNG 落盘；返回保存路径或 null） */
 object ScreenshotSaver {
     val defaultDir: Path by lazy {
@@ -234,6 +385,8 @@ fun SessionScreen(
     onCyclePreset: () -> Unit,
     onRotate: () -> Unit,
     onBack: () -> Unit,
+    onSingleApp: () -> Unit = {},
+    textPanelToggleCount: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     var drawerOpen by remember { mutableStateOf(false) }
@@ -247,11 +400,17 @@ fun SessionScreen(
     // 文字面板关闭后焦点回到画面（直发恢复），面板打开期间由面板承载输入、不直发。
     val canvasFocus = remember { FocusRequester() }
     LaunchedEffect(textPanelOpen) { if (!textPanelOpen) canvasFocus.requestFocus() }
+    // 全局快捷键 Ctrl+Shift+K（AppWindow→UiBus.textPanel→AppRoot 计数）翻转面板
+    LaunchedEffect(textPanelToggleCount) {
+        if (textPanelToggleCount > 0) textPanelOpen = !textPanelOpen
+    }
 
     Box(
         modifier.fillMaxSize().background(DesktopBg)
             .focusRequester(canvasFocus)
             .clickable(onClickLabel = "画面聚焦键盘") { canvasFocus.requestFocus() }
+            .sessionPointerInput(controller, videoWidth, videoHeight) { rotated }
+            .sessionWheelInput(controller, videoWidth, videoHeight) { rotated }
             .onPreviewKeyEvent { e ->
                 val text = KeyTextRouter.typedText(e.utf16CodePoint)
                 if (text != null && KeyTextRouter.directSendAllowed(textPanelOpen, aux.textInputAvailable)) {
@@ -282,8 +441,8 @@ fun SessionScreen(
             }
         }
 
-        // 视口内鼠标输入（左键三段 + 右键 BACK + 滚轮小步）接线：
-        // 由 AppWindow 层 AWT 监听注入（SessionController.sendInput），此处保持画布纯渲染。
+        // 视口内鼠标输入（左键三段 + 右键 BACK + 滚轮小步）已接线：
+        // sessionPointerInput/sessionWheelInput 挂在画布容器链上（见其实现处说明），画布保持纯渲染。
 
         // 底部工具坞
         Row(
@@ -305,7 +464,7 @@ fun SessionScreen(
                         DockAction.SCREENSHOT -> onScreenshot()
                         DockAction.PRESET_CYCLE -> onCyclePreset()
                         DockAction.ROTATE -> { rotated = !rotated; onRotate() }
-                        DockAction.SINGLE_APP -> Unit // 单应用入口经会话抽屉（ AppsScreen 3.4 承接）
+                        DockAction.SINGLE_APP -> onSingleApp() // 单应用入口：AppRoot 切应用列表屏（AppsScreen 承接）
                         DockAction.DISCONNECT -> controller.disconnect()
                     }
                 }

@@ -1,6 +1,6 @@
 # 源端采集编码与会话挂机
 
-<!-- knowledge: capability=source-capture-encode rev=1
+<!-- knowledge: capability=source-capture-encode rev=2
      sources=spec/changes/m0-a2a-streaming-pipeline -->
 
 源端 App 的画面生产侧：MediaProjection 整屏采集、虚拟屏单应用采集、MediaCodec H.264 硬编、输入注入与会话生命周期管理，是「云端手机」范式的源端载体。
@@ -13,7 +13,7 @@
 - 会话挂机与恢复：传输断开只停止编码与传输，不销毁虚拟屏、不杀其上 App 进程；同 token 重连 1s 内恢复同一会话画面；源端支持至少 2 个单应用会话同时挂机。前台服务内 SessionManager 持有虚拟屏与 App，会话生命周期优先于连接生命周期。
 - 旋转/分辨率变化走零令牌换面复用同一投影实例（同一投影实例二次 createVirtualDisplay 受镜像级限制），换面后按新参数适配并即时请求 IDR。
 - 输入注入：INPUT_EVENT 注入对应 display（down/move/up），坐标按会话分辨率归一化换算到目标屏。
-- 采集参数钳制与适配：请求宽高钳制在 width 320–2560、height 240–2560（另有 fps 15–60、码率 1000–20000kbps）并做偶数对齐；以请求短边为基准按源屏宽高比等比适配（aspect-exact，/16 对齐）。
+- 采集参数钳制与适配：请求宽高钳制在 width 320–4320、height 240–4320（另有 fps 15–60、码率 1000–20000kbps）并做偶数对齐（此钳制仅为防御；aspect-exact 输出已保证落在编码器可用范围内）。aspect-exact 等比适配的 scale **必须同时受编码器长边软限约束**：`scale = min(请求短边/min(屏宽,屏高), 2560/max(屏宽,屏高))`，短边随长边一起降，比例永不破坏。教训（2026-11-11 真机「不是全屏」）：只按请求短边算 scale 会算出长边 2688，被 normalized 钳到 2560 后 VD 比例（0.475）≠主屏比例（0.45），SF 镜像把主屏装进异比例 VD 时贴左上放置、右侧/底部留大黑带进视频帧；而直接放行 >2560 会被 c2.android.avc.encoder 拒绝（MediaCodec.configure IAE，软编长边硬限 2560）。
 
 ## 代码锚点
 
@@ -25,3 +25,4 @@
 ## 溯源
 
 - 2026-11-08 m0-a2a-streaming-pipeline（spec/changes/m0-a2a-streaming-pipeline/）— 新建本页：确立整屏/单应用采集、硬编管线、挂机恢复与输入注入规则。
+- 2026-11-11 真机「不是全屏」排查 — 修订采集参数规则（rev 2）：aspect-exact scale 增加编码器长边软限（2560）联立约束，normalized 钳制放宽至 4320 仅作防御；根因与证据见上「采集参数钳制与适配」条。

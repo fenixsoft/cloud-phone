@@ -128,6 +128,8 @@ sealed class ControlMessage(val type: Int) {
         val cryptoAlgo: CryptoAlgo = CryptoAlgo.NONE,
         /** 客户端 32B 随机 nonce（HKDF salt 材料；每次握手重新生成） */
         val cryptoNonce: ByteArray = ByteArray(0),
+        /** 抢占请求（true = 踢掉现役观看端接管会话；线格式为可选尾字节，老端忽略） */
+        val takeover: Boolean = false,
     ) : ControlMessage(MsgType.HELLO) {
         /** ByteArray 属性需按内容比较（数据类默认引用比较） */
         override fun equals(other: Any?): Boolean =
@@ -135,7 +137,7 @@ sealed class ControlMessage(val type: Int) {
                 other.packageName == packageName && other.width == width && other.height == height &&
                 other.fps == fps && other.bitrateKbps == bitrateKbps && other.sessionId == sessionId &&
                 other.p2pOffer == p2pOffer && other.encryptOn == encryptOn && other.cryptoAlgo == cryptoAlgo &&
-                other.cryptoNonce.contentEquals(cryptoNonce)
+                other.cryptoNonce.contentEquals(cryptoNonce) && other.takeover == takeover
         override fun hashCode(): Int {
             var h = version
             h = h * 31 + token.hashCode()
@@ -150,6 +152,7 @@ sealed class ControlMessage(val type: Int) {
             h = h * 31 + encryptOn.hashCode()
             h = h * 31 + cryptoAlgo.hashCode()
             h = h * 31 + cryptoNonce.contentHashCode()
+            h = h * 31 + takeover.hashCode()
             return h
         }
     }
@@ -379,7 +382,8 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
     val body = when (msg) {
         is ControlMessage.Hello -> ByteBuffer.allocate(
             2 + 2 + msg.token.toByteArray(StandardCharsets.UTF_8).size + 1 + 2 + msg.packageName.toByteArray(StandardCharsets.UTF_8).size + 2 + 2 + 1 + 4 + 4 + 2 + msg.p2pOffer.toByteArray(StandardCharsets.UTF_8).size +
-                (if (msg.encryptOn) CRYPTO_BLOCK_BYTES else 0)
+                (if (msg.encryptOn) CRYPTO_BLOCK_BYTES else 0) +
+                (if (msg.takeover) 1 else 0)
         ).apply {
             putShort(msg.version.toShort())
             putU16String(msg.token)
@@ -392,6 +396,8 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
             putInt(msg.sessionId)
             putU16String(msg.p2pOffer)
             if (msg.encryptOn) putCryptoBlock(msg.cryptoAlgo, msg.encryptOn, msg.cryptoNonce)
+            // 抢占标志：可选尾字节（老端 getCryptoBlockOpt/尾读均按 remaining 守卫，忽略未知尾字节）
+            if (msg.takeover) put(1)
         }
         is ControlMessage.HelloAck -> {
             val cryptoBlock = msg.encryptOn || msg.cryptoAlgo != CryptoAlgo.NONE
@@ -536,8 +542,13 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
                 p2pOffer = buf.getU16String(),
             )
             // 可选 crypto 块（老端无尾部字节 → 保持默认 none/false，兼容回落）
-            val crypto = buf.getCryptoBlockOpt() ?: return hello
-            hello.copy(encryptOn = crypto.second, cryptoAlgo = crypto.first, cryptoNonce = crypto.third)
+            var h = hello
+            buf.getCryptoBlockOpt()?.let { crypto ->
+                h = h.copy(encryptOn = crypto.second, cryptoAlgo = crypto.first, cryptoNonce = crypto.third)
+            }
+            // 可选抢占尾字节（老端不发 → remaining()==0 保持 false）
+            if (buf.remaining() >= 1) h = h.copy(takeover = (buf.get().toInt() and 0xFF) != 0)
+            return h
         }
         MsgType.HELLO_ACK -> {
             val status = HelloStatus.from(buf.get().toInt())

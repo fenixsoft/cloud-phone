@@ -63,6 +63,10 @@ object ClientSession {
 
     @Volatile var onFrame: ((VideoFrame) -> Unit)? = null
     @Volatile var onConnectionLost: (() -> Unit)? = null
+    /** 自动重连终止（占用拒绝 REJECT_BUSY / 次数耗尽）：携带最终原因，UI 收尾用 */
+    @Volatile var onReconnectStopped: ((String) -> Unit)? = null
+    /** 抢占请求：置位后下一次 HELLO 携 takeover=true（源端踢掉现役观看端），握手发出后自动复位 */
+    @Volatile var requestTakeover: Boolean = false
     @Volatile var onStats: ((ControlMessage.StatsMessage) -> Unit)? = null
     @Volatile var onHelloAck: ((ControlMessage.HelloAck) -> Unit)? = null
     /** APP_LIST 应答分发（应用列表页消费；3.1/4.1） */
@@ -91,6 +95,8 @@ object ClientSession {
     private var currentMode: WatchMode = WatchMode.FULLSCREEN
     private var currentPackage = ""
     private val reconnecting = AtomicBoolean(false)
+    /** 源端占用拒绝（REJECT_BUSY）后抑制自动重连：换设备观看必须显式操作，自动重试只会刷屏 */
+    private val busyRejected = AtomicBoolean(false)
     // 单飞守卫：connect 主流程与 scheduleReconnect 竞态曾造成双 TCP 连接并存，
     // 两侧共享同一 ackQueue 互吃对方应答（HELLO ack timeout 竟发生在收到 ack 之后）
     private val connecting = AtomicBoolean(false)
@@ -119,6 +125,7 @@ object ClientSession {
 
     /** 建链 + HELLO 握手（≤500ms 目标；成功 true） */
     fun connect(cfg: Config, mode: WatchMode, packageName: String): Boolean {
+        busyRejected.set(false) // 用户显式重连 = 重新允许自动重连（重试占用由源端裁决）
         if (!connecting.compareAndSet(false, true)) {
             lastError = "连接流程进行中"
             return false
@@ -174,11 +181,11 @@ object ClientSession {
                     onConnectionLost?.invoke()
                     // connectOnce 内部换后端/旧链关闭也会触发 DISCONNECTED，
                     // connect 主流程进行中时禁止 scheduleReconnect 插进来抢 ackQueue
-                    if (!connecting.get()) scheduleReconnect()
+                    // busy 拒绝后源端 3s 回收通道会再触发 DISCONNECTED——闸门防止死循环重试
+                    if (!connecting.get() && !busyRejected.get()) scheduleReconnect()
                 }
                 else -> Unit
-            }
-        }
+            }        }
         Thread({
             try {
                 b.start()
@@ -217,14 +224,21 @@ object ClientSession {
             encryptOn = encryptOn,
             cryptoAlgo = if (encryptOn) CryptoAlgo.AES128_GCM else CryptoAlgo.NONE,
             cryptoNonce = clientNonce,
-        )
+            takeover = requestTakeover,
+        ).let { hello ->
+            requestTakeover = false // 抢占标志单次生效：重连风暴防护仍由占用保护兜底
+            if (hello.takeover) {
+                android.util.Log.d("cloudphone-client", "HELLO takeover requested")
+            }
+            hello
+        }
         while (ackQueue.poll() != null) Unit // 清残留
         sendControl(hello)
         android.util.Log.d(
             "cloudphone-client",
             "HELLO sent (mode=$mode offer=${offer.isNotBlank()} encryptOn=$encryptOn)",
         )
-        val ack = ackQueue.poll(2, TimeUnit.SECONDS) ?: run {
+        val ack = ackQueue.poll(5, TimeUnit.SECONDS) ?: run {
             android.util.Log.w("cloudphone-client", "HELLO ack timeout")
             lastError = "HELLO 无应答（握手超时）"
             return false
@@ -259,7 +273,7 @@ object ClientSession {
         while (ackQueue.poll() != null) Unit
         sendControl(hello)
         android.util.Log.d("cloudphone-client", "START_SESSION sent (mode=$mode pkg=$packageName sid=$sessionId)")
-        val ack = ackQueue.poll(3, TimeUnit.SECONDS) ?: run {
+        val ack = ackQueue.poll(8, TimeUnit.SECONDS) ?: run {
             android.util.Log.w("cloudphone-client", "START_SESSION ack timeout")
             return null
         }
@@ -375,8 +389,9 @@ object ClientSession {
                     lastPongAtMs = now // 防抖：同一死通道只触发一次重连
                     backend?.close()
                     connected = false
-                    // 退避重连已在跑时不重复触发（重连成功会刷新 lastPongAtMs）
-                    if (!reconnecting.get()) scheduleReconnect()
+                    // 退避重连已在跑时不重复触发（重连成功会刷新 lastPongAtMs）；
+                    // busy 拒绝后同理抑制（源端已被其他设备占用，重试只会刷屏）
+                    if (!reconnecting.get() && !busyRejected.get()) scheduleReconnect()
                 }
             }
         }, "client-keepalive").apply { isDaemon = true; start() }
@@ -423,9 +438,20 @@ object ClientSession {
                             }
                         }
                     }
+                    // 源端会话占用保护（REJECT_BUSY）：另一设备正在观看。继续重连只会
+                    // 无限刷"连接断开，正在重连"——立即停止并给出明确指引，换设备观看
+                    // 应先断开当前观看端（对齐 Moonlight 单占用语义）。
+                    if (lastHelloAck?.status == HelloStatus.REJECT_BUSY) {
+                        lastError = "源端正被其他设备观看，已停止重连；请先在对端断开后再连接本机"
+                        android.util.Log.w("cloudphone-client", "reconnect stopped: source busy")
+                        busyRejected.set(true)
+                        onReconnectStopped?.invoke(lastError)
+                        return@Thread
+                    }
                     attempt++
                 }
                 lastError = "重连失败（已尝试 $attempt 次）"
+                onReconnectStopped?.invoke(lastError)
             } finally {
                 reconnecting.set(false)
                 connecting.set(false)
@@ -758,7 +784,21 @@ class ConnectActivity : Activity() {
                 runOnUiThread {
                     connectInFlight.set(false)
                     connStatus.text = "连接失败：${ClientSession.lastError}"
-                    Toast.makeText(this, "连接失败：${ClientSession.lastError}", Toast.LENGTH_LONG).show()
+                    // 占用拒绝（REJECT_BUSY）→ 提供「抢占观看」入口：用户确认后携 takeover 重连
+                    if (ClientSession.lastHelloAck?.status == HelloStatus.REJECT_BUSY) {
+                        connStatus.text = "源端正被其他设备观看"
+                        android.app.AlertDialog.Builder(this)
+                            .setTitle("源端被占用")
+                            .setMessage("源端正被其他设备观看。是否断开对方并接管观看权限？")
+                            .setPositiveButton("抢占观看") { _, _ ->
+                                ClientSession.requestTakeover = true
+                                connectAndEnter(cfg, mode, pkg, thenIntent, silent, autoW, autoH, autoFps, autoKbps)
+                            }
+                            .setNegativeButton("取消", null)
+                            .show()
+                    } else {
+                        Toast.makeText(this, "连接失败：${ClientSession.lastError}", Toast.LENGTH_LONG).show()
+                    }
                 }
                 return@Thread
             }

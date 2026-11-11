@@ -1,18 +1,17 @@
 package cloudphone.desktop
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import cloudphone.desktop.ui.DesktopTheme
 import java.awt.GraphicsEnvironment
 import kotlin.system.exitProcess
@@ -47,36 +46,70 @@ fun runDesktopApp(args: Array<String>): Int {
     }
     val options = LaunchOptions.parse(args)
     application {
-        Window(
-            onCloseRequest = ::exitApplication,
+        var fullscreen by remember { mutableStateOf(false) }
+        val windowState = rememberWindowState(
+            width = 1100.dp,
+            height = 700.dp,
+            position = WindowPosition.Aligned(Alignment.Center),
+        )
+        val bus = remember { UiBus() }
+        AppWindow(
+            state = windowState,
             title = "CloudPhone 桌面客户端",
-            state = WindowState(width = 1100.dp, height = 700.dp, position = WindowPosition.Aligned(Alignment.Center)),
+            onCloseRequest = ::exitApplication,
+            onShortcut = { shortcut ->
+                when (shortcut) {
+                    AppShortcut.ToggleFullscreen -> fullscreen = !fullscreen
+                    AppShortcut.Disconnect -> bus.disconnect.tryEmit(Unit)
+                    AppShortcut.TextInputPanel -> bus.textPanel.tryEmit(Unit)
+                }
+            },
         ) {
+            // F11 全屏切换（headless 环境不执行到此处）
+            LaunchedEffect(fullscreen) {
+                windowState.placement =
+                    if (fullscreen) WindowPlacement.Fullscreen else WindowPlacement.Floating
+            }
             DesktopTheme {
-                PlaceholderSurface(options)
+                AppRoot(bus = bus, softwareRender = options.softwareRender, autotest = options.autotest)
             }
         }
     }
     return 0
 }
 
-/** 1.2 占位内容层（3.x 三屏接入后由 AppWindow/HomeScreen 替换） */
-@Composable
-private fun PlaceholderSurface(options: LaunchOptions) {
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0B0E14)), contentAlignment = Alignment.Center) {
-        Text("CloudPhone 桌面客户端（${if (options.softwareRender) "软件渲染" else "默认渲染"}）", color = Color(0xFF94A3B8))
-    }
-}
+/** 自动化测试连接参数（--autotest host port [token]；VM 冒烟跳过手输表单直连） */
+data class AutotestParams(
+    val host: String,
+    val tcpPort: Int,
+    val token: String,
+)
 
 /** 启动参数（预留：VM 冒烟与打包场景的命令行开关） */
 data class LaunchOptions(
     /** 强制软件渲染提示（真实渲染后端切换由 -Dskiko.renderApi=SOFTWARE JVM 参数完成，见类注释） */
     val softwareRender: Boolean = false,
+
+    /** 自动化连接（E2E 冒烟：启动即以给定参数建立会话，等效表单手输后的连接） */
+    val autotest: AutotestParams? = null,
 ) {
     companion object {
-        fun parse(args: List<String>): LaunchOptions = LaunchOptions(
-            softwareRender = args.contains("--software-render"),
-        )
+        fun parse(args: List<String>): LaunchOptions {
+            val idx = args.indexOf("--autotest")
+            val autotest = if (idx >= 0 && idx + 2 < args.size) {
+                AutotestParams(
+                    host = args[idx + 1],
+                    tcpPort = args[idx + 2].toIntOrNull() ?: 22333,
+                    token = args.getOrNull(idx + 3) ?: "cloudphone-m0",
+                )
+            } else {
+                null
+            }
+            return LaunchOptions(
+                softwareRender = args.contains("--software-render"),
+                autotest = autotest,
+            )
+        }
 
         fun parse(args: Array<out String>): LaunchOptions = parse(args.toList())
     }

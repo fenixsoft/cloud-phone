@@ -279,6 +279,7 @@ fun HomeScreen(
     onDiscoveredAction: (DiscoveredCard, DiscoveredCardAction) -> Unit,
     onProfileConnect: (ProfileCard) -> Unit,
     onProfileDelete: (ProfileCard) -> Unit,
+    onFormConnect: (() -> Unit)? = null,
     localWidth: Int,
     localHeight: Int,
     modifier: Modifier = Modifier,
@@ -311,6 +312,7 @@ fun HomeScreen(
             visible = drawerVisible,
             form = form,
             onFormChange = onFormChange,
+            onConnect = onFormConnect,
             localWidth = localWidth,
             localHeight = localHeight,
             onClose = onToggleDrawer,
@@ -404,6 +406,7 @@ private fun NewConnectionDrawer(
     visible: Boolean,
     form: NewConnectionForm,
     onFormChange: (NewConnectionForm) -> Unit,
+    onConnect: (() -> Unit)? = null,
     localWidth: Int,
     localHeight: Int,
     onClose: () -> Unit,
@@ -520,6 +523,20 @@ private fun NewConnectionDrawer(
                         color = if (form.encryptOn) SemanticOk else SemanticWarn, fontSize = 13.sp,
                         modifier = Modifier.clickable { onFormChange(form.copy(encryptOn = !form.encryptOn)) },
                     )
+                }
+            }
+            // 连接按钮（校验失败置灰——内联报错已在字段旁呈现；null 回调 = 上层未接线时隐藏）
+            if (onConnect != null) {
+                Spacer(Modifier.height(16.dp))
+                val errors = HomeFormLogic.validate(form, localWidth, localHeight)
+                Box(
+                    Modifier.fillMaxWidth()
+                        .background(if (errors == null) AccentBlue else DesktopOutline, RoundedCornerShape(8.dp))
+                        .clickable(enabled = errors == null, onClickLabel = "连接") { onConnect() }
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("连接", color = if (errors == null) DesktopText else DesktopTextDim, fontSize = 14.sp)
                 }
             }
         }

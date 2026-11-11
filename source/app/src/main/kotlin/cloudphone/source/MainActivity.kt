@@ -41,6 +41,10 @@ class MainActivity : Activity() {
     private lateinit var stopButton: Button
     private lateinit var projectionButton: Button
     private lateinit var imeButton: Button
+    private lateinit var overlayButton: Button
+
+    /** 投影失效自动重授权路径标记：授权确认后直接重建采集管线（手动授权不置位） */
+    private var pendingRebuildAfterGrant = false
 
     private val bootstrap = ShellBootstrap()
     private val handler = Handler(Looper.getMainLooper())
@@ -125,6 +129,31 @@ class MainActivity : Activity() {
         }
         root.addView(imeButton)
 
+        // 悬浮窗权限引导（触摸延迟修复 5.3）：InputComposer 悬窗合成驱动需
+        // SYSTEM_ALERT_WINDOW；未授权时降级为系统 idle 合成（触摸→画面 ~1s）。
+        overlayButton = Button(this).apply {
+            setOnClickListener {
+                try {
+                    val intent = Intent(
+                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:$packageName"),
+                    )
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "无法打开悬浮窗设置: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+        root.addView(overlayButton)
+
+        // 延迟测试（移动靶）：全屏移动靶 + 速度 5 档，经串流点击命中即体感延迟量尺
+        root.addView(Button(this).apply {
+            text = "延迟测试（移动靶）→"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, LatencyTestActivity::class.java))
+            }
+        })
+
         statusText = TextView(this)
         root.addView(statusText)
         countersText = TextView(this)
@@ -168,9 +197,25 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshImeStatus()
+        refreshOverlayStatus()
+        // 投影失效自动重授权：令牌一次性+可超时（挂机/锁屏/系统回收后失效），
+        // 丢失后客户端连接全被拒——回到源端 App 时自动弹系统授权框，确认即恢复。
+        if (StreamService.captureLost) {
+            StreamService.captureLost = false
+            Toast.makeText(this, "投屏授权已失效，请重新授权以恢复串流", Toast.LENGTH_LONG).show()
+            requestProjection(autoRebuild = true)
+        }
     }
 
-    private fun requestProjection() {
+    /** 悬浮窗权限检测（触摸延迟修复 5.3/5.5：InputComposer 悬窗需 SYSTEM_ALERT_WINDOW，
+     *  未授权降级为系统 idle 合成节奏 → 触摸→画面变化约 1s。给出系统设置引导入口。） */
+    private fun refreshOverlayStatus() {
+        val granted = android.provider.Settings.canDrawOverlays(this)
+        overlayButton.visibility = if (granted) View.GONE else View.VISIBLE
+        overlayButton.text = "开启悬浮窗权限（触摸延迟 1s → 0.02s）→"
+    }
+
+    private fun requestProjection(autoRebuild: Boolean = false) {
         if (checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_DENIED) {
             // dump 开关用到 /sdcard（M0 诊断用；非必需权限，拒绝可继续）
             requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 2)
@@ -182,6 +227,9 @@ class MainActivity : Activity() {
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mgr.createScreenCaptureIntent(), REQUEST_PROJECTION)
+        // 自动重授权标记：仅投影失效恢复路径（autoRebuild）在 onActivityResult 后直接带参
+        // 重建管线；手动授权走原流程（只存凭据，由『启动串流服务』消费，避免抢消费凭据）
+        pendingRebuildAfterGrant = autoRebuild
     }
 
     private fun startService() {
@@ -212,7 +260,16 @@ class MainActivity : Activity() {
             // 只缓存凭据，不在此处建管线——管线参数由启动方（UI 默认/矩阵 extras）决定，
             // 且必须用新铸的凭据建（自动建会抢先消耗凭据，后续带参重建会失败）
             StreamService.projectionGrant = resultCode to data
-            statusText.text = "MediaProjection 授权已就绪（点『启动串流服务』建采集管线）"
+            if (pendingRebuildAfterGrant) {
+                // 投影失效自动重授权路径：凭据立即消费建默认参管线，恢复串流
+                pendingRebuildAfterGrant = false
+                StreamService.captureLost = false
+                val intent = Intent(this, StreamService::class.java).setAction(StreamService.ACTION_START_CAPTURE)
+                if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+                statusText.text = "已重新授权，采集管线恢复中…"
+            } else {
+                statusText.text = "MediaProjection 授权已就绪（点『启动串流服务』建采集管线）"
+            }
         }
     }
 

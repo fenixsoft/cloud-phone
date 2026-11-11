@@ -129,6 +129,7 @@ class StreamService : Service() {
         sharedCapture = null
         captureParams = null
         currentSession = null
+        captureLost = true // UI 侧据此自动重授权（MediaProjection 令牌一次性+会超时，丢失后旧凭据必失效）
         android.util.Log.w("cloudphone-source", "shared capture lost (projection stopped)")
     }
 
@@ -164,7 +165,11 @@ class StreamService : Service() {
         }
         val projection = acquireProjection(this)
         if (projection == null) {
-            lastStartError = "需要 MediaProjection 授权（先在源端 App 授予）"
+            // 凭据铸造失败（一次性令牌被消费/超时）与 sc.start() 失败同因同果：
+            // 必须同样置 captureLost，否则 MainActivity.onResume 不会自动弹重授权，
+            // 用户会永远卡在「采集管线启动失败」（用户报告的问题 2 的另一半根因）。
+            lastStartError = "需要 MediaProjection 授权（先在源端 App 点『授予 MediaProjection 授权』重新授权）"
+            captureLost = true
             return
         }
         // 丢失回调带实例身份校验：旧管线的 onStop 异步迟到时不得误清新管线
@@ -177,11 +182,16 @@ class StreamService : Service() {
         val ok = sc.start { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) }
         if (!ok) {
             sc.stop()
-            lastStartError = "采集管线启动失败（见 capture start failed 日志）"
+            // 新建失败的唯一现实原因：投影凭据已消费/超时（一次性令牌）。
+            // 清掉死凭据并给出可操作文案；captureLost 触发源端 UI 自动重授权。
+            StreamService.projectionGrant = null
+            captureLost = true
+            lastStartError = "投屏授权已失效，请在源端 App 点『授予 MediaProjection 授权』重新授权后重连"
             return
         }
         sharedCapture = sc
         captureParams = params
+        captureLost = false
         android.util.Log.i("cloudphone-source", "shared capture ready ${params.width}x${params.height}@${params.fps}/${params.bitrateKbps}kbps")
     }
 
@@ -739,6 +749,9 @@ class StreamService : Service() {
 
         /** MainActivity 授权后的投影对象交接点（进程内单会话整屏路径） */
         @Volatile var projectionRef: MediaProjection? = null
+
+        /** 投影失效态：丢失回调/重建失败置位；UI（MainActivity.onResume）据此自动重授权 */
+        @Volatile var captureLost: Boolean = false
 
         /**
          * 授权凭据（resultCode + resultData）。部分镜像的 MediaProjection 令牌闲置约 60s 即失效，

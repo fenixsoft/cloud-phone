@@ -137,6 +137,12 @@ class TransportLoopbackTest {
         source.start()
         client.start()
         try {
+            // 占用保护后源端晋升以首条控制记录为门：先说 HELLO 并等源端转发回执，
+            // 确认晋升完成（channel 在位）后再发源端→客户端视频，避免竞态丢首帧
+            val srcControl = Received<ByteArray>()
+            source.onControl = ControlSink { srcControl.push(it) }
+            client.sendControl(byteArrayOf(0x01, 1))
+            assertNotNull(srcControl.take())
             val data = ByteArray(1500) { (it % 13).toByte() }
             source.sendVideo(sequence = 1, ptsUs = 11, keyframe = true, frame = data)
             val frame = cliVideo.take()
@@ -215,6 +221,7 @@ class TransportLoopbackTest {
         source.start()
         client.start()
         try {
+            client.sendControl(byteArrayOf(0x01, 1)) // HELLO 形态字节 → 晋升为现役（pending 探针死亡静默吸收）
             client.close() // 客户端 abrupt close → 源端读泵报错
             var event = events.take(10_000)
             while (event != StreamEvent.DISCONNECTED) {

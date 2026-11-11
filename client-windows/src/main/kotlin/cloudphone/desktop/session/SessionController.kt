@@ -77,6 +77,8 @@ data class SessionParams(
     val height: Int = 1920,
     val fps: Int = 60,
     val bitrateKbps: Int = 8000,
+    /** 抢占请求：源端正被其他设备观看时踢掉对方接管（用户显式意图，BUSY 自动重试即置位） */
+    val takeover: Boolean = false,
 )
 
 /** HUD 状态投影（spec：fps/码率/RTT/丢包/解码实际分辨率/后端+加密徽章） */
@@ -212,6 +214,9 @@ class SessionController(
     @Volatile
     var onAppList: ((ControlMessage.AppListMessage) -> Unit)? = null
 
+    /** 辅助控制消息出口（AuxBridge.onControlMessage 接线点；dispatch 循环路由剪贴板/能力通知/文字 ACK，未接线时忽略） */
+    @Volatile var onAuxControl: ((ControlMessage) -> Unit)? = null
+
     /** 解码实际分辨率回填（VideoPipeline 解码输出变化时调用，HUD 分辨率取实际值） */
     fun reportDecodedSize(width: Int, height: Int) {
         _hud.value = _hud.value.copy(decodedWidth = width, decodedHeight = height)
@@ -222,6 +227,8 @@ class SessionController(
     private val closed = AtomicBoolean(false)
     private val connecting = AtomicBoolean(false)
     private val userDisconnected = AtomicBoolean(false)
+    /** 每个 start() 只允许自动抢占一次：断线重连不再自动抢占，避免双桌面端互相踢的死循环 */
+    @Volatile private var preemptUsed = false
     private val suspended = AtomicBoolean(false)
     private val nextRequestId = AtomicInteger(0)
     private val nextTextSeq = AtomicInteger(0)
@@ -254,6 +261,7 @@ class SessionController(
         if (!connecting.compareAndSet(false, true)) return
         userDisconnected.set(false)
         closed.set(false)
+        preemptUsed = false
         params = newParams
         launchSession(newParams)
     }
@@ -327,6 +335,7 @@ class SessionController(
                 encryptOn = runParams.encryptOn,
                 cryptoAlgo = if (runParams.encryptOn) CryptoAlgo.AES128_GCM else CryptoAlgo.NONE,
                 cryptoNonce = clientNonce,
+                takeover = runParams.takeover,
             ),
         )
         val ack = awaitHelloAck(helloTimeoutMs)
@@ -336,6 +345,14 @@ class SessionController(
             return
         }
         if (ack.status != HelloStatus.ACCEPTED) {
+            // 占用拒绝（REJECT_BUSY）：用户点击连接即表达观看意图 → 自动抢占一次
+            // （新协议 HELLO.takeover，源端踢现任通道）；抢占重试仍 BUSY 才显式失败。
+            if (ack.status == HelloStatus.REJECT_BUSY && !runParams.takeover && !preemptUsed) {
+                preemptUsed = true // start() 生命周期内一次：重连路径不再自动抢占（防双端互踢）
+                _notices.value = listOf("源端正被其他设备观看，正在抢占…")
+                runCatching { b.close() }
+                return runSession(runParams.copy(takeover = true))
+            }
             // token 错配等显式拒绝：明确失败不重试（spec REJECT_BAD_TOKEN 场景，文案含显式拒绝码）
             fail("握手被拒: ${ack.reason.ifBlank { "-" }} [${ack.status.name}]")
             runCatching { b.close() }
@@ -459,6 +476,9 @@ class SessionController(
                     }
                     is ControlMessage.AudioChunk -> onAudioChunk?.invoke(msg)
                     is ControlMessage.P2pMigrate -> (backend as? P2pBackend)?.onPeerCandidates(msg.candidates)
+                    is ControlMessage.ClipboardText -> onAuxControl?.invoke(msg)
+                    is ControlMessage.AuxNotice -> onAuxControl?.invoke(msg)
+                    is ControlMessage.TextInputAck -> onAuxControl?.invoke(msg)
                     is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话（协议容错规则）
                     else -> Unit
                 }
@@ -584,8 +604,10 @@ class SessionController(
         if (userDisconnected.get() || closed.get()) return
         notice("连接断开，重连中…")
         _phase.value = SessionPhase.CONNECTING
+        var backoffMs = 1_000L
         while (!userDisconnected.get() && !closed.get()) {
-            delay(1_000) // 对齐 Android 断线 ≤1s 重连节拍
+            delay(backoffMs) // 指数退避 1s→30s：断线风暴下 1s 固定节拍会与占用保护互相放大
+            backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
             val p = params ?: return
             val attach = currentSessionId
             val runParams = if (attach != 0) {
@@ -594,7 +616,7 @@ class SessionController(
             prepareSessionState()
             runSession(runParams)
             if (_phase.value == SessionPhase.STREAMING) return
-            if (_phase.value == SessionPhase.FAILED) return // 显式拒绝（如 token 错配）不重试
+            if (_phase.value == SessionPhase.FAILED) return // 显式拒绝（如 token 错配/被占用拒绝）不重试
         }
     }
 

@@ -32,6 +32,12 @@
             </intent-filter>
         </activity>
 
+        <!-- 延迟测试（移动靶）：被 StreamService 串流捕获的测试界面，非入口 -->
+        <activity
+            android:name="cloudphone.source.LatencyTestActivity"
+            android:exported="false"
+            android:screenOrientation="portrait" />
+
         <service
             android:name="cloudphone.source.StreamService"
             android:exported="false"
