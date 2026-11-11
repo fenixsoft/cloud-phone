@@ -6,7 +6,7 @@
  */
 
 import { AudioPipeline } from './media/AudioPipeline';
-import { VideoPipeline, VideoUnsupportedError, browserName, probeVideoSupport } from './media/VideoPipeline';
+import { VideoPipeline, VideoUnsupportedError, probeVideoSupport } from './media/VideoPipeline';
 import { SessionClient, SessionRejectedError, buildWsUrl, type AppEntry, type HungSession, type SessionParameters, type StartMode, type VideoProfile } from './net/SessionClient';
 import { InputBridge } from './input/InputBridge';
 import { Hud } from './ui/Hud';
@@ -160,8 +160,12 @@ let bridge: InputBridge | null = null;
 let hudCtl: Hud | null = null;
 let currentParams: SessionParameters | null = null;
 let lastClockOffsetUs = 0;
+/** 时钟已同步标记（首个自发 PONG 到达置位）：此前 offset 尚未估计，延迟样本按零偏移计算会失真，不入采样窗 */
+let clockSynced = false;
 
 function teardownSessionObjects(): void {
+  hudCtl?.dispose();
+  hudCtl = null;
   bridge?.dispose();
   bridge = null;
   session?.close();
@@ -171,6 +175,7 @@ function teardownSessionObjects(): void {
   audio?.close();
   audio = null;
   currentParams = null;
+  clockSynced = false;
 }
 
 /** 音频可用性（任务 4.2 UI：不可用置灰 + 原因提示） */
@@ -262,9 +267,16 @@ function bindSessionEvents(s: SessionClient, profile: VideoProfile): void {
 
   s.on('sessionStarted', (params) => {
     currentParams = params;
+    // 会话切换/ATTACH 恢复：复位解码与丢帧基线（seq 基线、关键帧门、播放缓冲），防旧基线误判新会话流（首次建会话调用亦无害）
+    video?.resetForNewSession();
+    audio?.resetForNewSession();
     sizeCanvas();
     bridge?.onSessionParameters(params.width, params.height, params.sessionId);
-    hudCtl?.clearSamples();
+    // 采样文档 profile 以 HELLO_ACK 返回的实际会话参数为准（表单请求档位可能经源端对齐调整）；换会话清旧样本
+    if (hudCtl) {
+      hudCtl.sessionProfile = params;
+      hudCtl.clearSamples();
+    }
   });
 
   s.on('videoRecord', (payload) => {
@@ -281,19 +293,25 @@ function bindSessionEvents(s: SessionClient, profile: VideoProfile): void {
 
   s.on('clock', ({ rttUs, offsetUs }) => {
     lastClockOffsetUs = offsetUs;
+    clockSynced = true;
     hudCtl?.onClockSample(rttUs);
   });
 
   s.on('stats', (st) => {
     const counters = video?.counters();
+    const browserRttMs = hudCtl?.rttMs() ?? 0;
     hudCtl?.update({
       fps: st.fps,
       bitrateKbps: st.bitrateKbps,
-      rttMs: hudCtl?.rttMs() || st.rttMs,
+      // 口径优先级：浏览器自发 PING 最近 16 样本均值；样本未就绪回退源端 STATS RTT（测量点不同），title 标注当前口径来源
+      rttMs: browserRttMs > 0 ? browserRttMs : st.rttMs,
       decodeQueueSize: counters?.decodeQueueSize ?? 0,
       dropped: (counters?.droppedSeqGap ?? 0) + (counters?.droppedPremature ?? 0) + (counters?.renderDropped ?? 0),
       audioSkipCount: audio?.stats().skipCount,
     });
+    $('hud-rtt').title = browserRttMs > 0
+      ? 'RTT：浏览器自发 PING/PONG（最近 16 样本均值）'
+      : 'RTT：源端 STATS 上报（浏览器 RTT 样本未就绪）';
   });
 
   s.on('clipboardText', ({ text }) => void bridge?.onClipboardText(text));
@@ -318,7 +336,22 @@ connectForm.addEventListener('submit', (ev) => {
   void doConnect();
 });
 
+/** 连接防重入：能力探测存在可感 await 窗口，入口同步置禁用短路重复提交，finally 恢复 */
+let connectInFlight = false;
+
 async function doConnect(): Promise<void> {
+  if (connectInFlight) return;
+  connectInFlight = true;
+  connectBtn.setAttribute('disabled', 'true');
+  try {
+    await doConnectOnce();
+  } finally {
+    connectInFlight = false;
+    connectBtn.removeAttribute('disabled');
+  }
+}
+
+async function doConnectOnce(): Promise<void> {
   showError('');
   const token = tokenInput.value.trim();
   if (!token) {
@@ -340,14 +373,16 @@ async function doConnect(): Promise<void> {
     return;
   }
 
-  connectBtn.setAttribute('disabled', 'true');
   try {
     teardownSessionObjects();
 
+    // [fenix-ignore:82ce02073464] onError 已传入（toast 透传）且管线内有下一关键帧重建恢复路径，「未传 onError、错误后静默冻结」不成立
     video = new VideoPipeline({
       canvas,
-      // 帧延迟采样接入点：offset 由 clock 事件维护（浏览器端口径）
-      onFrameDecoded: (ptsUs) => hudCtl?.onFrameDecoded(ptsUs, lastClockOffsetUs),
+      // 帧延迟采样接入点：offset 由 clock 事件维护（浏览器端口径）；首个 clock 到达前时钟未同步，样本不入窗防零偏移失真
+      onFrameDecoded: (ptsUs) => {
+        if (clockSynced) hudCtl?.onFrameDecoded(ptsUs, lastClockOffsetUs);
+      },
       // 解码器致命错误：管线内部已标记失效并等下一关键帧重建；此处 toast 透传，防错误静默吞掉
       onError: (err) => showToast(`视频解码器错误：${err.message}`),
     });
@@ -363,6 +398,28 @@ async function doConnect(): Promise<void> {
     session.rememberConnect({ wsUrl: buildWsUrl(window.location), token, profile });
     bindSessionEvents(session, profile);
 
+    // InputBridge 每次连接重建（teardown 已 dispose 旧实例防监听滞留；会话切换仅经 onSessionParameters 重置坐标基准）
+    bridge = new InputBridge(
+      {
+        inputEvent: (action, pointerId, x, y) => {
+          if (session && currentParams) session.sendInputEvent(currentParams.sessionId, action, pointerId, x, y);
+        },
+        textInput: (text) => session?.sendTextInput(text) ?? 0,
+        clipboardSet: (text) => session?.sendClipboardSet(text),
+        clipboardGet: () => session?.sendClipboardGet(),
+      },
+      { videoWidth: 0, videoHeight: 0, sessionId: 0 },
+      {
+        textInput,
+        btnBack,
+        btnText: $('btn-text'),
+        btnClipRead,
+        btnClipWrite,
+      },
+      { toast: showToast },
+      canvas,
+    );
+
     await session.connect({ wsUrl: buildWsUrl(window.location), token, mode: { kind: 'fullscreen' }, profile });
 
     // 应用网格：FULLSCREEN 建会话后列应用 + 挂机恢复入口
@@ -377,14 +434,13 @@ async function doConnect(): Promise<void> {
       showError((err as Error).message);
     }
     teardownSessionObjects();
-  } finally {
-    connectBtn.removeAttribute('disabled');
   }
 }
 
 // ── 工具条 ──
 
-btnBack.addEventListener('click', () => {
+// 「全屏」：切回全屏系统画面会话（退出单应用视图）；BACK 键注入由 InputBridge 绑定的 btn-back 承担，二者分离防一次点击双触发
+$('btn-fullscreen').addEventListener('click', () => {
   void switchSession({ kind: 'fullscreen' });
 });
 
@@ -413,32 +469,9 @@ logoutBtn.addEventListener('click', () => {
   backToConnect('');
 });
 
-// InputBridge 装配（会话页元素就绪后一次绑定；会话切换仅重置坐标基准）
-bridge = new InputBridge(
-  {
-    inputEvent: (action, pointerId, x, y) => {
-      if (session && currentParams) session.sendInputEvent(currentParams.sessionId, action, pointerId, x, y);
-    },
-    textInput: (text) => session?.sendTextInput(text) ?? 0,
-    clipboardSet: (text) => session?.sendClipboardSet(text),
-    clipboardGet: () => session?.sendClipboardGet(),
-  },
-  { videoWidth: 0, videoHeight: 0, sessionId: 0 },
-  {
-    textInput,
-    btnBack,
-    btnText: $('btn-text'),
-    btnClipRead,
-    btnClipWrite,
-  },
-  { toast: showToast },
-  canvas,
-);
-
 // ── 启动 ──
 
 tokenInput.value = loadToken();
 show('connect');
 window.addEventListener('resize', sizeCanvas);
 window.addEventListener('orientationchange', sizeCanvas);
-void browserName; // 错误页浏览器名经 VideoUnsupportedError 携带（保持引用）
