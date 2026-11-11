@@ -73,7 +73,7 @@
 
 ## 6. 输入与 UI 壳
 
-- [ ] 6.1 `src/input/InputBridge.ts`：pointer 事件→INPUT_EVENT（letterbox 裁剪线性映射→×65535 u16→越界钳制；pointerId→u8 活动表），BACK 按钮+Esc=action3，隐藏输入框→TEXT_INPUT(kind=0)+ACK 提示，CLIPBOARD_GET/SET+CLIPBOARD_TEXT(kind=1) 置灰 toast
+- [x] 6.1 `src/input/InputBridge.ts`：pointer 事件→INPUT_EVENT（letterbox 裁剪线性映射→×65535 u16→越界钳制；pointerId→u8 活动表），BACK 按钮+Esc=action3，隐藏输入框→TEXT_INPUT(kind=0)+ACK 提示，CLIPBOARD_GET/SET+CLIPBOARD_TEXT(kind=1) 置灰 toast
 - [ ] 6.2 `src/main.ts` + `src/ui/Hud.ts`：连接页（URL ?token= 存 localStorage 可清除；档位选择 720p/1080p×30/60×4/8/16/20Mbps 默认 720p60/8M、区间校验）→应用网格→全屏 canvas+悬浮工具条；HUD 展示 fps/码率/RTT/管线延迟 P50/P95/解码队列/丢帧 + 落 docs/web-latency-samples.json 开关（浏览器端口径注明）
 
 ## 7. 端到端验收与文档
