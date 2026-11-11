@@ -291,7 +291,7 @@ function bindSessionEvents(s: SessionClient, profile: VideoProfile): void {
       bitrateKbps: st.bitrateKbps,
       rttMs: hudCtl?.rttMs() || st.rttMs,
       decodeQueueSize: counters?.decodeQueueSize ?? 0,
-      dropped: (counters?.droppedSeqGap ?? 0) + (counters?.droppedPremature ?? 0),
+      dropped: (counters?.droppedSeqGap ?? 0) + (counters?.droppedPremature ?? 0) + (counters?.renderDropped ?? 0),
       audioSkipCount: audio?.stats().skipCount,
     });
   });
@@ -348,6 +348,8 @@ async function doConnect(): Promise<void> {
       canvas,
       // 帧延迟采样接入点：offset 由 clock 事件维护（浏览器端口径）
       onFrameDecoded: (ptsUs) => hudCtl?.onFrameDecoded(ptsUs, lastClockOffsetUs),
+      // 解码器致命错误：管线内部已标记失效并等下一关键帧重建；此处 toast 透传，防错误静默吞掉
+      onError: (err) => showToast(`视频解码器错误：${err.message}`),
     });
     await video.probe(support); // 复用预检结果（选定 codec）
     video.start();

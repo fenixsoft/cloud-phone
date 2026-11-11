@@ -127,6 +127,11 @@ export class SessionClient {
   private lastPongAtMs = 0;
   private pingNonceSeq = 0n;
   private pendingPings = new Map<bigint, number>(); // nonce → t_send (browser µs)
+  /** HELLO / START_SESSION 超时定时器句柄：收到应答或连接关闭时取消 */
+  private helloTimer: ReturnType<typeof setTimeout> | null = null;
+  private startSessionTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 请求-应答轮次序号：过期定时器回调校验序号不匹配即空转，不得触碰新请求的共享状态 */
+  private ackSeq = 0;
 
   /** 当前会话参数（sessionStarted 后有效） */
   currentSession: SessionParameters | null = null;
@@ -136,6 +141,10 @@ export class SessionClient {
   private userClosed = false;
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 重连进行中：onWsClosed 仅在非重连态启动链，防止失败 socket 的 close 派生并行重连链 */
+  private reconnecting = false;
+  /** 重连链身份（自增）：旧链的定时器回调凭身份失效 */
+  private reconnectChain = 0;
 
   constructor(
     private readonly wsFactory: (url: string) => WebSocketLike,
@@ -175,9 +184,11 @@ export class SessionClient {
    */
   async connect(opts: { wsUrl: string; token: string; mode: StartMode; profile?: VideoProfile }): Promise<void> {
     this.userClosed = false;
+    this.reconnecting = false;
     const ws = this.wsFactory(opts.wsUrl);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    this.parser = new RecordStreamParser(); // 每个连接从零按记录边界解析，旧连接残留半包不拼入
     this.bindSocket(ws);
 
     await new Promise<void>((resolve, reject) => {
@@ -255,18 +266,26 @@ export class SessionClient {
 
   private requestHello(msg: EncodableControlMessage): Promise<Extract<ControlMessage, { kind: 'helloAck' }>> {
     return new Promise((resolve, reject) => {
+      const seq = ++this.ackSeq;
       this.helloWaiter = resolve;
       this.send(msg);
-      this.scheduleTimer(() => reject(new Error('HELLO 应答超时（源端 500ms 内未回，链路异常）')), HELLO_TIMEOUT_MS);
+      this.clearRequestTimers();
+      this.helloTimer = this.scheduleTimer(() => {
+        if (seq !== this.ackSeq) return; // 过期定时器（应答已了结或新请求已发起）：空转不触碰共享状态
+        reject(new Error(`HELLO 应答超时（源端 ${HELLO_TIMEOUT_MS}ms 内未回，链路异常）`));
+      }, HELLO_TIMEOUT_MS);
     });
   }
 
   private requestStartSession(msg: EncodableControlMessage): Promise<Extract<ControlMessage, { kind: 'helloAck' }>> {
     return new Promise((resolve, reject) => {
+      const seq = ++this.ackSeq;
       this.pendingStart = true;
       this.startWaiter = resolve;
       this.send(msg);
-      this.scheduleTimer(() => {
+      this.clearRequestTimers();
+      this.startSessionTimer = this.scheduleTimer(() => {
+        if (seq !== this.ackSeq) return; // 过期定时器：不得清掉新请求的 pendingStart
         this.pendingStart = false;
         reject(new Error('START_SESSION 应答超时'));
       }, START_SESSION_TIMEOUT_MS);
@@ -322,6 +341,7 @@ export class SessionClient {
   /** 用户主动断开：不自动重连 */
   close(): void {
     this.userClosed = true;
+    this.reconnecting = false;
     this.clearTimers();
     this.ws?.close(1000, 'client close');
     this.ws = null;
@@ -370,6 +390,9 @@ export class SessionClient {
     switch (msg.kind) {
       case 'helloAck': {
         if (msg.status === HelloStatus.ACCEPTED) this.lastHungSessions = msg.hungSessions;
+        // 本轮请求已了结：取消超时定时器并递增 ackSeq 使残留的过期回调失效
+        this.ackSeq += 1;
+        this.clearRequestTimers();
         if (this.pendingStart) {
           this.pendingStart = false;
           this.startWaiter?.(msg);
@@ -459,8 +482,21 @@ export class SessionClient {
     this.pingTimer = null;
   }
 
+  /** 取消在飞的请求-应答超时定时器（收到应答或连接关闭时调用） */
+  private clearRequestTimers(): void {
+    if (this.helloTimer) {
+      clearTimeout(this.helloTimer);
+      this.helloTimer = null;
+    }
+    if (this.startSessionTimer) {
+      clearTimeout(this.startSessionTimer);
+      this.startSessionTimer = null;
+    }
+  }
+
   private clearTimers(): void {
     this.stopPingLoop();
+    this.clearRequestTimers();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -480,17 +516,33 @@ export class SessionClient {
     this.stopPingLoop();
     this.ws = null;
     this.pendingStart = false;
+    this.clearRequestTimers();
+    // 跨连接状态清零：丢弃迟到的旧 PONG 与失真时钟，避免污染时钟估计/误喂看门狗
+    this.pendingPings.clear();
+    this.lastPongAtMs = 0;
+    this.clock = { rttUs: 0, offsetUs: 0 };
     if (this.userClosed) return;
+    // 重连尝试自身的 socket 断开：当前链已由 attemptReconnect 失败路径重排，不再派生并行链
+    if (this.reconnecting) return;
     this.emit('disconnected', { code, reason });
     if (!this.lastConnect) {
       this.emit('reconnectFailed', { reason: '无连接记忆，无法自动重连' });
       return;
     }
+    // 首连握手阶段断开：记忆中无已建立会话，ATTACH 无从附着，直接收尾不空转烧窗口
+    if (!this.currentSession) {
+      this.emit('reconnectFailed', { reason: '会话尚未建立，无法自动重连' });
+      return;
+    }
     const disconnectedAt = Date.now();
+    const chain = ++this.reconnectChain;
+    this.reconnecting = true;
     const attemptReconnect = () => {
+      if (this.userClosed || chain !== this.reconnectChain) return;
       const windowMs = this.config.reconnectWindowMs ?? RECONNECT_WINDOW_MS;
       const elapsed = Date.now() - disconnectedAt;
       if (elapsed > windowMs) {
+        this.reconnecting = false;
         this.emit('reconnectFailed', { reason: `断开超过 ${windowMs / 1000}s 重连窗口` });
         return;
       }
@@ -498,15 +550,18 @@ export class SessionClient {
       this.reconnectAttempt += 1;
       this.emit('reconnectScheduled', { attempt: this.reconnectAttempt, delayMs });
       this.reconnectTimer = this.scheduleTimer(async () => {
+        // 触发时复查：用户已主动断开或链已被替换（close/新 connect）则放弃本次尝试
+        if (this.userClosed || chain !== this.reconnectChain) return;
         try {
           await this.reconnectOnce();
         } catch (err) {
           if (err instanceof SessionRejectedError) {
             // ATTACH 显式拒绝（REJECT_BUSY / REJECT_UNSUPPORTED_MODE / token 失效）：停止重试
+            this.reconnecting = false;
             this.emit('reconnectFailed', { reason: `附着被拒绝（${err.statusName}）：${err.reason}` });
             return;
           }
-          attemptReconnect();
+          attemptReconnect(); // 失败仅在原链内重排
         }
       }, delayMs);
     };
@@ -515,12 +570,14 @@ export class SessionClient {
 
   /** 单次重连：HELLO（同 token）→ START_SESSION{sessionId, mode=ATTACH}（不发 IDR_REQUEST） */
   private async reconnectOnce(): Promise<void> {
+    if (this.userClosed) return; // 入口复查：用户已主动断开则放弃本轮尝试
     const memo = this.lastConnect!;
     const sessionId = this.currentSession?.sessionId ?? 0;
     if (sessionId === 0) throw new Error('无会话可附着');
     const ws = this.wsFactory(memo.wsUrl);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
+    this.parser = new RecordStreamParser(); // 新连接从零按记录边界解析，旧连接残留半包不拼入
     this.bindSocket(ws);
     await new Promise<void>((resolve, reject) => {
       ws.onopen = () => resolve();
@@ -551,6 +608,7 @@ export class SessionClient {
     // 会话可能已换 sessionId（源端恢复）：清旧坐标基准由 sessionStarted 事件驱动
     await this.startOrSwitchSession({ kind: 'attach', sessionId }, memo.profile);
     this.reconnectAttempt = 0;
+    this.reconnecting = false; // 重连成功，链结束；后续断开按新的意外断开处理
   }
 }
 

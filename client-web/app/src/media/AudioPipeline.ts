@@ -45,7 +45,7 @@ interface WebCodecsAudioGlobal {
     error: (err: Error) => void;
   }) => AudioDecoderLike;
   EncodedAudioChunk?: new (init: { type: 'key'; timestamp: number; data: Uint8Array | ArrayBuffer }) => unknown;
-  AudioWorkletNode?: new (context: BaseAudioContext, name: string, options?: { numberOfOutputs?: number; outputChannelCount?: number[] }) => {
+  AudioWorkletNode?: new (context: BaseAudioContext, name: string, options?: { numberOfOutputs?: number; outputChannelCount?: number[]; processorOptions?: { startWatermarkMs: number } }) => {
     port: {
       postMessage(msg: unknown): void;
       onmessage: ((e: { data: unknown }) => void) | null;
@@ -107,17 +107,21 @@ export function buildAudioSpecificConfig(h: AdtsHeader): Uint8Array {
   return new Uint8Array([b0, b1]);
 }
 
-/** 从 AUDIO_CHUNK 载荷剥除 ADTS 头；返回 raw AAC 访问单元（非法帧返回 null） */
+/** 从 AUDIO_CHUNK 载荷剥除 ADTS 头；返回本帧 raw AAC 访问单元（非法/截断帧返回 null，由调用方计数） */
 export function stripAdts(payload: Uint8Array): { header: AdtsHeader; aac: Uint8Array } | null {
   const header = parseAdtsHeader(payload);
   if (!header) return null;
   if (payload.byteLength < header.headerSize) return null;
-  const aac = payload.slice(header.headerSize);
-  if (header.frameLength > 0 && aac.byteLength + header.headerSize > header.frameLength) {
-    // 帧长字段与实际不符：按实际载荷长度解码（记录在 warn 由调用方计数）
-    return { header, aac };
+  if (header.frameLength > 0) {
+    // frameLength 为整帧长度（含 ADTS 头），帧长字段与实际载荷的三种口径显式处理：
+    // - 超过实际载荷 → 截断帧，拒绝（半帧喂解码器必然破音）；
+    // - 小于等于头长 → 非法帧长，拒绝；
+    // - 实际载荷更长 → 尾部属后续帧，按 frameLength 截取本帧，防止多余字节并入单个访问单元。
+    if (header.frameLength > payload.byteLength || header.frameLength <= header.headerSize) return null;
+    return { header, aac: payload.slice(header.headerSize, header.frameLength) };
   }
-  return { header, aac };
+  // frameLength==0（异常未填）：无长度信息，按实际载荷长度解码
+  return { header, aac: payload.slice(header.headerSize) };
 }
 
 // ── 音频状态与管线 ──
@@ -130,9 +134,15 @@ export interface AudioStats {
   bufferedMs: number;
   skipCount: number;
   backlogDropped: number;
+  /** 容量守卫截断丢弃的交错样本数（worklet stats 消息携带，显式可观测） */
+  overflowDropped: number;
   playedFrames: number;
   decodedFrames: number;
   chunksReceived: number;
+  /** 非法/截断 ADTS 帧拒绝计数 */
+  invalidFrames: number;
+  /** mono 帧显式拒绝计数（系统恒 48kHz stereo，协议 §3.13） */
+  monoFramesRejected: number;
   /** 源端时钟秒（工作窃听用）；null = 无数据 */
   lastChunkPtsUs: bigint | null;
 }
@@ -158,6 +168,13 @@ export interface WorkletNodeLike {
 
 const CODEC_AAC_LC = 'mp4a.40.2';
 
+/** 起播水位 ms：协议 §3.13 单一真相源（经 AudioWorkletNode processorOptions 注入 worklet，
+ *  handleWorkletMessage 起播判定同源取值，消除与 audio-worklet.js 的双处硬编码） */
+export const START_WATERMARK_MS = 120;
+/** 目标采样率 Hz：协议 §3.13 恒 AAC-LC 48kHz stereo。锁定 AudioContext 采样率创建，
+ *  避免设备默认 44.1kHz 上下文把 48kHz 样本按 44.1kHz 消费导致变调变速（浏览器负责重采样） */
+const TARGET_SAMPLE_RATE = 48000;
+
 export class AudioPipeline {
   private state: AudioState = 'idle';
   private reason = '';
@@ -168,6 +185,8 @@ export class AudioPipeline {
   private configSeen = false;
   private chunksReceived = 0;
   private decodedFrames = 0;
+  private invalidFrames = 0;
+  private monoFramesRejected = 0;
   private lastChunkPtsUs: bigint | null = null;
   private readonly options: Required<Pick<AudioPipelineOptions, 'workletUrl'>> & AudioPipelineOptions;
 
@@ -207,20 +226,23 @@ export class AudioPipeline {
       if (this.options.workletFactory) {
         this.worklet = this.options.workletFactory();
       } else {
-        const CtxCtor = (globalThis as { AudioContext?: new () => { audioWorklet: { addModule(url: string): Promise<void> }; createGain(): { connect(dest: unknown): void; gain: { value: number } }; destination: unknown; resume(): Promise<void>; close(): Promise<void> } }).AudioContext;
+        const CtxCtor = (globalThis as { AudioContext?: new (options?: { sampleRate?: number }) => { audioWorklet: { addModule(url: string): Promise<void> }; createGain(): { connect(dest: unknown): void; gain: { value: number } }; destination: unknown; resume(): Promise<void>; close(): Promise<void> } }).AudioContext;
         if (!CtxCtor) throw new Error('AudioContext 不可用');
-        const ctx = new CtxCtor();
+        const ctx = new CtxCtor({ sampleRate: TARGET_SAMPLE_RATE });
+        // 逐步接线、先入字段：中途失败由 catch 复用 close() 统一释放
+        // （浏览器对同时存在的 AudioContext 数量有限制，泄漏会耗尽配额致音频永久无法初始化）
+        this.ctx = ctx;
         await ctx.audioWorklet.addModule(this.options.workletUrl);
         const gain = ctx.createGain();
         gain.connect(ctx.destination);
+        this.gainNode = gain;
         const node = new g.AudioWorkletNode!(ctx as unknown as BaseAudioContext, 'ring-buffer-player', {
           numberOfOutputs: 1,
           outputChannelCount: [2],
+          processorOptions: { startWatermarkMs: START_WATERMARK_MS },
         });
         node.connect(gain as unknown as AudioNode);
-        this.ctx = ctx;
         this.worklet = node as unknown as WorkletNodeLike;
-        this.gainNode = gain;
       }
       this.worklet!.port.onmessage = (e) => this.handleWorkletMessage(e.data);
       this.state = 'idle';
@@ -229,6 +251,7 @@ export class AudioPipeline {
       this.state = 'error';
       this.reason = `音频初始化失败：${(err as Error).message}`;
       this.options.onError?.(err as Error);
+      this.close(); // 释放已创建的 ctx/gain/worklet，避免反复失败耗尽 AudioContext 配额
       return false;
     }
   }
@@ -238,15 +261,17 @@ export class AudioPipeline {
   /** worklet 统计消息入口（start() 内部接线；测试替身直接调用） */
   handleWorkletMessage(data: unknown): void {
     if (!data || typeof data !== 'object') return;
-    const msg = data as { type: string; bufferedMs?: number; skipCount?: number; backlogDropped?: number; playedFrames?: number; buffering?: boolean };
+    const msg = data as { type: string; bufferedMs?: number; skipCount?: number; backlogDropped?: number; overflowDropped?: number; playedFrames?: number; buffering?: boolean };
     if (msg.type === 'stats') {
       this.statsExternal = {
         bufferedMs: msg.bufferedMs ?? 0,
         skipCount: msg.skipCount ?? 0,
         backlogDropped: msg.backlogDropped ?? 0,
+        overflowDropped: msg.overflowDropped ?? 0,
         playedFrames: msg.playedFrames ?? 0,
       };
-      if (this.state === 'idle' && (msg.bufferedMs ?? 0) >= 120) this.state = 'playing';
+      // 起播水位取 START_WATERMARK_MS 单一真相源（与经 processorOptions 注入 worklet 的值一致）
+      if (this.state === 'idle' && (msg.bufferedMs ?? 0) >= START_WATERMARK_MS) this.state = 'playing';
       if (this.state === 'playing' && msg.buffering) this.state = 'starting';
     }
   }
@@ -267,12 +292,30 @@ export class AudioPipeline {
     if (this.state === 'unsupported' || this.state === 'error') return;
     const parsed = stripAdts(payload);
     if (!parsed) {
-      this.reason = `非 ADTS 音频帧 seq=${seq}`;
+      this.invalidFrames += 1; // 非法/截断帧显式计数，不静默丢弃
+      this.reason = `非 ADTS 或截断音频帧 seq=${seq}`;
+      return;
+    }
+    if (parsed.header.channels !== 2) {
+      // 下行恒 AAC-LC 48kHz stereo（协议 §3.13）：mono 帧显式拒绝并计数。
+      // worklet 恒按双声道消费，mono 交错数据照喂会错位解复用 → 变速破音。
+      this.monoFramesRejected += 1;
+      this.reason = `mono 音频帧 seq=${seq}（系统恒 stereo，拒绝解码）`;
       return;
     }
     if (!this.configSeen) {
-      this.configSeen = true;
-      this.createDecoder(parsed.header);
+      try {
+        this.createDecoder(parsed.header);
+        this.configSeen = true;
+      } catch (err) {
+        // 创建失败不置位（回退 configSeen=false）并上报 error，
+        // 避免后续帧在 decoder=null 处静默丢弃且状态无征兆
+        this.configSeen = false;
+        this.state = 'error';
+        this.reason = `AudioDecoder 创建失败 seq=${seq}：${(err as Error).message}`;
+        this.options.onError?.(err as Error);
+        return;
+      }
     }
     if (!this.decoder) return;
     const init = { type: 'key' as const, timestamp: Number(ptsUs), data: parsed.aac };
@@ -315,17 +358,31 @@ export class AudioPipeline {
 
   /** 解码输出帧入口（真实 WebCodecs 回调与测试替身共用） */
   handleDecodedAudio(data: AudioDataLike): void {
-    // AudioDecoder 输出 f32-planar → 交错化 → worklet 环形缓冲
+    // 按解码输出格式分支：f32-planar 逐平面拷贝交错化；interleaved 格式单平面直接使用。
+    // try/finally 保证 data.close() 必达（copyTo 抛错不泄漏 AudioData 底层样本缓冲）。
     const frames = data.numberOfFrames;
-    const channels = Math.min(2, data.numberOfChannels);
-    const interleaved = new Float32Array(frames * channels);
-    const plane = new Float32Array(frames);
-    for (let ch = 0; ch < channels; ch++) {
-      data.copyTo(plane, { planeIndex: ch });
-      for (let i = 0; i < frames; i++) interleaved[i * channels + ch] = plane[i];
+    try {
+      const channels = Math.min(2, data.numberOfChannels);
+      const interleaved = new Float32Array(frames * channels);
+      if (data.format === 'f32-planar' || data.format === null) {
+        const plane = new Float32Array(frames);
+        for (let ch = 0; ch < channels; ch++) {
+          data.copyTo(plane, { planeIndex: ch });
+          for (let i = 0; i < frames; i++) interleaved[i * channels + ch] = plane[i];
+        }
+      } else {
+        // interleaved（f32 等）：单平面即交错布局，整块拷贝
+        data.copyTo(interleaved, { planeIndex: 0 });
+      }
+      this.worklet?.port.postMessage({ type: 'feed', data: interleaved });
+    } catch (err) {
+      // 显式上报而非在解码回调中抛出（异常会打断解码器后续输出）
+      this.state = 'error';
+      this.reason = `解码输出处理失败（format=${String(data.format)}）：${(err as Error).message}`;
+      this.options.onError?.(err as Error);
+    } finally {
+      data.close();
     }
-    data.close();
-    this.worklet?.port.postMessage({ type: 'feed', data: interleaved });
   }
 
   /** 用户手势后恢复 AudioContext（浏览器自动播放策略） */
@@ -341,17 +398,33 @@ export class AudioPipeline {
       bufferedMs: this.statsExternal.bufferedMs ?? 0,
       skipCount: this.statsExternal.skipCount ?? 0,
       backlogDropped: this.statsExternal.backlogDropped ?? 0,
+      overflowDropped: this.statsExternal.overflowDropped ?? 0,
       playedFrames: this.statsExternal.playedFrames ?? 0,
       decodedFrames: this.decodedFrames,
       chunksReceived: this.chunksReceived,
+      invalidFrames: this.invalidFrames,
+      monoFramesRejected: this.monoFramesRejected,
       lastChunkPtsUs: this.lastChunkPtsUs,
     };
   }
 
-  /** 会话切换：清缓冲重置状态 */
+  /** 会话切换：清缓冲重置状态（统计计数随会话清零，对齐 VideoPipeline.blankCounters 口径） */
   resetForNewSession(): void {
     this.worklet?.port.postMessage({ type: 'reset' });
-    this.decoder?.reset();
+    // 关闭旧解码器并重开首帧配置门：新会话首帧按其 ADTS 头重建解码器，
+    // 源端采样率/声道变化（挂机恢复/切应用改配）不得沿用旧配置
+    try {
+      this.decoder?.close();
+    } catch {
+      /* 已关闭 */
+    }
+    this.decoder = null;
+    this.configSeen = false;
+    this.chunksReceived = 0;
+    this.decodedFrames = 0;
+    this.invalidFrames = 0;
+    this.monoFramesRejected = 0;
+    this.lastChunkPtsUs = null;
     this.state = this.state === 'unsupported' ? 'unsupported' : 'idle';
     this.reason = '';
     this.statsExternal = {};
