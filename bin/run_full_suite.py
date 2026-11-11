@@ -20,6 +20,7 @@ import faulthandler
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -64,6 +65,7 @@ def run_phase(phase, baseline):
             phase.cmd, cwd=phase.cwd, env=env,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             errors="replace",  # 非 UTF-8 字节以 U+FFFD 代替，不让运行器崩溃
+            start_new_session=True,  # 独立进程组：超时 killpg 连带 gradle 拉起的 JVM 孙进程一并回收
         )
     except FileNotFoundError as e:
         phase.status, phase.detail = "FAIL", f"启动失败: {e}"
@@ -72,12 +74,15 @@ def run_phase(phase, baseline):
     tail = deque(maxlen=400)  # 只保留尾部 N 行，内存上界恒定
     n_seen = 0
     timed_out = False
+    stop_read = threading.Event()  # 主线程置位后读线程尽快停写 tail，避免并发读写
 
     def _drain():
         # 输出读取放在 daemon 线程：子进程持管道挂死也不再阻塞主线程的超时判定
         nonlocal n_seen
         try:
             for line in proc.stdout:
+                if stop_read.is_set():
+                    break
                 n_seen += 1
                 tail.append(line.rstrip())
                 if n_seen <= 400:
@@ -92,7 +97,11 @@ def run_phase(phase, baseline):
         proc.wait(timeout=phase.timeout_s)
     except subprocess.TimeoutExpired:
         timed_out = True
-        proc.kill()
+        try:
+            # bash 经 start_new_session 成组长：killpg 杀整组，gradle 的 JVM 孙进程不再残留
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # 超时瞬间进程组已自行退出，无需再杀
         try:
             proc.wait(timeout=10)  # kill 后回收子进程，避免僵尸
         except subprocess.TimeoutExpired:
@@ -100,8 +109,8 @@ def run_phase(phase, baseline):
     reader.join(timeout=5)
     output_ready = not reader.is_alive()
     if not output_ready:
-        # 读线程 join 超时仍在写 tail：放弃本次输出采集，避免与读线程并发读写
-        tail = None
+        # 读线程 join 超时仍在写 tail：置停止信号让其停止写并退出，放弃本次输出采集
+        stop_read.set()
     try:
         proc.stdout.close()
     except (OSError, ValueError):
@@ -178,6 +187,32 @@ def main():
                   f"（仅允许字母/数字/下划线/点/冒号/连字符）",
                   file=sys.stderr, flush=True)
             sys.exit(2)
+    # frp/stun host 被 f-string 拼进 bash -c 内嵌 Python 的字符串字面量，套用主机名字符集白名单
+    for opt in ("frp_host", "stun_host"):
+        host = getattr(args, opt)
+        if not re.fullmatch(r"[\w.\-]+", host):
+            print(f"错误: --{opt.replace('_', '-')} 含非法字符: {host!r}"
+                  f"（仅允许字母/数字/下划线/点/连字符）",
+                  file=sys.stderr, flush=True)
+            sys.exit(2)
+    # frp/stun port 以数字字面量插入内嵌 Python：校验范围并归一化为 int 再插值
+    for opt in ("frp_port", "stun_port"):
+        raw = getattr(args, opt)
+        try:
+            port = int(raw, 10)
+        except (TypeError, ValueError):
+            port = None
+        if port is None or not 1 <= port <= 65535:
+            print(f"错误: --{opt.replace('_', '-')} 须为 1-65535 的整数端口，收到: {raw!r}",
+                  file=sys.stderr, flush=True)
+            sys.exit(2)
+        setattr(args, opt, port)
+    # jdk-home 拼进 bash 的 JAVA_HOME 兜底值：要求绝对路径 + 安全路径字符集
+    if not re.fullmatch(r"/[\w.+\-/]*", args.jdk_home):
+        print(f"错误: --jdk-home 须为以 / 起始的安全路径: {args.jdk_home!r}"
+              f"（仅允许字母/数字/下划线/点/加号/斜杠/连字符）",
+              file=sys.stderr, flush=True)
+        sys.exit(2)
 
     baseline = {}
     if args.baseline:
