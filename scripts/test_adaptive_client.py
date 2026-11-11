@@ -5,9 +5,10 @@
 轮次1: HELLO(1080x1920@30/5000) → START_SESSION(同参) → 期望 HelloAck 实际 1080x2400@30/5000 + 出帧
 轮次2: 再换参 720x1280@24/3000 → 期望再次 adapt 成功（证明可重复自适应，无需重新授权）
 """
-import socket, struct, sys, time
+import os, socket, struct, sys, time
 
-TOKEN = "cloudphone-m0"
+# 令牌可用环境变量 CLOUDPHONE_TOKEN 覆盖，缺省保持原值以维持零参数可用
+TOKEN = os.environ.get("CLOUDPHONE_TOKEN", "cloudphone-m0")
 
 REC_CTRL, REC_VIDEO = 0x01, 0x02
 M_HELLO, M_HELLO_ACK, M_START, M_STATS = 0x01, 0x02, 0x03, 0x07
@@ -120,6 +121,9 @@ def run_round(sock, label, w, h, fps, kbps):
             break
         except MalformedFrame as e:
             print(f"!! 记录畸形：{e}")
+            return False
+        except OSError as e:  # 含 ConnectionResetError：测试中途对端 RST/断连，保证两轮结果与退出码语义完整
+            print(f"!! 连接中断：{e}")
             return False
         if rec is None:
             print("!! 连接被对端关闭"); return False

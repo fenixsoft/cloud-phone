@@ -11,6 +11,9 @@
 
 import { InputAction } from '../protocol/Messages';
 
+/** MOVE 注入最小位移阈值（归一化 u16 单位，≈源分辨率 0.4%）：抑制高频微动，降低共享控制流噪声 */
+const MOVE_MIN_DELTA_U16 = 256;
+
 export type InputSender = {
   /** 发送 INPUT_EVENT（sessionId 由会话层携带） */
   inputEvent(action: number, pointerId: number, x: number, y: number): void;
@@ -79,6 +82,8 @@ export interface InputBridgeDom {
 export class InputBridge {
   private readonly pointerTable = new Map<number, number>(); // PointerEvent.pointerId → u8 序号（1..255）
   private nextPointerSeq = 0;
+  /** 每指针上次已发送的归一化坐标（MOVE 位移阈值节流基准；抬起/换新会话时清除） */
+  private readonly lastSentPoint = new Map<number, { x: number; y: number }>();
   private readonly listeners: Array<() => void> = [];
   /** CLIPBOARD_TEXT kind=1 auxNotice 后置灰（源端降级） */
   clipboardDisabled = false;
@@ -106,6 +111,10 @@ export class InputBridge {
     this.host.sessionId = sessionId;
     this.pointerTable.clear();
     this.nextPointerSeq = 0;
+    this.lastSentPoint.clear();
+    // 源端剪贴板降级（auxNotice）为会话期暂态：换新/重开会话复位置灰，否则只能刷新页面才能恢复
+    this.clipboardDisabled = false;
+    this.resetClipboardGray();
   }
 
   private bind(): void {
@@ -113,20 +122,35 @@ export class InputBridge {
     const point = (ev: Event): void => {
       const pe = ev as PointerEvent;
       if (this.sessionWidth === 0) return;
+      // MOVE 属按下序列语义：仅注入已按下（在表中）指针的 MOVE，过滤桌面鼠标悬停等无 DOWN 前提的移动流
+      if (pe.type === 'pointermove' && !this.pointerTable.has(pe.pointerId)) return;
       const rect = this.canvas.getBoundingClientRect();
       const geo = letterboxGeometry(rect.width, rect.height, this.sessionWidth, this.sessionHeight);
       const { x, y } = mapClientPoint(pe.clientX - rect.left, pe.clientY - rect.top, geo, this.sessionWidth, this.sessionHeight);
-      this.sender.inputEvent(this.actionOf(pe.type), this.pointerIdU8(pe.pointerId, pe.type), x, y);
+      // MOVE 位移阈值节流：与该指针上次已发送点偏差均小于阈值则不注入（抑制高频微动噪声）
+      const last = this.lastSentPoint.get(pe.pointerId);
+      if (pe.type === 'pointermove' && last && Math.abs(x - last.x) < MOVE_MIN_DELTA_U16 && Math.abs(y - last.y) < MOVE_MIN_DELTA_U16) {
+        return;
+      }
+      this.sender.inputEvent(this.actionOf(pe.type), this.pointerIdU8(pe.pointerId), x, y);
+      this.lastSentPoint.set(pe.pointerId, { x, y });
     };
-    this.listen(this.canvas, 'pointerdown', point);
+    this.listen(this.canvas, 'pointerdown', (ev) => {
+      this.capturePointer(ev as PointerEvent); // 捕获保证移出画布后 up/cancel 仍派发到 canvas，槽位必回收
+      point(ev);
+    });
     this.listen(this.canvas, 'pointermove', point);
     this.listen(this.canvas, 'pointerup', (ev) => {
       point(ev);
-      this.pointerTable.delete((ev as PointerEvent).pointerId); // 抬起释放槽位
+      const pe = ev as PointerEvent;
+      this.pointerTable.delete(pe.pointerId); // 抬起释放槽位
+      this.lastSentPoint.delete(pe.pointerId);
     });
     this.listen(this.canvas, 'pointercancel', (ev) => {
       point(ev);
-      this.pointerTable.delete((ev as PointerEvent).pointerId);
+      const pe = ev as PointerEvent;
+      this.pointerTable.delete(pe.pointerId);
+      this.lastSentPoint.delete(pe.pointerId);
     });
     // 触屏长按上下文菜单/选择干扰
     this.listen(this.canvas, 'contextmenu', (ev) => ev.preventDefault());
@@ -173,8 +197,15 @@ export class InputBridge {
         this.toastSink.toast('剪贴板写入不可用（源端降级）');
         return;
       }
-      void navigator.clipboard
-        ?.readText()
+      const clipboard = this.localClipboard();
+      if (!clipboard) {
+        // 纯 HTTP（frp 隧道）非安全上下文无本地剪贴板 API：明示原因并置灰，禁止点击后静默无反馈
+        this.toastSink.toast('剪贴板写入不可用（需 HTTPS/安全上下文，当前为 HTTP 访问）');
+        this.dom.btnClipWrite.setAttribute('disabled', 'true');
+        return;
+      }
+      void clipboard
+        .readText()
         .then((text) => {
           if (!text) {
             this.toastSink.toast('本地剪贴板为空');
@@ -204,25 +235,52 @@ export class InputBridge {
     }
   }
 
-  /** PointerEvent.pointerId → u8 活动槽位（1..255 循环复用；0 保留给非指针语义） */
-  private pointerIdU8(pointerId: number, type: string): number {
-    if (type === 'pointerdown' || !this.pointerTable.has(pointerId)) {
-      if (!this.pointerTable.has(pointerId)) {
-        this.nextPointerSeq = (this.nextPointerSeq % 255) + 1;
-        this.pointerTable.set(pointerId, this.nextPointerSeq);
-      }
+  /** PointerEvent.pointerId → u8 活动槽位（1..255 循环复用；0 保留给非指针语义）。
+   *  分配时跳过仍被活动指针占用的序号（防循环复用与活动指针撞号），表满时强制回收最早条目（防抬起丢失泄漏）。 */
+  private pointerIdU8(pointerId: number): number {
+    const existing = this.pointerTable.get(pointerId);
+    if (existing !== undefined) return existing;
+    if (this.pointerTable.size >= 255) {
+      const oldest = this.pointerTable.keys().next().value;
+      if (oldest !== undefined) this.pointerTable.delete(oldest);
     }
-    return this.pointerTable.get(pointerId) ?? 0;
+    for (let guard = 0; guard < 255; guard++) {
+      this.nextPointerSeq = (this.nextPointerSeq % 255) + 1;
+      if (![...this.pointerTable.values()].includes(this.nextPointerSeq)) break;
+    }
+    this.pointerTable.set(pointerId, this.nextPointerSeq);
+    return this.nextPointerSeq;
+  }
+
+  /** pointerdown 即捕获指针：指针移出画布后 up/cancel 仍派发到 canvas，槽位必回收（防表泄漏） */
+  private capturePointer(ev: PointerEvent): void {
+    if (typeof this.canvas.setPointerCapture !== 'function') return; // 最小测试替身未模拟时跳过
+    try {
+      this.canvas.setPointerCapture(ev.pointerId);
+    } catch {
+      // 指针已失活（NotFoundError 等）：忽略，up/cancel 仍可能自然到达
+    }
   }
 
   private sendBack(): void {
     this.sender.inputEvent(InputAction.BACK, 0, 0, 0);
   }
 
+  /** 本地剪贴板 API：仅安全上下文（HTTPS/localhost）存在；纯 HTTP frp 隧道访问时为 undefined */
+  private localClipboard(): Clipboard | undefined {
+    return typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+  }
+
   /** CLIPBOARD_TEXT 回执：写本地剪贴板 + toast（auxNotice kind=1 时已置灰） */
   async onClipboardText(text: string): Promise<void> {
+    const clipboard = this.localClipboard();
     try {
-      await navigator.clipboard?.writeText(text);
+      if (!clipboard) {
+        // 非安全上下文无 clipboard API：writeText 未执行，禁止假成功提示，降级直显内容
+        this.toastSink.toast(`源端剪贴板内容：${text.slice(0, 40)}`);
+        return;
+      }
+      await clipboard.writeText(text);
       this.toastSink.toast('源端剪贴板已复制到本地');
     } catch {
       this.toastSink.toast(`源端剪贴板内容：${text.slice(0, 40)}`);
@@ -238,6 +296,17 @@ export class InputBridge {
       this.dom.btnClipWrite.setAttribute('disabled', 'true');
     }
     this.toastSink.toast(`辅助通道降级（channel=${channel}）：${reason || '不可用'}`);
+  }
+
+  /** 换新会话解禁源端降级置灰；写按钮在无本地剪贴板 API（非安全上下文）时保持置灰 */
+  private resetClipboardGray(): void {
+    this.removeDisabledAttr(this.dom.btnClipRead);
+    if (this.localClipboard()) this.removeDisabledAttr(this.dom.btnClipWrite);
+  }
+
+  private removeDisabledAttr(btn: HTMLElement): void {
+    // 最小测试替身未模拟 removeAttribute：存在才调用（真实 DOM 必有）
+    if (typeof btn.removeAttribute === 'function') btn.removeAttribute('disabled');
   }
 
   /** TEXT_INPUT 回执 toast（ok=false 显式失败原因） */

@@ -150,10 +150,15 @@ def _parse_trace(raw):
     return {}
 
 
+def last_result(events):
+    """result 事件唯一选取口径：取末条（轮询与 classify 共用，防首末漂移）。"""
+    return next((e for e in reversed(events) if e.get("event") == "result"), None)
+
+
 def classify(cli):
     """按客户端事件流给出结论：direct / prediction / frp_fallback / fail。"""
     events = cli.snapshot()
-    result = next((e for e in reversed(events) if e.get("event") == "result"), None)
+    result = last_result(events)
     established = [e for e in events if e.get("event") == "punch_established"]
     fallback = any(e.get("event") == "punch_fallback" for e in events)
     prediction_stage = next(
@@ -173,22 +178,26 @@ def classify(cli):
     return outcome, punch_ms, result, prediction_stage
 
 
+def _cl_addr_change(action, addr):
+    """client netns 内 ip addr add/del 并校验返回码（失败抛 RuntimeError → 该轮以 infra 失败呈现）。"""
+    r = subprocess.run(["ip", "netns", "exec", NS_CL, "ip", "addr", action, addr + "/24", "dev", IF_CL_P],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError(f"client netns ip addr {action} {addr} 失败：{(r.stderr or r.stdout).strip()}")
+
+
 def switch_client_ip(profile):
     """迁移场景：client netns 出口 IP 10.200.1.2 → 10.200.1.3，重应用档位（规则跟随新地址）。"""
-    subprocess.run(["ip", "netns", "exec", NS_CL, "ip", "addr", "add", CL_PEER_NEW + "/24", "dev", IF_CL_P],
-                   capture_output=True)
-    subprocess.run(["ip", "netns", "exec", NS_CL, "ip", "addr", "del", CL_PEER + "/24", "dev", IF_CL_P],
-                   capture_output=True)
+    _cl_addr_change("add", CL_PEER_NEW)  # add 失败即抛出，跳过 del 老地址，避免 client 无出口 IP
+    _cl_addr_change("del", CL_PEER)
     sh_setup("profile", profile, "cl")
 
 
 def restore_client_ip(profile):
     cur = netns_run(NS_CL, "ip", "-4", "addr", "show", IF_CL_P).stdout
     if CL_PEER_NEW in cur:
-        subprocess.run(["ip", "netns", "exec", NS_CL, "ip", "addr", "add", CL_PEER + "/24", "dev", IF_CL_P],
-                       capture_output=True)
-        subprocess.run(["ip", "netns", "exec", NS_CL, "ip", "addr", "del", CL_PEER_NEW + "/24", "dev", IF_CL_P],
-                       capture_output=True)
+        _cl_addr_change("add", CL_PEER)
+        _cl_addr_change("del", CL_PEER_NEW)
         sh_setup("profile", profile, "cl")
 
 
@@ -215,15 +224,16 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
         cargs.append("--no-prediction")
     if migration:
         cargs += ["--expect-migration", "--migrate-watch", "--migrate-interval-ms", "500"]
-    cli = Peer(NS_CL, cargs, "client")
 
     switched = False
     deadline = time.time() + client_timeout + 15
     result = None
+    cli = None
     try:
+        cli = Peer(NS_CL, cargs, "client")   # 构造纳入 try：失败也走 finally 回收 src
         while time.time() < deadline:
             events = cli.snapshot()
-            result = next((e for e in events if e.get("event") == "result"), None)
+            result = last_result(events)
             frames_ev = next((e for e in events if e.get("event") == "frames"), None)
             errored = any(e.get("event") == "error" for e in events)
             if result is not None:
@@ -236,7 +246,8 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
                 break
             time.sleep(0.2)
     finally:
-        cli.kill()
+        if cli is not None:
+            cli.kill()
         src.kill()
         time.sleep(0.3)
 
@@ -398,6 +409,9 @@ def main():
     except Exception as e:
         print(f"[natlab_run] 基础设施失败：{e}", file=sys.stderr)
         code = 1
+    except KeyboardInterrupt:
+        print("[natlab_run] 用户中断（Ctrl+C）：数据照常落盘，拓扑照常拆除", file=sys.stderr)
+        code = 130
     finally:
         if stun:
             for s in stun:
