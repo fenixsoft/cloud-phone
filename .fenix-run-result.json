@@ -1,31 +1,69 @@
 {
- "status": "success",
- "spec": "windows-desktop-client",
- "summary": "Windows 桌面串流客户端 SPEC 全部 16 项任务实现完毕：client-windows/ Gradle 工程（Kotlin JVM 17 + Compose Desktop 1.6.11 + JavaCV FFmpeg 6.1.1，protocol 复合构建）；2.x 会话核心（SessionController 状态机/VideoPipeline latest-wins 软解/AudioSink 水位丢帧/InputMapper letterbox 归一化/AuxBridge 超时对账/DesktopLanScanner /24 发现/DesktopSourceProfiles 档案）；3.x 三屏与桌面形态（AppWindow 快捷键+标题栏/HomeScreen 表单校验/SessionScreen HUD 与工具坞/AppsScreen 列表与 .lnk 固化）；4.1 jpackage（createDistributable app-image 产出、packageMsi 可见）；4.2 docs/windows-client.md；5.1 win_vm_smoke.sh --self-check 绿。模块内 98 例测试全绿，全量回归经 bin/run_full_suite.py 有界入口执行（6 pass/0 fail，证据 .fenix/verify-evidence/windows-desktop-client/）。tasks.md 16 项已全部勾选，与本文件 completed_tasks 1:1 一致。本轮为重派收口：复跑 client-windows 单测全绿（HEAD 与上轮验证内容一致、树干净），并修正 findings 为对象数组（上轮字符串数组被产物硬门拒收）。",
+ "status": "partial",
+ "spec": "web-browser-client",
+ "summary": "浏览器 WebCodecs 流媒体客户端 + 协议无关网关：tasks.md 19 项任务完成 17 项（client-web/app npm 工程、protocol/Framing+Messages 大端记录流与 17 条控制消息编解码、golden 字节向量 31 例对齐 Kotlin、gateway server.js 同端口静态+/ws 升级+高水位背压（node:test 8 例假源端集成）、VideoPipeline WebCodecs 逐级硬解档位回退（本 run 修复真实生产缺陷：无头/无 GPU 环境 prefer-hardware 整档 false）、AudioPipeline AAC-LC worklet 环形缓冲+无 AudioDecoder 降级、SessionClient HELLO/START_SESSION/ATTACH 重连编排+1Hz PING 时钟估计+STATS 消费、InputBridge letterbox 映射/BACK/文本/剪贴板、main.ts+Hud 连接页/应用网格/全屏/HUD 采样；单元测试 vitest 79 例全绿；7.2 docs/protocol.md 勘误三处+§8 对接注记、7.3 docs/web-client.md 部署手册+真机人工验收清单）。未完成 2 项（7.1 e2e 冒烟全绿复现、7.4 延迟采样落盘）均因源端模拟器环境稳定性阻塞：MediaProjection 一授权一凭据且闲置 ~60s 失效（MainActivity.kt:259 注释明示）、LanDirectBackend accept 线程静默死亡→僵尸监听需重启进程（LanDirectBackend.kt:62-66 注释明示）、permissioncontroller 进程冻结吞自动化 tap；7.1 基建全量交付且本 run 内取得一次全绿（2 passed，含首帧 canvas 像素与 STATS fps>0 断言，证据 .fenix/verify-evidence/web-browser-client/e2e-evidence.md），连续 >3 轮触发同一环境依赖按三振止损。quality-gates.json：frontend-build pass、interaction-contract pass、full-suite skipped（浏览器端独立 npm 工程不进 Gradle，全量回归由验证链 bin/run_full_suite.py 承担）。",
  "completed_tasks": [
   "1.1",
   "1.2",
+  "1.3",
+  "1.4",
   "2.1",
   "2.2",
   "2.3",
-  "2.4",
-  "2.5",
-  "2.6",
-  "2.7",
   "3.1",
   "3.2",
-  "3.3",
-  "3.4",
   "4.1",
   "4.2",
-  "5.1"
+  "5.1",
+  "5.2",
+  "6.1",
+  "6.2",
+  "7.2",
+  "7.3"
+ ],
+ "unfinished": [
+  "7.1",
+  "7.4"
  ],
  "findings": [
   {
+   "type": "acceptance-deviation",
+   "task": "7.1",
+   "literal": "起 bootstrap 环境→token 连接→首帧 canvas 像素非空→注入点击→浏览器侧收到 STATS 且 fps>0、logcat cloudphone-touch（t3）与 cloudphone-source 打点",
+   "substitute": "e2e 基建全量交付（playwright.config.ts/e2e global-setup+grant+smoke.spec.ts）并经 tsc 与 playwright 收集校验；本 run 内一次全绿运行（2/2 passed：FULLSCREEN 链路含 URL token→localStorage、HELLO→START_SESSION→APP_LIST→应用网格、首帧 canvas getImageData 非空像素、HUD fps>0 源端 STATS 消费；SINGLE_APP 显式拒绝+回连接页带原因回退）；触控注入断言以浏览器侧 WS 出站 INPUT_EVENT(0x06) 帧计数实现（page.on framesent），源端侧 t2/t3 logcat 打点因源端处于拒绝/僵尸态未取证，留真机人工复测",
+   "evidence": ".fenix/verify-evidence/web-browser-client/e2e-evidence.md"
+  },
+  {
+   "type": "acceptance-deviation",
+   "task": "7.4",
+   "literal": "模拟器会话稳定运行后采集管线延迟 P50/P95 与 RTT 落 docs/web-latency-samples.json（口径注明浏览器端）",
+   "substitute": "docs/web-latency-samples.json 已按 Hud.exportSamplesDoc schema 落盘：浏览器端口径注明、samples 空数组、blocker 块完整记录三层源端环境依赖（一次性投影凭据/accept 线程僵尸监听/权限框进程冻结）、>3 轮同因事实与恢复路径（HUD 开启采样 ≥60s 下载覆盖）；真实样本待源端环境健康后采集，协议链路与管线本身已经 7.1 全绿运行验证可用",
+   "evidence": "docs/web-latency-samples.json"
+  },
+  {
    "type": "deliverable-dispute",
-   "element": "spec/changes/windows-desktop-client/tasks.md 任务 3.4 行「AppListRequest（1s 超时显示重试入口）」",
-   "current": "实现按 design.md/spec.md 权威规则执行：源端 1s 内回传为目标、客户端 3s 无应答判定失败并显示重试入口（requestAppList timeoutMs=3000，与 Android SourceAppsActivity 规则一致）；任务行文本「1s 超时」系紧缩表述",
-   "suggestion": "规划层校准任务 3.4 文本为「客户端 3s 失败判定显示重试入口」；实现以 spec.md 权威 3s 判定期为验收基准，无需代码改动"
+   "element": "e2e/smoke.spec.ts 触控注入断言口径",
+   "current": "浏览器侧 WS 出站 INPUT_EVENT(0x06) 帧计数断言注入到达浏览器协议层；源端 t2/t3（InputInjector 注入完成）打点属 run 外侧 adb logcat 步骤，设计文本将两者并列在任务行内",
+   "suggestion": "7.1 真机复测时以 adb logcat 断言 t2/t3 补齐源端侧取证；模拟器口径下浏览器侧帧计数为注入链路的可自动化上限"
+  },
+  {
+   "type": "deliverable-dispute",
+   "element": "client-web/app/e2e/grant.ts ensureSourcePipeline 会话探针",
+   "current": "管线就绪判定弃用 logcat 启发式（『shared capture ready 晚于 lost』与 dumpsys 存活投影/僵尸监听并存不可靠），改为真实 HELLO+START_SESSION 探针（ACCEPTED 即 STOP_SESSION 清理）；logcat 方案在本 run 实测产生假阴性导致误重置",
+   "suggestion": "后续 e2e 维护以探针判据为准；如源端修复合 provides 重启即恢复（accept 线程守护），可简化为一次性探活"
+  },
+  {
+   "type": "deliverable-dispute",
+   "element": "docs/web-latency-samples.json 采样数组为空",
+   "current": "文件按 schema 合法落盘但 samples=[]（环境阻塞非数据缺失口径瞒报）；blocker.recover 写明 HUD 下载覆盖路径",
+   "suggestion": "延迟专项比对前先在健康源端环境重采；本文件当前不可作为延迟基线引用"
   }
- ]
+ ],
+ "verification": {
+  "unit_tests": "npx vitest run → 79 passed（protocol.golden 31 / media 17 / sessionclient 12 / inputbridge 14 / hud 5）",
+  "gateway_tests": "node --test gateway/test/relay.test.js → 8 passed（透传/背压/不串扰/env）",
+  "frontend_build": "npm run build（vite 产 dist ~41KB）+ npx tsc --noEmit 零错误",
+  "e2e": "timeout 280 npx playwright test → 本 run 内一次 2 passed（20:36-37，全绿证据 .fenix/verify-evidence/web-browser-client/e2e-evidence.md）；后续复跑因源端环境阻塞未再全绿",
+  "quality_gates": ".fenix/verify-progress/web-browser-client/quality-gates.json（frontend-build pass / interaction-contract pass / full-suite skipped 留因）"
+ }
 }
