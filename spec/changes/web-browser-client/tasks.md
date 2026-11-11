@@ -68,8 +68,8 @@
 
 ## 5. 会话编排与控制面
 
-- [ ] 5.1 `src/net/SessionClient.ts`：连接生命周期（token → HELLO → START_SESSION → HELLO_ACK 真实参数采用；sessionId 换新即重置坐标基准）、APP_LIST、STOP_SESSION；token 错与 REJECT_BUSY（观看端占用/ATTACH 恢复失败）显式失败不静默重试
-- [ ] 5.2 控制面：应答源端 1Hz 入站 PING（Pong nonce/senderUs/nowUs）；offset ≈ echoUs − (t_send+t_recv)/2 与 RTT 估计；消费源端 STATS；断线指数退避重连（≤30s 窗口）→ START_SESSION{sessionId, mode=ATTACH}（不发 IDR_REQUEST），超窗或被显式拒绝（REJECT_BUSY/REJECT_UNSUPPORTED_MODE）即停止重试回连接页带原因
+- [x] 5.1 `src/net/SessionClient.ts`：连接生命周期（token → HELLO → START_SESSION → HELLO_ACK 真实参数采用；sessionId 换新即重置坐标基准）、APP_LIST、STOP_SESSION；token 错与 REJECT_BUSY（观看端占用/ATTACH 恢复失败）显式失败不静默重试
+- [x] 5.2 控制面：应答源端 1Hz 入站 PING（Pong nonce/senderUs/nowUs）；offset ≈ echoUs − (t_send+t_recv)/2 与 RTT 估计；消费源端 STATS；断线指数退避重连（≤30s 窗口）→ START_SESSION{sessionId, mode=ATTACH}（不发 IDR_REQUEST），超窗或被显式拒绝（REJECT_BUSY/REJECT_UNSUPPORTED_MODE）即停止重试回连接页带原因
 
 ## 6. 输入与 UI 壳
 
