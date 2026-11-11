@@ -87,6 +87,7 @@ export interface HungSession {
 export interface CryptoNegotiation {
   encryptOn: boolean;
   cryptoAlgo: number;
+  /** 定长 32B（34B 协商块尾段，docs/protocol.md §7.6）；编码侧强制校验，短/长均抛 ProtocolError */
   cryptoNonce: Uint8Array;
 }
 
@@ -130,6 +131,14 @@ export type EncodableControlMessage = Exclude<ControlMessage, { kind: 'unknown' 
 
 // ── 编码：控制消息 → 线载荷（不含 record 头，首字节为 msgType）──
 
+/** 写 34B 加密协商块；nonce 恒 32B（对齐 Kotlin putCryptoBlock 定长纪律），短/长本地即抛 */
+function writeCryptoBlock(w: ByteWriter, crypto: CryptoNegotiation): void {
+  if (crypto.cryptoNonce.byteLength !== 32) {
+    throw new ProtocolError(`crypto nonce must be 32 bytes: ${crypto.cryptoNonce.byteLength}`);
+  }
+  w.u8(crypto.cryptoAlgo).u8(crypto.encryptOn ? 1 : 0).bytes(crypto.cryptoNonce);
+}
+
 export function encodeControlMessage(msg: EncodableControlMessage): Uint8Array {
   const w = new ByteWriter(64);
   switch (msg.kind) {
@@ -146,12 +155,12 @@ export function encodeControlMessage(msg: EncodableControlMessage): Uint8Array {
         .i32(msg.sessionId)
         .u16String(msg.p2pOffer);
       // 浏览器 v1 不发加密块（= none 明文路径，docs/protocol.md §7.6 兼容矩阵首行）
-      if (msg.crypto) {
-        w.u8(msg.crypto.cryptoAlgo).u8(msg.crypto.encryptOn ? 1 : 0).bytes(msg.crypto.cryptoNonce);
-      }
+      if (msg.crypto) writeCryptoBlock(w, msg.crypto);
       break;
     }
     case 'helloAck': {
+      // 与解码侧同款范围校验：非法 status 本地即抛，不静默上线（编码/解码纪律对称）
+      if (msg.status > HelloStatus.REJECT_UNSUPPORTED_MODE) throw new ProtocolError(`bad hello status: ${msg.status}`);
       w.u8(MsgType.HELLO_ACK)
         .u8(msg.status)
         .u16String(msg.reason)
@@ -165,11 +174,11 @@ export function encodeControlMessage(msg: EncodableControlMessage): Uint8Array {
         .u16String(msg.p2pAnswer)
         .u16(msg.hungSessions.length);
       for (const h of msg.hungSessions) {
+        // 与解码侧 readWatchMode 同款范围校验：非法 mode 本地即抛
+        if (h.mode < WatchMode.FULLSCREEN || h.mode > WatchMode.ATTACH) throw new ProtocolError(`bad watch mode: ${h.mode}`);
         w.i32(h.sessionId).u8(h.mode).u16String(h.packageName).u16(h.width).u16(h.height);
       }
-      if (msg.crypto) {
-        w.u8(msg.crypto.cryptoAlgo).u8(msg.crypto.encryptOn ? 1 : 0).bytes(msg.crypto.cryptoNonce);
-      }
+      if (msg.crypto) writeCryptoBlock(w, msg.crypto);
       break;
     }
     case 'startSession':
@@ -234,6 +243,8 @@ export function encodeControlMessage(msg: EncodableControlMessage): Uint8Array {
       w.u8(MsgType.CLIPBOARD_TEXT).u8(0).u16String(msg.text);
       break;
     case 'auxNotice':
+      // 与解码侧同款范围校验：非法 aux channel 本地即抛
+      if (msg.channel < AuxChannel.AUDIO || msg.channel > AuxChannel.TEXT_INPUT) throw new ProtocolError(`bad aux channel: ${msg.channel}`);
       w.u8(MsgType.CLIPBOARD_TEXT).u8(1).u8(msg.channel).u16String(msg.reason);
       break;
     case 'textInput':
@@ -255,7 +266,10 @@ export function encodeControlMessage(msg: EncodableControlMessage): Uint8Array {
 /** 读可选加密协商块；缓冲不足（老端消息）返回 null → 协商回落 none */
 function readCryptoBlockOpt(r: ByteReader): CryptoNegotiation | null {
   if (r.remaining() < CRYPTO_BLOCK_BYTES) return null;
-  const algo = r.u8();
+  const algoByte = r.u8();
+  // 对齐 Kotlin getCryptoBlockOpt（CryptoAlgo.from(...) ?: NONE）：未知 algo 归一化为 NONE，
+  // 协议 §7.6 仅 algo=1 参与 AES128GCM 协商，透传未知值会与对端协商判定漂移
+  const algo = algoByte === 0 || algoByte === 1 ? algoByte : 0;
   const on = r.u8() !== 0;
   const nonce = r.bytes(32);
   return { encryptOn: on, cryptoAlgo: algo, cryptoNonce: nonce };
