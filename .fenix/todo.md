@@ -230,3 +230,50 @@
   - 证据：fenixd.log 11-09 01:01:36Z「harness 前置健康检查拦截 dispatch: dsh 版本 '0.2.2-rc.1' 不在兼容白名单」拦截了部分派发，但同分钟 arbiter-single-app-realdevice-retest-1794186096/-1794186099 仍被派发并以插件不兼容 + MISSING_CREDENTIAL llm-deepseek（deepseek 官方路由无凭据）死亡，spec-review-gaming-uplink-1080p 两条 run 同因死亡（01:03:51/56Z）；07:45:11Z「harness dsh 未分配 provider 链，回落 harness 默认配置（role=repair）」后 repair-m3-audio-clipboard-textinput-1794210310 a1–a3 秒挂（存活 3 秒）进冷却，08:05Z p2p 车道同形态再演。
   - 调查评估：跨车道基础设施失误，发生在多 spec 并行收尾期。已核实：版本预检存在但只覆盖它管理的派发入口，arbiter 车道未被拦截；凭据缺失要到 dsh spawn 时点才暴露；harness-default 回落仅 WARNING 且每进程只提醒一次，repair 角色无显式链无人拦截；秒挂计数与 300 秒冷却按设计兜住了扩大。根因归属：执行层升级/配置失误 + 预检面三处系统性残缺（车道覆盖、凭据存在性、回落路径静默）。与存量工作关系：11-09 既有条目「配置错误无派发前预检，全角色失效仍连发19分钟」的提案方向被本窗证实，本条补其三点新机制细节（本条为补强证据，非重复立项）；当日自愈路径（凭据何时补、版本如何对齐）无留痕，未核实。结论：预检面应从版本白名单扩展到凭据与链路存在性，回落路径应显式化。
   - 建议：派发预检补两类断言：provider 路由凭据存在性、角色 provider 链缺省回落时首派发即冻结该角色并出单条告警（替代静默回落）；版本白名单拦截覆盖全部 agent 车道。
+
+## 2026-11-12
+
+### 浪费
+- **21个run全部命中API停滞，2小时44分纯等待零止损**
+  - 影响：本窗 21 个 run 全部记录 API 停滞（单轮请求往返超 60 秒的等待），合计 9872.4 秒（约 2 小时 44 分）纯等待、均摊每 run 470 秒；最重的实现 run（impl-web-browser-client-1794393480-a1，web-browser-client 主实现）墙钟 9808 秒中停滞 2086.4 秒（21%），场景规划 run 3713 秒中停滞 1531.1 秒（41%）——规划阶段四成时间在等 API。
+  - 证据：数据摘要第六节 21 行停滞聚合逐行求和 9872.4 秒（口径：run 内 >60s 往返样本时长求和）；run_metrics（run 收尾落盘的量化指标行）回源：impl run stalls=21 max=190.3s、planner-plan stalls=12 max=262.7s；fenixd.log 窗口内「API round-trip stall」WARNING/INFO 共 32 条，全部仅留痕零干预（样本 17:55:21Z code-fix run 第 4 轮 147.1s）；provider 全部 bigmodel-cn；本回顾 run 开跑后自身也复现 122.6s/142.2s 停滞（窗口关闭后），长尾仍在持续。
+  - 调查评估：跨全部车道与角色（admin/code-fix/code-review/impl/planner-plan/planner-judge 乃至自省 run），max 分布 66s–262.7s，形态指向 provider 网关长尾而非单车道问题。本条为 11-09「全窗16个run合计2.5小时API停滞」的窗口事实续报：本窗 run 数少但停滞覆盖率 100%（21/21）为观测以来最高，均摊 470s/run 较上窗 419s/run 上行。系统性监督缺口见可改进节既有条目续报，此处不重复立项。
+  - 建议：窗口级停滞合计已可从本回顾数据面持续观测；配合既有判停提案灰度启用后，把均摊停滞比（停滞秒/run 墙钟秒）纳入日回顾作趋势行。
+
+- **验证环境根治后spec滞留blocked57分钟才恢复重验**
+  - 影响：web-browser-client 的验证环境已于 01:09 根治并探针实证，但 spec 在 blocked 态空等约 57 分钟、其中 39 分钟无任何 run 在飞，直到 60 分钟超时滞留信号触发一次 admin run（1038 秒/166 轮）才转回 testing 并派发 verifier——验证恢复被纯机制延迟拖慢，多烧 1 个 distress 信号与 1 个本可不发生的 admin run。
+  - 证据：fenixd.log 17:09:02Z「Admin 处置成功链闭环: sig=web-browser-client::verify_env_blocked run=admin-web-browser-client-1794415508 unfrozen=False」（处置闭环但未执行解冻）；17:48:27Z blocked_stuck（spec 滞留 blocked 超阈值信号）「blocked 超过 63 分钟」（阈值 60 分钟，STATE updated=00:45:08Z）；18:05:47Z「Gate transition: blocked → testing」与「Dispatching verifier (P5)」；其间 17:09–17:48 日志仅 run 归档动作。
+  - 调查评估：在处置 web-browser-client 验证阶段暴露。已核实事实：环境修复处置自身成功（bootstrap 根治提交 0a30212 于 01:07 落地，处置回执自述「环境已修复并探针实证」），但闭环回执 unfrozen=False 表明该处置路径不含解冻动作，框架也没有「环境已修复→自动解冻重验」的联动，只能等 60 分钟 stuck 阈值兜底后由 admin run 显式迁移；末次 admin run 内处置选项 manual_fixed_reverify 还因作用域不匹配执行失败记 ERROR（spec 作用域动作被当信号作用域消费），迁移靠 run 的门转换路径完成。根因归属：处置「修复环境」与「解冻状态」两段语义分离且无联动校验，属系统性缺口而非一次性失误。与存量工作关系：todo 既有条目「[arbiter:single-a] unfreeze/reset→testing 不入队 verifier」与「处置动作回执缺下游落地校验」同族，本例为复发补强——连探针实证已修复的成功处置也不触发状态迁移，不另立新案。结论：处置回执应携带并校验状态迁移落地，否则 stuck 定时器+额外 admin run 是必然代价。
+  - 建议：不另立新案：按既有两条件推进——env 修复类处置闭环动作扩展为「解冻→testing→入队 verifier」（复用既有 unfreeze 通道），处置回执校验迁移已落地（N 分钟内无状态变化或无 verifier 派发即告警回滚）；处置选项的作用域校验前置到 admin 产出解析时。
+
+### 失误
+- **场景集扩容未同步契约serve段，验证被打回13分钟**
+  - 影响：web-browser-client 实现合并当刻（21:46:58）被验证契约静态门打回：场景 kind 集（api/cli/web 三类场景形态）已超出契约声明（verify.yaml 验证契约文件无 serve 段——被验证应用如何拉起并可服务的约定段），按 fail-fast 拦截且场景执行数为 0，随后动用 1 个 admin run（857 秒/128 轮）代起草 serve/ready 段，验证启动推迟约 13 分钟（21:46 打回、21:59 契约落位）。
+  - 证据：ERROR 2026-11-11T13:46:58.999Z「契约 serve 一致性门打回 'web-browser-client'…无 serve 段且 config commands.start 无有效兜底」；处置记录 verify_contract_missing（验证契约缺失类信号，21:48:19）自述「出题产物消费期打回，场景执行数为 0；共 1 处缺口」；admin run admin-web-browser-client-1794404819（857s）产出补段提交 b959617（21:59:20，diff 自述「场景集由纯 cli 扩为 api/cli/web 混合，serve/ready 不再可省」）。
+  - 调查评估：在处置 web-browser-client 验证准备时暴露。已核实：契约 96a21df 起草时（11-08）场景集为纯 cli、serve/ready 依法省略（提交 diff 注释自证）；本 spec 出题（planner-plan 场景规划 agent，18:38 派发）把场景集扩为 api/cli/web 时未同步补段，直到实现合并消费出题产物才被静态门拦截——门本身按设计工作（零场景执行、不触发 planner replan），缺口在「场景集变更与契约段位同步」无前置校验。与存量工作关系：同族第三次复发——①11-08 契约模板态 verify_contract_missing、②11-09 regression 段事后补记（f3b577e）、③本次 serve 段；11-09 既有改进条目「verify契约前置起草缺位」已立提案，本条为复发实例补强（新形态：kind 集扩容），不重复立项。结论：出题产物落盘前按 kind 集校验契约段位，可把该族三类缺口全部前移消灭。
+  - 建议：并入既有「契约前置起草」提案：场景产物落盘前按其 kind 集静态校验 serve/ready 等段位齐备，缺失即出单条信号并在出题轮内同步代起草，不等消费期打回。
+
+- **散件收编落地50秒后处置又被记失败，同型第二度复发**
+  - 影响：admin-cloud-phone-1794411503 于 23:50:44 以提交 93b9413/6e69678 收编主树 21 个散件并根治截图出库，仅 50 秒后（23:51:34）其处置选项 commit_stray_wip（一键提交信号清单内散件的处置动作）执行失败记 ERROR——目标实际已达成，处置台账再添一条噪声失败记录，与 11-10 事故（收编落地 52 秒后同错）构成 24 小时内第二度复发。
+  - 证据：fenixd.log 15:51:34Z ERROR「处置 choice 执行失败 choice_id=commit_stray_wip spec='cloud-phone'：信号清单内文件已全部不在当刻工作区改动中（同指纹一次性告警，清单陈旧），不产生空提交；清单(21)」；git log 93b9413 提交于 23:50:44（同 run 自行收编，提交说明自述按 commit_stray_wip 认领）；对照 11-10 12:31:56Z 同句 ERROR（清单(5)）。
+  - 调查评估：在处置 cloud-phone 主树散件信号（maintree_stray_wip_stale，主树无主滞留改动的周期盘点信号）第 2 度复发处置时暴露。已核实：失败守卫本身正确（清单为空不做空提交）、同指纹一次性告警、改动已入库零功能损失，代价仅一条噪声 ERROR 与失败台账记录。根因与 11-10 实例相同：同一 admin run 内「agent 自行 git 收编」与「处置执行器按清单重放提交」双路径先后作用于同一目标，执行器把「文件已不在（因刚被提交）」记为失败而非成功空操作。与存量工作关系：todo 既有条目（11-10「散件WIP收编提交落地52秒后，同一处置又被记失败」）已给出 success-noop 修法并判定「不值得单独立项，可与处置回执语义修复合并处理」——次日即复发第二度，说明该合并修复排期应提前，不另立新案。结论：修法明确且低成本，随处置回执语义修复合并落地即可断根。
+  - 建议：按既有条目修法落地：commit_stray_wip 执行器对「清单文件已在 HEAD 且路径与最近收编提交匹配」返回 success-noop 并注明收编提交 hash；agent 已自行收编时跳过执行器重放。
+
+- **蒸馏重试台账两笔欠账实为已完成工作，17次催办未闭合**
+  - 影响：知识蒸馏重试台账挂着两条 11-09 登记的欠账（client-ux-and-input-latency 与 m0-a2a-streaming-pipeline 的归档蒸馏重试），而两者蒸馏内容在登记后 41 分钟即已入库（291fb59），欠账实为已完成工作；台账催办信号（knowledge_distill_retry_stale，重试欠账超 24 小时未重试的提示信号）至今已连发 17 次无一次触发闭合，同一套知识域当晨体检却结论「通过」——两个框架面对同一状态各说各话，已空转催办近 3 天。
+  - 证据：fenixd.log 11-09 02:02:14Z/02:02:59Z 两条「knowledge-distill 放弃产出…调用 claude CLI 失败…已清理 spec/knowledge/ 半成品并登重试台账」；git 291fb59（11-09 10:43:42 +0800，即 02:43:42Z「knowledge: distill m0-a2a-streaming-pipeline, client-ux-and-input-latency」，创建 ADR-001~005 与 client 域页）；admin_alerts 中 knowledge_distill_retry_stale 共 17 条（11-09 16:04Z 至 11-11 16:04Z）；.fenix/knowledge_audit_report.md 体检时间 2026-11-12 00:04:21「结论：通过，6 域/17 能力页/12 ADR」与最后一条催办信号同分钟。
+  - 调查评估：跨 spec 的台账状态误置。已核实：重试登记（02:02Z，claude CLI 缺失致 run 失败）早于产物入库（02:43Z）41 分钟，此后蒸馏车道 11-10 起恢复正常（windows-desktop-client 等 5 个蒸馏提交落地），但这两条旧登记从未被消费，催办信号按周期连发 17 次。根因：重试台账只有「失败登记/超时催办」两个动作，缺「产物存在性闭合检查」——登记前与催办前都不核对知识页/蒸馏提交是否已落地。与存量工作关系：todo 知识真相源节两条未勾选项即本体；与既有条目「死人开关9次触发全部无告警落账」同属「事件已发生而登记面不消化」族，互补不重复。结论：低成本闭合检查可同时消掉两条僵尸 todo 与 17 连发信号，并防后续 agent 误判为真实欠账而重做蒸馏。
+  - 建议：knowledge_distill_retry_stale 信号发出前先核对登记条目的蒸馏产物是否已存在（按 spec 名检索知识域页与蒸馏提交，产物时间晚于失败登记即自动闭合并留痕），已存在则直接闭环不再催办；closure 同时回写 todo 对应勾选项。
+
+### 可改进
+- **（恶化）停滞监督面三窗未动：判停关闭加成功豁免依旧**
+  - 影响：复发敞口：本窗 21 个 run 无一例外承担 API 停滞等待（合计 9872.4 秒、均摊 470 秒/run，均摊较上窗 419 秒继续上行），因全部成功收尾而零告警零止损，每次照付；判停机制依旧缺省关闭、成功终态依旧豁免，本窗 19 个成功 run 全部带停滞通过。
+  - 证据：config.yaml 仍无 agents.run_stall_budget_* 三键（core/config.py:525 缺省关闭注释未变）；admin_monitor.py 成功豁免取数单源 _result_event_is_success 自述「success 终态豁免（验收 4「曾停滞但正常完成」）」；本窗升级告警仅 2 条且均与停滞无关（成功 run 全数豁免）；fenixd.log 窗口内停滞 WARNING/INFO 32 条零干预，单轮最长 262.7 秒（planner-plan run）。
+  - 调查评估：本条为 11-09「停滞监督面缺位：判停关闭加成功豁免，2.5小时停滞零止损」与 11-11「（恶化）API停滞84个run合计9.8小时，判停仍未启用」的第三窗恶化续报（read_todo 未注入，判定依本人只读复核 .fenix/todo.md 与现行代码，口径注记：本窗 21 行为 stalls>0 全集恰等于全 run 集，覆盖率为精确值）。新增事实一处：api_round_stall_escalated 升级信号已带 code-review 车道 stall_redispatch（停滞致败场景受控重派）自动处置语义（evo-add-api-stall-disposition-closeout 2.1），但成功终态豁免未变，本窗停滞 run 全部成功故该机制零触发（日志检索 0 次）。结论：恶化趋势三窗连续，既有提案优先级应继续上调，不另立新案。
+  - 建议：（不另立新案）按既有条目推进 SPEC：灰度启用 run_stall_budget 判停并按本窗实测（均摊 470s、p90 至最高 262.7s）校准阈值；≥200s 停滞轮计入 provider 健康度计数，为分流换道留证据。
+
+- **升级件证据快照不随环境根治更新，人工确认包面临陈旧**
+  - 影响：复发敞口：impl_unattainable_tasks（实现者诚实申报任务无法由 agent 完成、转人工确认的升级信号）升级件的证据快照冻结在申报时刻，所指环境阻塞其后被根治也不回写——人工按建议动作到 /fenix-approve（人工审批口）确认时看到的仍是「需人工完成环境动作」的过时结论，最坏场景是人工重复执行已完成的环境修复，参照本次同类修复实测代价 1 个 admin run（1433 秒/166 轮）。
+  - 证据：升级件 4ab1dd4ce63b（impl_unattainable_tasks，web-browser-client，21:46:58 创建，handled=false 至今）证据文本列举源端三层依赖「MediaProjection 一次性凭据闲置约60s失效…权限框进程冻结」；其后 admin-web-browser-client-1794415508 于 01:07 落根治提交 0a30212（bootstrap 固化关闭 cached-app freezer，根治授权 tap 延迟致双重授权互杀）、01:09 处置回执「8 个 wire-e2e/web 场景…（env 阻塞，非产品缺陷），环境已修复并探针实证」；02:05:47 框架已重新派发 verifier，该升级件记录无任何字段链接根治提交或重验结果。
+  - 调查评估：在处置 web-browser-client 的 7.4 任务（浏览器端延迟采样，需模拟器会话稳定运行≥60秒采集真实管线延迟样本）收口时暴露。已核实：升级件与其所指环境阻塞的根治件在同一 spec 上先后落地，但告警存储（admin_alerts）没有「关联根治件/重验证据回写」通路，重验结果同样不会更新升级件。归因证据边界：0a30212 根治的是处置回执点名的「二次授权互杀级联」，而 7.4 证据列举的一次性凭据时效等依赖是否同样解除尚未验证（重验在飞、报告未出），故本条只断言「升级件快照陈旧、缺更新通路」的形态层结论，不断言 7.4 重验必过。与存量工作关系：既有条目「人工裁定落位后升级告警仍回派（human disposition 吸收窗缺失）」讲升级件不吸收人工裁定，本条是其反面——升级件也不吸收 admin 根治证据，同属升级件生命周期缺更新通路，互补不重复。结论：升级件一旦创建即成孤本快照，是转人工机制的结构性短板，值得立项补「证据回写/自动消解」通路。
+  - 建议：SPEC 提案：admin 处置落根治提交时，若提交说明或处置关联信号命中某未处理升级件的证据要素，在该升级件记录追加「根治件 hash + 待重验标注」；重验覆盖受影响场景后自动把升级件转 resolved 附重验证据，未通过才保留人工确认，人工包内并列展示申报时证据与根治后证据。
