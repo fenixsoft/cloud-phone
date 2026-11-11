@@ -45,10 +45,10 @@
 
 ## 1. 协议 TS 库与 golden 单测
 
-- [ ] 1.1 建 `client-web/app` npm 工程：package.json（dev 依赖 vite/typescript/vitest/playwright，运行时零依赖）+ index.html 骨架 + tsconfig，不进任何 Gradle 构建
-- [ ] 1.2 `src/protocol/Framing.ts`：大端记录流读写（`[u8 recordType][u32 len][payload]`）、21B 视频帧头解析（seq/ptsUs/flags/fragIdx/fragCnt/totalLen）、TCP 整帧口径（fragCnt≠1 报错）、seq 单调性丢帧计数
-- [ ] 1.3 `src/protocol/Messages.ts`：17 条控制消息（0x01–0x11）编解码；解码器对未知尾部字节一律容忍跳过（HELLO 可选 takeover 尾字节先例）
-- [ ] 1.4 `tests/protocol.golden.test.ts`：golden 字节向量（从 Kotlin FramingTest/MessagesTest 用例导出）双向逐字节断言；含 takeover 尾字节出现/缺失两形态与未知尾部字节容忍用例
+- [x] 1.1 建 `client-web/app` npm 工程：package.json（dev 依赖 vite/typescript/vitest/playwright，运行时零依赖）+ index.html 骨架 + tsconfig，不进任何 Gradle 构建
+- [x] 1.2 `src/protocol/Framing.ts`：大端记录流读写（`[u8 recordType][u32 len][payload]`）、21B 视频帧头解析（seq/ptsUs/flags/fragIdx/fragCnt/totalLen）、TCP 整帧口径（fragCnt≠1 报错）、seq 单调性丢帧计数
+- [x] 1.3 `src/protocol/Messages.ts`：17 条控制消息（0x01–0x11）编解码；解码器对未知尾部字节一律容忍跳过（HELLO 可选 takeover 尾字节先例）
+- [x] 1.4 `tests/protocol.golden.test.ts`：golden 字节向量（从 Kotlin FramingTest/MessagesTest 用例导出）双向逐字节断言；含 takeover 尾字节出现/缺失两形态与未知尾部字节容忍用例
 
 ## 2. 协议无关网关
 
