@@ -83,3 +83,4 @@
 - [ ] 7.2 `docs/protocol.md` 追加浏览器对接注记并勘误三处：§4 附着时序（ATTACH=START_SESSION 非 HELLO 字段，附着自动 IDR）、控制方向表（源端→客户端 1Hz PING/STATS 推送）、§3.1 补记 HELLO 可选 takeover 尾字节 + §5 REJECT_BUSY 双来源语义（传输层观看端占用闸门 + ATTACH 恢复失败）与会话层无并发上限
 - [x] 7.3 `docs/web-client.md`：部署手册（网关 env/systemd、frpc 新增 proxy remotePort→GATEWAY_PORT、token 书签交付）+ **真机单应用人工验收清单**（人工步骤入文档：单应用进入/切换/ATTACH、音频、剪贴板、文本注入、PC 键鼠与平板触屏）
 - [ ] 7.4 延迟采样交付：模拟器会话稳定运行后采集管线延迟 P50/P95 与 RTT 落 `docs/web-latency-samples.json`（口径注明浏览器端），供延迟专项比对
+  > ⚠️ 部分达成（环境阻塞，同 7.1）：交付物文件已按 `Hud.exportSamplesDoc` schema 落盘（口径注明浏览器端），采样数组为空并附 `blocker` 块——模拟器会话在本 run 内无法稳定运行（MediaProjection 一次性凭据 + accept 线程僵尸监听 + 权限框进程冻结，>3 轮同因，证据 .fenix/verify-evidence/web-browser-client/e2e-evidence.md，恢复路径写入 blocker.recover）。真实样本待源端环境健康后由 HUD 下载覆盖。
