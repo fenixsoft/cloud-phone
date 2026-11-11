@@ -1,22 +1,43 @@
 # =============================================================================
 # .fenix/verify.yaml — 验证契约
 # （Administrator 起草 2026-11-08，针对 spec: m0-a2a-streaming-pipeline 的
-#   verify_contract_missing 信号；完整字段语义见 .fenix/core/verify_contract.py）
+#   verify_contract_missing 信号；完整字段语义见 core/verify_contract.py docstring）
+#
+# 2026-11-11 Administrator 补段（spec: web-browser-client 的 verify_env_blocked
+#   信号，serve_missing_for_scenario_kinds 检出）：web-browser-client 实现已合入
+#   主树（client-web/ 网关 + 浏览器端），场景集由纯 cli 扩为 api/cli/web 混合，
+#   serve/ready 不再可省——补 serve(command)/ready 两段与 client-web prepare
+#   两步（步骤 5/6）；既有 prepare 步骤 1-4 与 regression 段一字未动。
 # =============================================================================
+
 # 【项目形态判定】
-# Android 串流平台（Gradle 工程 protocol/ + source/ + client/），交付物为
-# APK 与 adb/双模拟器驱动脚本（scripts/run_matrix.py 等）。验证场景为纯 cli
-# 形态，无 HTTP 可服务实例 → 依 verify-runner-engine「纯 cli 场景集」规则，
-# serve/ready 段整段省略（不回退 commands.start——无人消费的实例不拉起）。
+# Android 串流平台（Gradle 工程 protocol/ + source/ + client/）+ 浏览器观看端
+# （client-web/：Node 网关 client-web/gateway + vite 构建 client-web/app，产物
+#  dist/ 由网关同端口静态托管，/ws 升级同端口，docs/web-client.md §2）。交付物
+# 为 APK、adb/双模拟器驱动脚本与浏览器端。
+# 2026-11-08 起草时验证场景为纯 cli 形态，serve/ready 整段省略合法；自
+# web-browser-client 起场景集含 api/web（需被验证应用可服务），按
+# verify-runner-engine「含 web/api 场景」规则补 serve/ready。纯 cli 场景集的
+# spec 验证仍按引擎口径跳过实例拉起（serve/ready 全省是无实例形态的执行期
+# 判定，与契约是否声明 serve 无关），互不影响。
 #
 # 【prepare 渐进生效形态】
-# 本契约起草时 spec 尚处实现早期（protocol/source/client 的 gradlew 均未
-# 落地）：构建步骤按各模块 gradlew 存在性渐进生效——未落地模块跳过（自证
-# 当下全通），实现完成后每轮验证对全部模块 fresh 构建，构建失败非零退出 =
-# 验证环境错误（唯一环境门，走 infra-retry 廉价重试车道）。
+# 构建步骤按各工程落地存在性渐进生效——未落地工程跳过；已落地工程每轮验证
+# fresh 构建，构建失败非零退出 = 验证环境错误（唯一环境门，走 infra-retry
+# 廉价重试车道）。Gradle 各模块分步以各享 600s 步级超时预算
+# （PREPARE_STEP_TIMEOUT）；client-web 两步同理（npm ci 幂等，lockfile 定版）。
+#
+# 【serve/ready】（2026-11-11 补段）
+# 网关单进程即被测实例：GATEWAY_PORT={port} 消费框架注入的空闲端口（同值导出
+# FENIX_VERIFY_PORT，场景 origin 全量改写到本实例）；STATIC_DIR 指向 vite 构建
+# 产物 dist/（prepare 步骤 6 保证新鲜）。UPSTREAM 缺省 127.0.0.1:22333 与生产
+# 部署一致——网关为纯字节中继，upstream TCP 按 WS 连接惰性建立，实例就绪不
+# 依赖源端存活；源端通路（adb forward）由场景执行期脚本编排。ready 探 / 期望
+# 200：网关目录请求回落 index.html、未命中文件 404，鉴别力自检（随机路径≠探针
+# 响应）通过。
 #
 # 【regression 段】
-# 起草时（2026-11-08）测试体系尚未落地故合法省略；protocol 纯 JVM 单测落地
+# 2026-11-08 起草时测试体系尚未落地故合法省略；protocol 纯 JVM 单测落地
 # 后经 verify_regression_missing 车道补段（Administrator 2026-11-09）：5 个
 # Kotlin 测试类（protocol/src/test/kotlin/，JUnit 4，39 例），gradle test
 # 产每类一份 XML 于 protocol/build/test-results/test/，cmd 内合并为单一
@@ -71,8 +92,38 @@ prepare:
         echo "[prepare] client/gradlew 不存在——观看端工程尚未落地，跳过构建"
       fi
 
-# serve/ready：省略——纯 cli 场景集合法（无 HTTP 实例形态）。场景执行期框架
-# 注入 FENIX_VERIFY_BASE_URL / FENIX_VERIFY_PORT（无实例形态下为无害空操作）。
+  # 步骤 5（2026-11-11 补段）：浏览器网关依赖（WS↔TCP 中继 + 静态托管，
+  # serve 段的被服务实例；运行时唯一依赖 ws，lockfile 定版幂等安装）
+  - run: |
+      if [ -f client-web/gateway/package.json ]; then
+        (cd client-web/gateway && npm ci --no-audit --no-fund) || exit 1
+      else
+        echo "[prepare] client-web/gateway/package.json 不存在——网关尚未落地，跳过依赖安装"
+      fi
+
+  # 步骤 6（2026-11-11 补段）：浏览器端依赖与构建——vite build 产 dist/，
+  # 供 serve 静态托管（新鲜构建口径与 Gradle 各步一致，防陈旧产物陷阱）
+  - run: |
+      if [ -f client-web/app/package.json ]; then
+        (cd client-web/app && npm ci --no-audit --no-fund && npm run build) || exit 1
+      else
+        echo "[prepare] client-web/app/package.json 不存在——浏览器端尚未落地，跳过构建"
+      fi
+
+# serve（2026-11-11 补段）：command 形态启动网关长驻实例——同端口静态托管 +
+# /ws 升级（api 场景 http_request 与 web 场景 navigate 的被测 origin，框架全量
+# 改写到本实例）。{port} 占位符由框架替换为分配的空闲端口并同值注入
+# FENIX_VERIFY_PORT；UPSTREAM 用缺省 127.0.0.1:22333（见上方注释块）。
+serve:
+  kind: command
+  cmd: GATEWAY_PORT={port} STATIC_DIR=client-web/app/dist node client-web/gateway/server.js
+
+# ready（2026-11-11 补段）：探网关入口页；网关对目录请求回落 index.html、
+# 对未命中文件 404——随机路径鉴别力自检可通过（200 vs 404）。
+ready:
+  url: /
+  expect: 200
+  timeout: 60
 
 # evidence_dir: .fenix/verify-evidence/<spec>/   # 缺省即此值，无需显式声明
 
