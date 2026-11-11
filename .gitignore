@@ -44,6 +44,8 @@ client-web/app/dist/
 client-web/app/test-results/
 client-web/app/playwright-report/
 client-web/app/frame-dump/
+# e2e global-setup 落盘的网关 PID（运行时交换给 teardown，非源码）
+client-web/app/e2e/.gateway.pid
 
 # ── admin 根治 maintree_stray_wip_stale 复发（2026-11-11，untrack_stray_wip）──
 # bootstrap_adb.sh uiautomator 授权重试截图（try1/2/3）与 win_vm_smoke.sh 冒烟截图目录：

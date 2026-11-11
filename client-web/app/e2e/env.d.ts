@@ -8,7 +8,10 @@
  * 本文件仅声明 e2e 实际用到的 API 子集；若未来引入 @types/node，请删除本文件避免声明合并冲突。
  */
 
-declare var process: { env: Record<string, string | undefined> };
+declare var process: {
+  env: Record<string, string | undefined>;
+  kill(pid: number, signal?: number | string): boolean;
+};
 
 interface ImportMeta {
   url: string;

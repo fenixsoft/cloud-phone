@@ -10,6 +10,7 @@ import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PID_FILE = path.join(HERE, '.gateway.pid');
@@ -84,26 +85,6 @@ function apkFingerprint(): string | null {
   return `${st.size}:${st.mtimeMs}`;
 }
 
-/** uiautomator dump 中匹配文本的点击中心（bootstrap 同法） */
-async function tapText(pattern: string): Promise<boolean> {
-  try {
-    await adb('shell', 'uiautomator', 'dump', '/sdcard/e2e_dump.xml');
-    const xml = await adb('shell', 'cat', '/sdcard/e2e_dump.xml');
-    const re = /<node[^>]*?text="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(xml)) !== null) {
-      if (!new RegExp(pattern).test(m[1])) continue;
-      const x = (Number(m[2]) + Number(m[4])) / 2;
-      const y = (Number(m[3]) + Number(m[5])) / 2;
-      await adb('shell', 'input', 'tap', String(x), String(y));
-      return true;
-    }
-  } catch {
-    /* dump 失败按未命中处理 */
-  }
-  return false;
-}
-
 async function waitForGateway(): Promise<void> {
   for (let i = 0; i < GATEWAY_PROBE_COUNT; i++) {
     try {
@@ -175,7 +156,8 @@ export default async function globalSetup(): Promise<void> {
   await sleep(1500);
   await adb('shell', 'am', 'start', '-n', 'cloudphone.source/.MainActivity').catch(() => undefined);
   await sleep(1500);
-  for (const pattern of ['授予|Grant', '立即开始|开始采集|Start [Nn]ow|Start recording']) {
+  // 授权按钮模式集与 grant.ts 共用 e2e/uiautomator.ts 单一实现（对齐 bootstrap_adb.sh）
+  for (const pattern of [APP_GRANT_PATTERN, START_NOW_PATTERN]) {
     for (let i = 0; i < 5; i++) {
       if (await tapText(pattern)) {
         await sleep(2000);
