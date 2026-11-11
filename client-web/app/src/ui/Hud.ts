@@ -17,6 +17,25 @@ export interface HudRefs {
   sampleToggle?: HTMLElement;
   /** 采样状态徽标（可选） */
   sampleBadge?: HTMLElement;
+  /** 采样导出下载按钮（可选；docs/web-client.md §6「停止后下载 web-latency-samples.json」） */
+  sampleDownload?: HTMLElement;
+}
+
+/** 浏览器标签（采样文档 browser 字段口径：名称 + 主版本；Edge/Opera 需先于 Chrome 判别） */
+export function browserLabel(): string {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  const pick = (re: RegExp): string => {
+    const m = re.exec(ua);
+    return m ? `${m[1]} ${m[2]}.0` : '';
+  };
+  return (
+    pick(/(Edg)\/(\d+)/) ||
+    pick(/(OPR)\/(\d+)/) ||
+    pick(/(Firefox)\/(\d+)/) ||
+    pick(/(Chrome)\/(\d+)/) ||
+    pick(/(Version)\/(\d+)/) || // Safari 真实版本在 Version/ 令牌
+    'unknown'
+  );
 }
 
 export interface HudInput {
@@ -61,6 +80,11 @@ export class Hud {
     if (refs.sampleToggle) {
       refs.sampleToggle.addEventListener('click', () => {
         this.setSampling(!this.sampling);
+      });
+    }
+    if (refs.sampleDownload) {
+      refs.sampleDownload.addEventListener('click', () => {
+        this.downloadSamplesDoc(browserLabel());
       });
     }
   }
@@ -120,6 +144,10 @@ export class Hud {
   /** 采样开关 */
   setSampling(on: boolean): void {
     this.sampling = on;
+    if (this.refs.sampleDownload) {
+      // docs/web-client.md §6 口径：停止后下载（有样本才出现）
+      this.refs.sampleDownload.hidden = on || this.samples.length === 0;
+    }
     if (!on) return; // 关闭保留数据（再次开启前可 export/clear）
     this.samples = [];
     this.seqCounter = 0;

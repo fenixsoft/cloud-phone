@@ -29,6 +29,23 @@ function adb(...args: string[]): Promise<string> {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** 等待 logcat 出现指定标记（cached-app freezing 会把授权确认 tap 的生效延迟到
+ * 探针之后——管线重建完成的唯一权威信号是 StreamService 的「shared capture ready」
+ * 日志，等它再探，避免探针抢跑）。 */
+async function waitForLogMarker(pattern: string, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const out = await adb('logcat', '-d');
+      if (new RegExp(pattern).test(out)) return true;
+    } catch {
+      /* 单次 dump 失败继续轮询 */
+    }
+    await sleep(1500);
+  }
+  return false;
+}
+
 /** 真实探针：HELLO(占位参数) → START_SESSION(FULLSCREEN 默认参) → ACCEPTED 即
  * STOP_SESSION 清理（探针会话不留挂机），返回是否被接受。 */
 function probeSessionAccepted(): Promise<boolean> {
@@ -51,7 +68,7 @@ function probeSessionAccepted(): Promise<boolean> {
       s.destroy();
       resolve(ok);
     };
-    const timer = setTimeout(() => finish(false), 4000);
+    const timer = setTimeout(() => finish(false), 12_000);
     s.on('error', () => { clearTimeout(timer); finish(false); });
     s.on('data', (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
@@ -114,6 +131,7 @@ export async function ensureSourcePipeline(): Promise<void> {
 
   await adb('shell', 'am', 'force-stop', 'cloudphone.source');
   await sleep(2000);
+  await adb('logcat', '-c'); // 复位起点清日志，「shared capture ready」只认本轮重建
   await adb('shell', 'am', 'start-foreground-service', '-n', 'cloudphone.source/.StreamService');
   await sleep(2000);
   await adb('shell', 'svc', 'power', 'stayon', 'true');
@@ -127,7 +145,12 @@ export async function ensureSourcePipeline(): Promise<void> {
     if (await tapText('立即开始|开始采集|Start [Nn]ow|Start recording')) break;
     await sleep(1500);
   }
-  await sleep(1500);
-  if (await probeSessionAccepted()) return;
-  throw new Error('源端无法接受会话（复位+授予后 START_SESSION 探针仍未被接受）');
+  // 授权 tap 的实际生效受系统冻结进程调度延迟（实测 ~13s），必须等管线重建完成的
+  // 日志信号再探，否则探针抢跑于对话框确认 → 拒绝
+  await waitForLogMarker('shared capture ready', 45_000);
+  for (let i = 0; i < 3; i++) {
+    if (await probeSessionAccepted()) return;
+    await sleep(2500);
+  }
+  throw new Error('源端无法接受会话（复位+授予+管线就绪后 START_SESSION 探针仍未被接受）');
 }

@@ -256,6 +256,7 @@ function bindSessionEvents(s: SessionClient, profile: VideoProfile): void {
     dropped: $('hud-dropped'),
     sampleToggle: $('hud-sample-toggle'),
     sampleBadge: $('hud-sample-badge'),
+    sampleDownload: $('hud-sample-download'),
   });
   hudCtl.sessionProfile = profile;
 

@@ -15,6 +15,8 @@ import { expect, test } from '@playwright/test';
 import { ensureSourcePipeline } from './grant';
 
 test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应用拒绝回退', async ({ page }) => {
+  // 复位路径（force-stop + UI 授权 + 管线重建）最坏 ~2min，放宽单用例超时
+  test.setTimeout(180_000);
   // 镜像约束：确保共享采集管线在位（投影丢失时自动重授权重建）
   await ensureSourcePipeline();
 

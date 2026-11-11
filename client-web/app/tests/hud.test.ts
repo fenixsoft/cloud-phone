@@ -89,6 +89,38 @@ describe('Hud', () => {
     expect(doc.samples[0]).toHaveProperty('ptsUs');
     nowSpy.mockRestore();
   });
+
+  it('采样下载按钮：停止后有样本才可见，点击触发下载（docs §6 口径）', () => {
+    const handlers: Array<() => void> = [];
+    const downloadBtn = {
+      hidden: true,
+      addEventListener: (_: string, fn: () => void) => handlers.push(fn),
+    } as unknown as HTMLElement;
+    const span = (): HTMLElement => ({ textContent: '' } as unknown as HTMLElement);
+    const base = (): HudRefs => ({
+      fps: span(), bitrate: span(), rtt: span(),
+      latencyP50: span(), latencyP95: span(),
+      decodeQueue: span(), dropped: span(),
+    });
+    const hud = new Hud({ ...base(), sampleDownload: downloadBtn });
+    // 开启采样：下载钮隐藏
+    hud.setSampling(true);
+    expect((downloadBtn as unknown as { hidden: boolean }).hidden).toBe(true);
+    hud.onFrameDecoded(100n, 0);
+    // 停止且有样本：可见
+    hud.setSampling(false);
+    expect((downloadBtn as unknown as { hidden: boolean }).hidden).toBe(false);
+    // 点击 → downloadSamplesDoc（browserLabel 读 navigator UA，node 环境走兜底）
+    const calls: string[] = [];
+    (hud as unknown as { downloadSamplesDoc: (b: string) => void }).downloadSamplesDoc = (b: string) => calls.push(b);
+    handlers[0]();
+    expect(calls.length).toBe(1);
+    // 无样本停止：保持隐藏
+    const hud2 = new Hud({ ...base(), sampleDownload: downloadBtn });
+    hud2.setSampling(true);
+    hud2.setSampling(false);
+    expect((downloadBtn as unknown as { hidden: boolean }).hidden).toBe(true);
+  });
 });
 
 /** performance.now 打点替身（vitest 无 fake-timer 依赖下手动控时） */
