@@ -65,9 +65,9 @@
 | `0x04` | STOP_SESSION | C → S | 结束会话（单应用模式销毁虚拟屏与 App） |
 | `0x05` | IDR_REQUEST | C → S | 请求关键帧（源端 ≤200ms 产生 IDR） |
 | `0x06` | INPUT_EVENT | C → S | 输入事件（触摸/远端 back） |
-| `0x07` | STATS | 双向 | ≥1Hz 统计 |
-| `0x08` | PING | C → S | RTT/时钟偏移探测 |
-| `0x09` | PONG | S → C | PING 应答 |
+| `0x07` | STATS | 双向 | ≥1Hz 统计（**源端 → 客户端为持续 1Hz 推送**，浏览器观看端 HUD 即消费该下行；客户端→源端方向为 M0 观测上报，浏览器端不发送） |
+| `0x08` | PING | 双向 | RTT/时钟偏移探测（**勘误（web-browser-client）**：非单向——客户端自发 1Hz PING 之外，源端亦有 1Hz 主动 PING 推送（StreamService.kt:696-701 看门狗 RTT 探测），浏览器端 MUST 应答之；两端各自以收到的 PING 回 PONG） |
+| `0x09` | PONG | 双向 | PING 应答（Pong{nonce, senderUs, echoUs=nowUs}，方向随触发端） |
 | `0x0A` | APP_LIST_REQUEST | C → S | 请求枚举源端可启动应用（请求-应答制） |
 | `0x0B` | APP_LIST | S → C | 可启动应用列表应答（会话在线才应答） |
 | `0x0C` | P2P_MIGRATE | 双向（经信令通道） | 端点迁移：对端地址变化后的新候选推送（p2p-crossnet-traversal 扩展，会话不重建） |
@@ -125,6 +125,14 @@
 
 - **加密协商块**：`cryptoAlgo` ∈ CryptoAlgo（§7.5）；`encryptOn` = 客户端开关意图；
   `cryptoNonce` = 32B 随机（每次握手重生成，HKDF salt 材料）。
+
+> **勘误/补记（web-browser-client）：takeover 尾字节**。HELLO 线载荷在加密协商块之后
+> 还有一个**可选 1 字节** takeover 标志（`Messages.kt:386`：`if (msg.takeover) 1 else 0`，
+> Windows SessionController.kt:81/338 可携带）。语义边界：该字节只在**传输层**生效——
+> `LanDirectBackend.kt:190` / `FrpBackend.kt:181` 解析后抢占现役通道（退役 incumbent，
+> 其客户端收 DISCONNECTED，会话转挂机可恢复）；**会话层完全不读**（StreamService/SessionManager
+> 无 takeover 引用）。老端解码器对任意尾字节容忍（按剩余长度截断）。**浏览器观看端 v1
+> 永不发送 takeover**、不做抢占/互踢；对现役通道被占（REJECT_BUSY）一律显式呈现原因。
 
 ### 3.2 HELLO_ACK（0x02）
 
@@ -359,13 +367,23 @@ client                          source
 
 ```
 client                          source
-  │── HELLO{mode=ATTACH,          │
-  │      sessionId=N, token} ───►│  会话 N 仍存活（虚拟屏/App 未销毁）
-  │◄── HELLO_ACK{accepted,        │
-  │      sessionId=N, ...} ──────│
-  │── IDR_REQUEST ──────────────►│  ≤200ms 产生 IDR
-  │◄══ 关键帧 + 后续视频（≤1s 出画）══│
+  │── HELLO{token, p2pOffer:"",  │  传输层握手认证（占位参数，会话层不裁档）
+  │      无加密块=none}─────────►│
+  │◄── HELLO_ACK{accepted,       │
+  │      hungSessions[]}────────│
+  │── START_SESSION{sessionId=N, │  **勘误（web-browser-client）**：附着动作 =
+  │      mode=ATTACH}──────────►│  START_SESSION（StreamService.handleStartSession:563-659），
+  │◄── HELLO_ACK{accepted,       │  **非 HELLO{mode=ATTACH} 字段路径**（旧§4 时序图
+  │      sessionId=N,真实参数}──│  已过时；HELLO.sessionId 字段不被会话层消费）。
+  │◄══ 关键帧 + 后续视频（≤1s 出画）══│  **附着自动触发 IDR**（SessionManager.kt:137
+  │                              │  capture.requestIdr / :145 vd.requestIdr）——客户端
+  │                              │  **无需也不应再发 IDR_REQUEST**（该消息硬连线到整屏
+  │                              │  共享采集 StreamService.kt:279，对 SINGLE_APP 无效）。
 ```
+
+浏览器端断线重连即走此口径：指数退避（0.5s 起步封顶 5s，总窗口 30s）→ HELLO（同 token）
+→ `START_SESSION{sessionId=N, mode=ATTACH}` → HELLO_ACK 真实参数恢复；超窗或被显式拒绝
+（REJECT_BUSY / REJECT_UNSUPPORTED_MODE）即停止自动重试、回连接页带原因。
 
 **会话结束（STOP_SESSION）**：源端销毁该会话虚拟屏与其上的 App 进程；仅断开连接（不 STOP）则进入挂机，会话保留在 HELLO_ACK.hungSessions 列表中。
 
@@ -375,7 +393,7 @@ client                          source
 |---|---|---|
 | 0 | ACCEPTED | 接受，携带会话参数 |
 | 1 | REJECT_BAD_TOKEN | token 不匹配，拒绝并关闭连接。**加密协商拒绝复用同一错误码路径**：源端校验 token 失败时，无论协商块内容如何一律以此码拒绝，且在发送 HELLO_ACK 前不建立任何加密状态（p2p-crossnet-traversal 3.1：token 校验拒绝路径优先于加密协商） |
-| 2 | REJECT_BUSY | 源端会话资源满（M0 ≥2 并存，超出即拒） |
+| 2 | REJECT_BUSY | **勘误（web-browser-client）：双来源语义**。① **传输层观看端占用闸门**（主路径）：`sourceBusyText` 恒非空（TransportBackend.kt:146 默认"源端正被其他设备观看"，全仓无清空点），存在现役通道时新 HELLO（无 takeover）一律被拒——LanDirectBackend.kt:130-135 / rejectPendingChannel:198-206、FrpBackend.kt:130 同构；现役通道断开即清闸（LanDirectBackend.kt:163），挂机会话可被下一个观看端 ATTACH。② **会话层 ATTACH 恢复失败**：StreamService.kt:628 以 REJECT_BUSY 回 `manager.lastError`（正落在浏览器断线重连主路径）。**会话层本身无并发上限**（旧"M0 ≥2 并存"描述已过时；`handleStartSession` 确无并存裁剪——"整屏+单应用并存"是同一观看端内既定特性）。浏览器端对该码一律显式呈现占用原因、不自动盲重试 |
 | 3 | REJECT_VERSION | 协议版本不支持 |
 | 4 | REJECT_UNSUPPORTED_MODE | 观看模式不支持（如无 shell 权限时的单应用模式降级拒绝） |
 
@@ -465,3 +483,40 @@ enable = HELLO带块∧encryptOn ∧ HELLO_ACK带块∧encryptOn ∧ algo=1（AE
 
 - 全矩阵会话均正常建立；仅 (true, true) 单元格启用 §7 加密。
 - 老端新消息兼容：P2P_MIGRATE（0x0C）被老端按「未知消息忽略」处理，不影响会话。
+
+## 8. 浏览器观看端对接注记（web-browser-client）
+
+浏览器观看端（`client-web/app`，经 `client-web/gateway` WS↔TCP 纯字节中继）承载的是
+**既有 frp/TCP 流记录模式逐字节同构**的协议：网关不做任何解析，`/ws` 上每条 WS 二进制
+帧 = 一段连续字节流切片，流记录（§2.1）与控制消息（§3）语义完全不变。
+
+### 8.1 连接与握手
+
+- WS 端点 `ws(s)://<网关>:8090/ws`；网关 env：`GATEWAY_PORT`(8090) / `UPSTREAM`(127.0.0.1:22333) / `STATIC_DIR`（静态托管浏览器端构建产物）。
+- HELLO：`p2pOffer=""` + **无加密协商块**（§7.6 兼容矩阵 none 路径）；`takeover` 尾字节**永不发送**（§3.1 补记）。
+- 会话建立 = HELLO（占位参数）→ `START_SESSION{mode, w/h/fps/bitrateKbps}` → HELLO_ACK **真实参数**（sessionId/encoder/displayId 以此为准采用）。
+- 显式失败不静默重试：REJECT_BAD_TOKEN / REJECT_BUSY（双来源语义见 §5）/ REJECT_UNSUPPORTED_MODE → 呈现原因，用户手动重试。
+
+### 8.2 控制面（浏览器侧职责）
+
+- 应答源端 1Hz 入站 PING：`Pong{nonce, senderUs, echoUs=nowUs}`（nowUs 为浏览器单调钟 `performance.now()×1000`）。
+- 自发 1Hz PING 做时钟估计：`RTT = t_recv − t_send`、`offset ≈ echoUs − (t_send+t_recv)/2`；逐帧管线延迟 = `now(browser) − (ptsUs(源端钟) + offset)`。
+- 消费源端 ≥1Hz STATS 推送（fps/码率/rtt/丢帧/transport）驱动 HUD。
+- 看门狗：自发 PING >6s 无 Pong 即判死连接走重连（对齐 Windows SessionController 看门狗口径）。
+
+### 8.3 断线重连
+
+意外断开 → 指数退避（0.5s 起步、倍增、单次封顶 5s、总窗口 30s）→ HELLO（同 token）→
+`START_SESSION{sessionId=N, mode=ATTACH}`（附着自动 IDR，见 §4 勘误；**不发 IDR_REQUEST**）。
+超窗或 ATTACH 被显式拒绝 → 停止自动重试，回连接页带原因。
+
+### 8.4 媒体与降级
+
+- 视频：H.264 Annex B（`avc:{format:"annexb"}` + `optimizeForLatency:true` + `prefer-hardware`），`isConfigSupported` 探测不支持 → 含浏览器名的显式错误页（不黑屏等待）。
+- 音频：AUDIO_CHUNK 为 **ADTS 帧**（syncword 0xFFF；首帧解析 sampling_frequency_index/channel_configuration 构造 2B AudioSpecificConfig 作 AudioDecoder description，codec `mp4a.40.2`，其后逐帧剥 7/9B ADTS 头）；播放走 AudioWorklet 环形缓冲，起播水位 120ms、不足即 skip 计数、积压 >800ms 丢最旧（对齐 Android AudioPlayer 口径，§3.13）。`window.AudioDecoder`/`AudioWorklet` 缺失 → 显式降级（控件置灰 + 原因提示），视频触控不受影响。
+- 剪贴板/文本：CLIPBOARD_TEXT kind=1（auxNotice）→ 控件置灰 + 原因 toast（源端降级如实呈现）。
+
+### 8.5 档位
+
+镜像 client-ux D2 口径：720p/1080p × 30/60 × 4/8/16/20Mbps，浏览器默认 720p60/8M；
+客户端侧仅做区间校验（width 320–2560、height 240–2560、fps 15–60、bitrate 1000–20000kbps），/16 对齐交源端。
