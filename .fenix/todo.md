@@ -283,3 +283,9 @@
   - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
   > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：①grant_projection tap 后轮询 logcat「shared capture ready」或 dumpsys MediaProjection 活性，超时重试、最终非零退出；②grant 前强制 HOME+force-stop 复位（防同任务其他 Activity 遮挡授予按钮——活体实测 LatencyTestActivity 遮挡形态）；③grant 子命令对齐 all 分支的 freezer/FGS 前置。
+- **[arbiter:web-brow] wire-e2e-credential-lifecycle（一次性凭据与场景编排时序错配）**
+  - 影响：wire-e2e-fullsession 及 11 个依赖传播场景在当前编排下每轮必然 env-block（结构性、非偶发），任何「修活后重验」都重复失败；是该 spec 冻结循环的直接机制。
+  - 证据：源端 MediaProjection 为一次性凭据设计：一授权一凭据、闲置 ~60s 失效、captureLost 自动重授权立即消费凭据（MainActivity.kt:259/263-269 注释明示；e2e-evidence.md 实现侧两轮 9 次尝试取证）；而当前 32 场景集将 wire-e2e-fullsession-via-gateway 排在第 14 位（前置 13 场景含 npm/vitest/playwright 分钟级耗时），轮首授权到会话创建间隔 11 分钟（02:06:45→02:17 实测）；场景声明的「emulator-bootstrap-env 重授权兜底」在本轮未实际触发 bootstrap grant（try1.png 未被 02:17 重写）。两源互证：验证报告跨轮指纹一致 + 截图/进程时间链。；触发 run_id=arbiter-web-browser-client-1794421227（签名 web-browser-client::verify_env_blocked，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
+  > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：①会话时点就近授权：wire-e2e-fullsession 的 ensure_pipeline/步骤 0 就地复位+grant+等 ready（凭据新鲜度与会话创建对齐）；②或场景集编排把 wire-e2e-fullsession 紧邻 bootstrap 放置（编排语义取舍需产品面拍板）；③或与源端产品面协商延长凭据有效期/支持免弹窗静默授权（产品缺陷面，走实现分支立项）。
