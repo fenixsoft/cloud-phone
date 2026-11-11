@@ -3,7 +3,8 @@
  *
  * 脚本化假源端（net server）按 specs/web-gateway/spec.md 场景逐条覆盖：
  * 上/下行逐字节透传、REJECT_BAD_TOKEN 透传后随关、慢消费者 8MB 不丢不乱（背压）、
- * 双 WS 并发不串扰、WS 断↔TCP 断联动、env 缺省与覆盖、同端口静态托管。
+ * 双 WS 并发不串扰、WS 断↔TCP 断联动、upstream 拒连（源端未启动）恢复、
+ * env 缺省与覆盖、同端口静态托管。
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,11 +98,31 @@ function wsRecv(ws, n) {
       if (got >= n) {
         clearTimeout(timer);
         ws.off('message', onMsg);
+        ws.off('close', onClose);
         resolve(Buffer.concat(chunks).subarray(0, n));
       }
     };
+    // 连接提前关闭：未凑满立即失败并带进度（与 tcpRecv 口径一致），不再空等超时
+    const onClose = () => {
+      clearTimeout(timer);
+      ws.off('message', onMsg);
+      ws.off('close', onClose);
+      if (got >= n) resolve(Buffer.concat(chunks).subarray(0, n));
+      else reject(new Error(`ws closed early: got ${got}/${n}`));
+    };
     ws.on('message', onMsg);
+    ws.on('close', onClose);
   });
+}
+
+/** WS 客户端读暂停/恢复（优先公开 API pause/resume，旧版本回落底层 socket，与 server.js pauseWs 同款） */
+function pauseWs(ws) {
+  if (typeof ws.pause === 'function') ws.pause();
+  else ws._socket?.pause();
+}
+function resumeWs(ws) {
+  if (typeof ws.resume === 'function') ws.resume();
+  else ws._socket?.resume();
 }
 
 /** 累积 TCP 收流直到 n 字节 */
@@ -153,36 +174,90 @@ function expectWithin(promise, ms, label) {
   ]);
 }
 
+/** §2.1 流记录封帧：[u8 recordType][u32 payloadLen][payload]（u32 长度程序化写出，杜绝手写错位） */
+function encodeRecord(recordType, payload) {
+  const head = Buffer.alloc(5);
+  head.writeUInt8(recordType, 0);
+  head.writeUInt32BE(payload.length, 1);
+  return Buffer.concat([head, payload]);
+}
+
+/** §2.2 视频载荷：21B 帧头 [u32 sequence][u64 ptsUs][u8 flags][u16 fragIdx][u16 fragCnt][u32 totalLen] + 分片字节 */
+function videoFramePayload(fragBytes) {
+  const header = Buffer.alloc(21);
+  header.writeUInt32BE(0, 0); // sequence
+  header.writeBigUInt64BE(0n, 4); // ptsUs
+  header.writeUInt8(0x01, 12); // flags = 关键帧
+  header.writeUInt16BE(0, 13); // fragIdx
+  header.writeUInt16BE(1, 15); // fragCnt = 1（单分片帧）
+  header.writeUInt32BE(fragBytes.length, 17); // totalLen
+  return Buffer.concat([header, fragBytes]);
+}
+
+/** §3.1 HELLO 控制载荷（浏览器观看端口径：无加密块、p2pOffer 空；mode 恒合法 WatchMode） */
+function helloControlPayload(token) {
+  const u16 = (v) => {
+    const b = Buffer.alloc(2);
+    b.writeUInt16BE(v);
+    return b;
+  };
+  const u32 = (v) => {
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(v);
+    return b;
+  };
+  const str = (s) => {
+    const bytes = Buffer.from(s, 'utf8');
+    return Buffer.concat([u16(bytes.length), bytes]);
+  };
+  return Buffer.concat([
+    Buffer.from([0x01]), // msgType HELLO
+    u16(1), // version = 1
+    str(token), // token
+    Buffer.from([0x01]), // mode = FULLSCREEN（合法 WatchMode）
+    str(''), // packageName 空
+    u16(0), // width
+    u16(0), // height
+    Buffer.from([30]), // fps
+    u32(8000), // bitrateKbps
+    u32(0), // sessionId
+    str(''), // p2pOffer 空（浏览器端不打洞）
+  ]);
+}
+
 // ── 场景用例 ──
 
 test('下行字节透传：假源端字节流（控制+视频记录）逐字节按序到达 WS', async () => {
-  // 任意字节流，含 0x01 控制记录与 0x02 视频记录形态（网关不解析内容）
-  const controlRecord = Buffer.from('01 000f 08 1122334455667788 000000003b9aca7b'.replace(/\s+/g, ''), 'hex');
-  const videoRecord = Buffer.concat([
-    Buffer.from('02 0019'.replace(/\s+/g, ''), 'hex'),
-    crypto.randomBytes(0x19),
-  ]);
+  // 控制+视频记录按协议程序化构造（u32 长度前缀，参照 test 3 rejectRecord；网关不解析内容）
+  const pingPayload = Buffer.alloc(17);
+  pingPayload.writeUInt8(0x08, 0); // msgType PING（§3.8）
+  pingPayload.writeBigUInt64BE(0x1122334455667788n, 1); // nonce
+  pingPayload.writeBigUInt64BE(0x000000003b9aca7bn, 9); // senderUs
+  const controlRecord = encodeRecord(0x01, pingPayload);
+  const videoRecord = encodeRecord(0x02, videoFramePayload(crypto.randomBytes(0x19)));
   const scripted = Buffer.concat([videoRecord, controlRecord, videoRecord]);
 
   const source = await startFakeSource((conn) => {
     setImmediate(() => conn.write(scripted));
   });
-  const gw = await startTestGateway(source.port);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port);
     const ws = await wsConnect(gw.port);
     const received = await expectWithin(wsRecv(ws, scripted.length), 10_000, 'downstream relay');
     assert.ok(received.equals(scripted), 'WS 收到的字节必须与假源端发送的逐字节一致');
     ws.close();
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
   }
 });
 
 test('上行字节透传：WS 二进制帧载荷逐字节按序到达假源端', async () => {
   const source = await startFakeSource(() => {});
-  const gw = await startTestGateway(source.port);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port);
     const ws = await wsConnect(gw.port);
     await waitForConnections(source, 1);
     const payload = crypto.randomBytes(64 * 1024);
@@ -196,7 +271,7 @@ test('上行字节透传：WS 二进制帧载荷逐字节按序到达假源端',
     assert.ok(received.equals(payload), '假源端收到的字节必须与 WS 发送的逐字节一致');
     ws.close();
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
   }
 });
@@ -218,16 +293,14 @@ test('错误语义透传：REJECT_BAD_TOKEN 字节原样送达 WS 客户端，�
       setImmediate(() => conn.end());
     });
   });
-  const gw = await startTestGateway(source.port);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port);
     const ws = await wsConnect(gw.port);
     await waitForConnections(source, 1);
     const closed = expectWithin(wsCloseInfo(ws), 10_000, 'ws close');
     // 场景前置：WS 客户端先发出 token 错误的 HELLO（网关不解析、原样上行）
-    const helloRecord = Buffer.from(
-      '01 001b 01 0001 0001 77 72 02 0000 0000 0000 0000 00 00000000 00000000 0000'.replace(/\s+/g, ''),
-      'hex',
-    );
+    const helloRecord = encodeRecord(0x01, helloControlPayload('wrong-token'));
     ws.send(helloRecord);
     const received = await wsRecv(ws, rejectRecord.length);
     assert.ok(received.equals(rejectRecord), '拒绝消息字节必须原样送达（网关未解析内容）');
@@ -235,7 +308,7 @@ test('错误语义透传：REJECT_BAD_TOKEN 字节原样送达 WS 客户端，�
     assert.notStrictEqual(info.code, 1000, '上游断开触发的 WS 关闭不得伪装成正常码');
     ws.close();
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
   }
 });
@@ -260,15 +333,16 @@ test('慢消费者 8MB：恢复读取后全部字节按序送达，网关出站�
     };
     setImmediate(push);
   });
-  const gw = await startTestGateway(source.port);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port);
     const ws = await wsConnect(gw.port);
     const recvPromise = wsRecv(ws, total);
-    // 慢消费者：暂停 WS 客户端底层 socket 读，让网关出站缓冲增长并触发暂停读 upstream
-    ws._socket.pause();
+    // 慢消费者：暂停 WS 客户端读，让网关出站缓冲增长并触发暂停读 upstream
+    pauseWs(ws);
     await delay(300);
     const peaks = [...gw.relays].map((r) => r.peakWsBuffered);
-    ws._socket.resume();
+    resumeWs(ws);
     const received = await expectWithin(recvPromise, 30_000, '8MB relay');
     // 不丢不乱：8MB 全部按序到达，且内容为同一 pattern 重复（逐字节校验首尾与长度）
     assert.strictEqual(received.length, total);
@@ -285,7 +359,7 @@ test('慢消费者 8MB：恢复读取后全部字节按序送达，网关出站�
     }
     ws.close();
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
   }
 });
@@ -295,8 +369,9 @@ test('双 WS 并发不串扰：各自 upstream 独立收发', async () => {
   const source = await startFakeSource((conn) => {
     conn.socket.on('data', (chunk) => conn.socket.write(chunk));
   });
-  const gw = await startTestGateway(source.port);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port);
     const wsA = await wsConnect(gw.port);
     const wsB = await wsConnect(gw.port);
     const payloadA = Buffer.alloc(128 * 1024, 0x41);
@@ -314,15 +389,16 @@ test('双 WS 并发不串扰：各自 upstream 独立收发', async () => {
     wsA.close();
     wsB.close();
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
   }
 });
 
 test('生命周期联动：WS 断开→upstream TCP 关闭；TCP 断开→WS 关闭', async () => {
   const source = await startFakeSource(() => {});
-  const gw = await startTestGateway(source.port);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port);
     // ① WS 主动断开 → 假源端连接随之关闭
     const ws1 = await wsConnect(gw.port);
     await waitForConnections(source, 1);
@@ -339,8 +415,61 @@ test('生命周期联动：WS 断开→upstream TCP 关闭；TCP 断开→WS 关
     assert.notStrictEqual(info.code, 1000);
     ws2.close();
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
+  }
+});
+
+test('upstream 拒连：源端未监听 → WS 收到 1011 关闭，网关存活且后续连接可恢复服务', async () => {
+  // 先占住一个端口再释放：得到当前无监听的 upstream 端口（模拟源端未启动）
+  const deadPort = await new Promise((resolve, reject) => {
+    const placeholder = net.createServer();
+    placeholder.once('error', reject);
+    placeholder.listen(0, '127.0.0.1', () => {
+      const port = placeholder.address().port;
+      placeholder.close(() => resolve(port));
+    });
+  });
+  let gw = null;
+  try {
+    gw = await startTestGateway(deadPort);
+    // ① upstream ECONNREFUSED → 客户端收到非 1000（1011）关闭
+    // open 与 close 可能背靠背到达（握手与 upstream 建连并发竞态）：先挂 close 监听再等 open
+    const ws = new WebSocket(`ws://127.0.0.1:${gw.port}/ws`, { maxPayload: 256 * 1024 * 1024 });
+    const closed = wsCloseInfo(ws);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('ws open timeout')), 10_000);
+      ws.on('open', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      ws.on('error', (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+    const info = await expectWithin(closed, 10_000, 'ws close after upstream refused');
+    assert.strictEqual(info.code, 1011, `upstream 拒连应关闭为 1011（WS_CLOSE_UPSTREAM_GONE），实际 ${info.code}`);
+    // ② 网关存活：同端口补起源端（echo）后，后续连接可正常完成一轮字节往返
+    const echo = await new Promise((resolve, reject) => {
+      const server = net.createServer((socket) => {
+        socket.on('data', (chunk) => socket.write(chunk));
+      });
+      server.once('error', reject);
+      server.listen(deadPort, '127.0.0.1', () => resolve(server));
+    });
+    try {
+      const ws2 = await wsConnect(gw.port);
+      const payload = crypto.randomBytes(4096);
+      ws2.send(payload);
+      const received = await expectWithin(wsRecv(ws2, payload.length), 10_000, 'recovery echo relay');
+      assert.ok(received.equals(payload), '源端补起后网关必须能正常服务后续连接（字节往返一致）');
+      ws2.close();
+    } finally {
+      await new Promise((done) => echo.close(() => done()));
+    }
+  } finally {
+    if (gw) await gw.close();
   }
 });
 
@@ -362,19 +491,25 @@ test('env 缺省与覆盖：GATEWAY_PORT/UPSTREAM 缺省 8090/127.0.0.1:22333，
 
   // 集成口径：env 驱动启动，二次监听覆盖端口并指向覆盖的 upstream
   const source = await startFakeSource(() => {});
-  const saved = { ...process.env };
+  // 只记录本用例改动的键，逐键恢复现场（不得整体替换 process.env，环境须保持原生代理语义）
+  const savedPort = process.env.GATEWAY_PORT;
+  const savedUpstream = process.env.UPSTREAM;
+  let gw = null;
   try {
     process.env.GATEWAY_PORT = String(9000);
     process.env.UPSTREAM = `127.0.0.1:${source.port}`;
-    const gw = await startGateway();
+    gw = await startGateway();
     assert.strictEqual(gw.port, 9000);
     assert.strictEqual(gw.cfg.upstreamPort, source.port);
     // 该端口上真实可完成一轮字节往返（页面/通道同端口）
     const ws = await wsConnect(gw.port);
     ws.close();
-    await gw.close();
   } finally {
-    process.env = saved;
+    if (gw) await gw.close();
+    if (savedPort === undefined) delete process.env.GATEWAY_PORT;
+    else process.env.GATEWAY_PORT = savedPort;
+    if (savedUpstream === undefined) delete process.env.UPSTREAM;
+    else process.env.UPSTREAM = savedUpstream;
     await source.close();
   }
 });
@@ -385,8 +520,9 @@ test('同端口静态托管：/ 返回入口 HTML、缺文件 404、路径穿越
   fs.mkdirSync(path.join(staticDir, 'assets'));
   fs.writeFileSync(path.join(staticDir, 'assets', 'main.js'), 'export {}');
   const source = await startFakeSource(() => {});
-  const gw = await startTestGateway(source.port, staticDir);
+  let gw = null;
   try {
+    gw = await startTestGateway(source.port, staticDir);
     const get = (p) =>
       new Promise((resolve, reject) => {
         http
@@ -410,7 +546,7 @@ test('同端口静态托管：/ 返回入口 HTML、缺文件 404、路径穿越
     const ws = wsConnect(gw.port, '/other');
     await assert.rejects(ws, '非 /ws 路径的升级请求必须被拒绝');
   } finally {
-    await gw.close();
+    if (gw) await gw.close();
     await source.close();
     fs.rmSync(staticDir, { recursive: true, force: true });
   }
