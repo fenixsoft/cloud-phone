@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0b0f14" />
+  <title>CloudPhone 浏览器观看端</title>
+  <style>
+    /* 骨架占位样式：连接页 / 应用网格 / 会话页三态切换（任务 6.2 充实） */
+    html, body { margin: 0; padding: 0; height: 100%; background: #0b0f14; color: #e6e9ee;
+      font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; }
+    #app { height: 100%; }
+    section[hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 连接页：token 输入 + 档位选择（任务 6.2 实装交互） -->
+    <section id="connect-page">
+      <h1>CloudPhone</h1>
+      <p id="connect-error" role="alert"></p>
+      <form id="connect-form">
+        <label>配对 Token <input id="token-input" name="token" autocomplete="off" required /></label>
+        <fieldset id="profile-fieldset">
+          <legend>档位</legend>
+          <select id="profile-resolution">
+            <option value="720p" selected>720p</option>
+            <option value="1080p">1080p</option>
+          </select>
+          <select id="profile-fps">
+            <option value="30">30 fps</option>
+            <option value="60" selected>60 fps</option>
+          </select>
+          <select id="profile-bitrate">
+            <option value="4000">4 Mbps</option>
+            <option value="8000" selected>8 Mbps</option>
+            <option value="16000">16 Mbps</option>
+            <option value="20000">20 Mbps</option>
+          </select>
+        </fieldset>
+        <button id="connect-btn" type="submit">连接</button>
+        <button id="forget-token-btn" type="button">清除记忆的 Token</button>
+      </form>
+    </section>
+
+    <!-- 应用网格：APP_LIST 渲染 + 挂机会话恢复入口（任务 6.2 实装） -->
+    <section id="apps-page" hidden>
+      <h2>选择应用</h2>
+      <div id="hung-sessions"></div>
+      <ul id="app-grid"></ul>
+      <button id="logout-btn" type="button">断开</button>
+    </section>
+
+    <!-- 会话页：全屏 canvas + 悬浮工具条 + HUD（任务 3/4/6 实装） -->
+    <section id="session-page" hidden>
+      <canvas id="video-canvas"></canvas>
+      <div id="hud" aria-live="off">
+        <span id="hud-fps">—</span> fps ·
+        <span id="hud-bitrate">—</span> ·
+        RTT <span id="hud-rtt">—</span> ·
+        延迟 P50 <span id="hud-latency-p50">—</span> / P95 <span id="hud-latency-p95">—</span> ·
+        解码队列 <span id="hud-queue">0</span> ·
+        丢帧 <span id="hud-dropped">0</span>
+        <span id="hud-sample-badge">采样关</span>
+        <button id="hud-sample-toggle" type="button">采样</button>
+        <button id="hud-sample-download" type="button" hidden>下载采样</button>
+      </div>
+      <div id="toolbar">
+        <button id="btn-back" type="button">BACK</button>
+        <button id="btn-text" type="button">文本</button>
+        <button id="btn-clip-read" type="button">读剪贴板</button>
+        <button id="btn-clip-write" type="button">写剪贴板</button>
+        <button id="btn-audio" type="button">音频</button>
+        <button id="btn-end" type="button">结束</button>
+      </div>
+      <input id="text-input" type="text" style="display:none" autocomplete="off" />
+      <div id="toast" role="status"></div>
+    </section>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

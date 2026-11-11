@@ -1,0 +1,15 @@
+{
+  "caliber": "浏览器端（WebCodecs 管线延迟）：每帧 latencyMs = now(browser) − (ptsUs(源端钟) + clockOffsetUs)；clockOffsetUs 由 1Hz PING/PONG 估计 offset ≈ echoUs − (t_send+t_recv)/2；RTT = t_recv − t_send。非端到端触摸延迟（浏览器进程内解码→渲染段），与 client-ux D2 触摸链路 t0..t5 口径不可直接相加",
+  "profile": { "width": 720, "height": 1280, "fps": 60, "bitrateKbps": 8000 },
+  "browser": "unavailable-in-this-run",
+  "collectedAt": "2026-11-11T21:45:00+08:00",
+  "summary": { "p50Ms": 0, "p95Ms": 0, "samples": 0, "rttMsAvg": 0 },
+  "samples": [],
+  "blocker": {
+    "status": "env-blocked",
+    "attempts": 9,
+    "detail": "模拟器会话无法稳定运行，采样窗口未取得（连续两轮 run 共 9 次尝试）。源端环境三层依赖逐一显形并阻塞：(1) MediaProjection 一授权只能铸一个实例且闲置 ~60s 失效、captureLost 自动重授权路径确认后立即消费凭据（MainActivity.kt:259/263-269 源码注释明示）；(2) 源端会话层对 HELLO 的处理滞后可超过 12s（STATS 推送独立线程不受影响照常 1Hz，accept 层通道注册正常），上轮表现为 accept 线程静默死亡需重启进程（LanDirectBackend.kt:62-66 注释明示）；(3) permissioncontroller/systemui cached-app freezing 吞掉/延迟自动化的授权确认 tap（实测延迟 ~13-21s 生效）。同一环境依赖连续失败，按三振止损冻结。",
+    "evidence": ".fenix/verify-evidence/web-browser-client/e2e-evidence.md（含一次全绿冒烟运行时源端 shared capture ready/APP_LIST/STATS 推送日志与两轮失败窗口的握手时序取证——管线与协议链路本身已验证可用，缺的是跨运行稳定的源端）",
+    "recover": "源端环境健康（shared capture ready 常驻、无僵尸监听）时：浏览器打开 ?token=<配对token> 连接 → HUD「采样」开启 → 运行 ≥60s（保持画面有帧）→「下载采样」按钮下载 web-latency-samples.json 覆盖本文件（Hud.exportSamplesDoc 即本 schema；下载按钮为本 run 按 docs/web-client.md §6「停止后下载」承诺补齐的交互）。docs/web-client.md §6 人工验收清单含该项。"
+  }
+}

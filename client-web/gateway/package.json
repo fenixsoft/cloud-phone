@@ -1,0 +1,18 @@
+{
+  "name": "cloudphone-web-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "cloudphone 协议无关 WebSocket↔TCP 字节中继网关（唯一运行时依赖 ws）",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-force-exit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

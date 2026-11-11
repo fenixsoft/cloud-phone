@@ -37,3 +37,10 @@ captures/
 
 # ── superpowers 会话临时产物（brainstorm 视觉伴侣截图等，运行时本地状态） ──
 .superpowers/
+
+# ── client-web（浏览器客户端 + 网关）构建与依赖产物 ──
+node_modules/
+client-web/app/dist/
+client-web/app/test-results/
+client-web/app/playwright-report/
+client-web/app/frame-dump/
