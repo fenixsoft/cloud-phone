@@ -5,6 +5,8 @@
  * 自发 PING/PONG 时钟估计；下载文件首部注明口径与采集环境）。
  */
 
+import { browserName } from '../media/VideoPipeline';
+
 export interface HudRefs {
   fps: HTMLElement;
   bitrate: HTMLElement;
@@ -21,21 +23,9 @@ export interface HudRefs {
   sampleDownload?: HTMLElement;
 }
 
-/** 浏览器标签（采样文档 browser 字段口径：名称 + 主版本；Edge/Opera 需先于 Chrome 判别） */
+/** 浏览器标签（采样文档 browser 字段口径）：复用 VideoPipeline.browserName 单一实现，与错误页浏览器名同源同格式 */
 export function browserLabel(): string {
-  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
-  const pick = (re: RegExp): string => {
-    const m = re.exec(ua);
-    return m ? `${m[1]} ${m[2]}.0` : '';
-  };
-  return (
-    pick(/(Edg)\/(\d+)/) ||
-    pick(/(OPR)\/(\d+)/) ||
-    pick(/(Firefox)\/(\d+)/) ||
-    pick(/(Chrome)\/(\d+)/) ||
-    pick(/(Version)\/(\d+)/) || // Safari 真实版本在 Version/ 令牌
-    'unknown'
-  );
+  return browserName();
 }
 
 export interface HudInput {
@@ -63,7 +53,7 @@ export interface LatencySamplesDoc {
   profile: { width: number; height: number; fps: number; bitrateKbps: number };
   browser: string;
   collectedAt: string;
-  summary: { p50Ms: number; p95Ms: number; samples: number; rttMsAvg: number };
+  summary: { p50Ms: number; p95Ms: number; samples: number; rttMsAvg: number; droppedOutliers: number };
   samples: LatencySample[];
 }
 
@@ -75,18 +65,34 @@ export class Hud {
   private samples: LatencySample[] = [];
   private rttSamplesUs: number[] = [];
   private seqCounter = 0;
+  /** 异常延迟样本剔除计数（导出 summary.droppedOutliers 呈现） */
+  private droppedOutliers = 0;
+  /** 本类注册监听的解除句柄（dispose 统一移除，防实例废弃后监听滞留） */
+  private readonly unlisten: Array<() => void> = [];
 
   constructor(private readonly refs: HudRefs) {
     if (refs.sampleToggle) {
-      refs.sampleToggle.addEventListener('click', () => {
+      const el = refs.sampleToggle;
+      const onToggle = (): void => {
         this.setSampling(!this.sampling);
-      });
+      };
+      el.addEventListener('click', onToggle);
+      this.unlisten.push(() => el.removeEventListener('click', onToggle));
     }
     if (refs.sampleDownload) {
-      refs.sampleDownload.addEventListener('click', () => {
+      const el = refs.sampleDownload;
+      const onDownload = (): void => {
         this.downloadSamplesDoc(browserLabel());
-      });
+      };
+      el.addEventListener('click', onDownload);
+      this.unlisten.push(() => el.removeEventListener('click', onDownload));
     }
+  }
+
+  /** 解除本类注册的全部监听（会话拆除时调用，实例随后可安全废弃） */
+  dispose(): void {
+    for (const off of this.unlisten) off();
+    this.unlisten.length = 0;
   }
 
   /** 会话参数（采样文档 profile 口径） */
@@ -98,6 +104,11 @@ export class Hud {
     if (this.samples.length >= MAX_SAMPLES) return;
     const nowUs = Math.round(performance.now() * 1000);
     const latencyUs = nowUs - (Number(ptsUs) + offsetUs);
+    // 异常样本过滤：offset 未就绪/迟到 PONG/跨重连旧 nonce 使命中算出负延迟 → 剔除并计数，不参与分位与导出
+    if (latencyUs < 0) {
+      this.droppedOutliers += 1;
+      return;
+    }
     this.samples.push({
       seq: ++this.seqCounter,
       ptsUs: ptsUs.toString(),
@@ -117,11 +128,15 @@ export class Hud {
     this.refs.latencyP50.textContent = p ? `${p.p50.toFixed(1)} ms` : '—';
     this.refs.latencyP95.textContent = p ? `${p.p95.toFixed(1)} ms` : '—';
     if (this.refs.sampleBadge) {
-      this.refs.sampleBadge.textContent = this.sampling ? `采样中 ${this.samples.length}` : '采样关';
+      this.refs.sampleBadge.textContent = !this.sampling
+        ? '采样关'
+        : this.samples.length >= MAX_SAMPLES
+          ? `采样满 ${MAX_SAMPLES}` // 满窗后新样本被丢弃，明确提示避免误以为仍在采集
+          : `采样中 ${this.samples.length}`;
     }
   }
 
-  /** RTT 样本（clock 事件；EMA 窗口 16） */
+  /** RTT 样本（clock 事件；最近 16 样本滑动均值） */
   onClockSample(rttUs: number): void {
     this.rttSamplesUs.push(rttUs);
     if (this.rttSamplesUs.length > 16) this.rttSamplesUs.shift();
@@ -151,6 +166,7 @@ export class Hud {
     if (!on) return; // 关闭保留数据（再次开启前可 export/clear）
     this.samples = [];
     this.seqCounter = 0;
+    this.droppedOutliers = 0;
   }
 
   isSampling(): boolean {
@@ -171,7 +187,13 @@ export class Hud {
       profile: this.sessionProfile ?? { width: 0, height: 0, fps: 0, bitrateKbps: 0 },
       browser,
       collectedAt: new Date().toISOString(),
-      summary: { p50Ms: p.p50, p95Ms: p.p95, samples: this.samples.length, rttMsAvg: rttAvgMs },
+      summary: {
+        p50Ms: p.p50,
+        p95Ms: p.p95,
+        samples: this.samples.length,
+        rttMsAvg: rttAvgMs,
+        droppedOutliers: this.droppedOutliers,
+      },
       samples: [...this.samples],
     };
   }
@@ -191,5 +213,6 @@ export class Hud {
   clearSamples(): void {
     this.samples = [];
     this.seqCounter = 0;
+    this.droppedOutliers = 0;
   }
 }
