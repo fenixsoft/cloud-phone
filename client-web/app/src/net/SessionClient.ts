@@ -31,6 +31,8 @@ import {
   type HungSession,
 } from '../protocol/Messages';
 
+export type { AppEntry, HungSession };
+
 /** WebSocket 最小结构接口（注入替身用；binaryType 固定 arraybuffer） */
 export interface WebSocketLike {
   send(data: ArrayBuffer | Uint8Array): void;
@@ -209,11 +211,14 @@ export class SessionClient {
     this.emit('handshakeAccepted', undefined);
 
     // ── START_SESSION：建立（或附着）会话，HELLO_ACK 返回真实参数 ──
-    await this.startSession(opts.mode, opts.profile);
+    await this.startOrSwitchSession(opts.mode, opts.profile);
   }
 
-  /** 发 START_SESSION 并等真实参数 HELLO_ACK（重连 ATTACH 复用） */
-  private async startSession(mode: StartMode, profile?: VideoProfile): Promise<void> {
+  /**
+   * 发 START_SESSION 并等真实参数 HELLO_ACK（公开能力：连接内单应用切换 / 挂机会话
+   * ATTACH 恢复；重连路径内部复用）。成功发 sessionStarted 事件（坐标基准换新信号）。
+   */
+  async startOrSwitchSession(mode: StartMode, profile?: VideoProfile): Promise<void> {
     const msg: EncodableControlMessage = {
       kind: 'startSession',
       sessionId: mode.kind === 'attach' ? mode.sessionId : 0,
@@ -544,7 +549,7 @@ export class SessionClient {
     }
     this.emit('handshakeAccepted', undefined);
     // 会话可能已换 sessionId（源端恢复）：清旧坐标基准由 sessionStarted 事件驱动
-    await this.startSession({ kind: 'attach', sessionId }, memo.profile);
+    await this.startOrSwitchSession({ kind: 'attach', sessionId }, memo.profile);
     this.reconnectAttempt = 0;
   }
 }

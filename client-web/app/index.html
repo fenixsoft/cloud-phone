@@ -24,8 +24,8 @@
         <fieldset id="profile-fieldset">
           <legend>档位</legend>
           <select id="profile-resolution">
-            <option value="1280x720" selected>720p</option>
-            <option value="1920x1080">1080p</option>
+            <option value="720p" selected>720p</option>
+            <option value="1080p">1080p</option>
           </select>
           <select id="profile-fps">
             <option value="30">30 fps</option>
@@ -54,7 +54,16 @@
     <!-- 会话页：全屏 canvas + 悬浮工具条 + HUD（任务 3/4/6 实装） -->
     <section id="session-page" hidden>
       <canvas id="video-canvas"></canvas>
-      <div id="hud" aria-live="off"></div>
+      <div id="hud" aria-live="off">
+        <span id="hud-fps">—</span> fps ·
+        <span id="hud-bitrate">—</span> ·
+        RTT <span id="hud-rtt">—</span> ·
+        延迟 P50 <span id="hud-latency-p50">—</span> / P95 <span id="hud-latency-p95">—</span> ·
+        解码队列 <span id="hud-queue">0</span> ·
+        丢帧 <span id="hud-dropped">0</span>
+        <span id="hud-sample-badge">采样关</span>
+        <button id="hud-sample-toggle" type="button">采样</button>
+      </div>
       <div id="toolbar">
         <button id="btn-back" type="button">BACK</button>
         <button id="btn-text" type="button">文本</button>

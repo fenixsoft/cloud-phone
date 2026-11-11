@@ -177,6 +177,8 @@ export interface VideoPipelineOptions {
   decoderFactory?: (codec: string) => VideoDecoderLike;
   /** 诊断帧 dump 开关（首 N 帧原始负载） */
   dump?: DumpSink;
+  /** 每帧解码输出回调（HUD 延迟采样接入点；渲染前调用） */
+  onFrameDecoded?: (ptsUs: bigint) => void;
   /** 解码器错误回调 */
   onError?: (err: Error) => void;
 }
@@ -204,12 +206,12 @@ export class VideoPipeline {
     };
   }
 
-  /** 探测并选定 codec；不支持抛 VideoUnsupportedError（含浏览器名） */
-  async probe(): Promise<VideoSupport> {
-    const support = await probeVideoSupport();
-    if (!support.supported) throw new VideoUnsupportedError(support);
-    this.codec = support.codec ?? CANDIDATE_CODECS[0];
-    return support;
+  /** 探测并选定 codec（可注入已完成的探测结果复用）；不支持抛 VideoUnsupportedError（含浏览器名） */
+  async probe(support?: VideoSupport): Promise<VideoSupport> {
+    const result = support ?? (await probeVideoSupport());
+    if (!result.supported) throw new VideoUnsupportedError(result);
+    this.codec = result.codec ?? CANDIDATE_CODECS[0];
+    return result;
   }
 
   /** 构造并配置 VideoDecoder（Annex B + optimizeForLatency + prefer-hardware） */
@@ -237,6 +239,7 @@ export class VideoPipeline {
     // 逐帧 decode-then-render：绘制后立即 close，不持帧引用（设计 D4 时序纪律）
     this.countersInternal.decoded += 1;
     this.countersInternal.lastPtsUs = BigInt(Math.round(frame.timestamp));
+    this.opts.onFrameDecoded?.(this.countersInternal.lastPtsUs);
     try {
       if (this.opts.renderer) this.opts.renderer(frame);
       else drawToCanvas(this.opts.canvas, frame);
