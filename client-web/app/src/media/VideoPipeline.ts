@@ -84,12 +84,17 @@ export interface VideoSupport {
   supported: boolean;
   /** 支持时选中的 codec 串 */
   codec?: string;
+  /** 支持时被 isConfigSupported 接受的完整配置（start() 须用同一配置，防运行时拒绝） */
+  config?: VideoDecoderConfigLike;
   browser: string;
   reason?: string;
 }
 
 /**
- * isConfigSupported 探测：VideoDecoder 存在性 + 逐个候选 codec 能力查询。
+ * isConfigSupported 探测：VideoDecoder 存在性 + 候选 codec × 硬解偏好矩阵。
+ * prefer-hardware 在无 GPU/无头环境常被整档拒绝（实测 Chromium headless：hardware
+ * 档 false 而 no-preference / prefer-software 档 true），故逐级回退并把被接受的
+ * 完整配置带回——start() 用同一配置构造解码器，防探测通过、运行时 configure 拒绝。
  * spec Scenario「不支持时显式报错」：结果由调用方呈现为含浏览器名的错误页。
  */
 export async function probeVideoSupport(): Promise<VideoSupport> {
@@ -104,19 +109,23 @@ export async function probeVideoSupport(): Promise<VideoSupport> {
   if (typeof probe.isConfigSupported !== 'function') {
     return { supported: false, browser, reason: 'VideoDecoder.isConfigSupported 不可用' };
   }
+  const hwPrefs = ['prefer-hardware', 'no-preference', 'prefer-software'] as const;
   let lastReason = '无可用 H.264 解码配置';
   for (const codec of CANDIDATE_CODECS) {
-    try {
-      const result = await probe.isConfigSupported({
+    for (const hardwareAcceleration of hwPrefs) {
+      const config: VideoDecoderConfigLike = {
         codec,
         avc: { format: 'annexb' },
         optimizeForLatency: true,
-        hardwareAcceleration: 'prefer-hardware',
-      });
-      if (result?.supported) return { supported: true, codec, browser };
-      lastReason = `isConfigSupported(${codec}) = false`;
-    } catch (err) {
-      lastReason = `isConfigSupported(${codec}) 抛错: ${(err as Error).message}`;
+        hardwareAcceleration,
+      };
+      try {
+        const result = await probe.isConfigSupported(config);
+        if (result?.supported) return { supported: true, codec, config, browser };
+        lastReason = `isConfigSupported(${codec}, ${hardwareAcceleration}) = false`;
+      } catch (err) {
+        lastReason = `isConfigSupported(${codec}, ${hardwareAcceleration}) 抛错: ${(err as Error).message}`;
+      }
     }
   }
   return { supported: false, browser, reason: lastReason };
@@ -185,6 +194,7 @@ export interface VideoPipelineOptions {
 
 export class VideoPipeline {
   private codec: string | null = null;
+  private acceptedConfig: VideoDecoderConfigLike | null = null;
   private decoder: VideoDecoderLike | null = null;
   private readonly seqTracker = new SequenceTracker();
   private countersInternal: VideoPipelineCounters = this.blankCounters();
@@ -211,6 +221,7 @@ export class VideoPipeline {
     const result = support ?? (await probeVideoSupport());
     if (!result.supported) throw new VideoUnsupportedError(result);
     this.codec = result.codec ?? CANDIDATE_CODECS[0];
+    this.acceptedConfig = result.config ?? null;
     return result;
   }
 
@@ -219,19 +230,29 @@ export class VideoPipeline {
     if (!this.codec) throw new ProtocolError('VideoPipeline.probe() 未完成');
     if (this.decoder) return;
     const factory = this.opts.decoderFactory ?? this.defaultDecoderFactory();
-    this.decoder = factory(this.codec);
+    this.decoder = factory(this.codec, this.acceptedConfig ?? undefined);
     this.countersInternal = this.blankCounters();
     this.firstKeyframeSeen = false;
   }
 
   private defaultDecoderFactory() {
-    return (_codec: string): VideoDecoderLike => {
+    return (_codec: string, config?: VideoDecoderConfigLike): VideoDecoderLike => {
       const { VideoDecoder } = webcodecs();
       if (!VideoDecoder) throw new VideoUnsupportedError(missingSupport());
-      return new VideoDecoder({
+      const dec = new VideoDecoder({
         output: (frame) => this.renderFrame(frame),
         error: (err) => this.opts.onError?.(err),
-      }) as unknown as VideoDecoderLike;
+      }) as unknown as VideoDecoderLike & { configure(cfg: VideoDecoderConfigLike): void };
+      // 探测接受的完整配置原样下发（Annex B + optimizeForLatency + 探测通过的硬解档位）
+      dec.configure(
+        config ?? {
+          codec: this.codec ?? CANDIDATE_CODECS[0],
+          avc: { format: 'annexb' },
+          optimizeForLatency: true,
+          hardwareAcceleration: 'no-preference',
+        },
+      );
+      return dec;
     };
   }
 
