@@ -148,6 +148,8 @@ export interface VideoPipelineCounters {
   droppedSeqGap: number;
   /** 结构性丢弃（首关键帧未到时到达的 delta 帧等） */
   droppedPremature: number;
+  /** 渲染丢弃（canvas 2D 上下文不可用等渲染路径失败，帧未上屏） */
+  renderDropped: number;
   /** 关键帧（IDR）帧数 */
   keyframes: number;
   /** 解码器排队深度（decodeQueueSize 快照） */
@@ -182,8 +184,8 @@ export interface VideoPipelineOptions {
   renderer?: (frame: VideoFrameLike) => void;
   /** EncodedVideoChunk 构造器（缺省真实全局；测试注入替身） */
   makeChunk?: (init: EncodedVideoChunkInit) => EncodedVideoChunkLike;
-  /** 已配置解码器工厂（缺省按 probe 选择的 codec 构造真实 VideoDecoder；测试注入替身） */
-  decoderFactory?: (codec: string) => VideoDecoderLike;
+  /** 已配置解码器工厂（双参：codec + 探测通过的完整 config，注入工厂同样复用探测结果；缺省构造真实 VideoDecoder；测试注入替身） */
+  decoderFactory?: (codec: string, config?: VideoDecoderConfigLike) => VideoDecoderLike;
   /** 诊断帧 dump 开关（首 N 帧原始负载） */
   dump?: DumpSink;
   /** 每帧解码输出回调（HUD 延迟采样接入点；渲染前调用） */
@@ -200,6 +202,10 @@ export class VideoPipeline {
   private countersInternal: VideoPipelineCounters = this.blankCounters();
   private firstKeyframeSeen = false;
   private dumpedFrames = 0;
+  /** start() 是否已成功建立过解码器（区分 dump-only 诊断模式与致命错误恢复等待期） */
+  private started = false;
+  /** canvas 2D 上下文缓存（undefined = 未探测；null = 探测失败，如被 webgl 等其它上下文类型占用） */
+  private ctx2d: CanvasRenderingContext2D | null | undefined = undefined;
 
   constructor(private readonly opts: VideoPipelineOptions) {}
 
@@ -208,6 +214,7 @@ export class VideoPipeline {
       decoded: 0,
       droppedSeqGap: 0,
       droppedPremature: 0,
+      renderDropped: 0,
       keyframes: 0,
       decodeQueueSize: 0,
       lastSeq: null,
@@ -229,9 +236,29 @@ export class VideoPipeline {
   start(): void {
     if (!this.codec) throw new ProtocolError('VideoPipeline.probe() 未完成');
     if (this.decoder) return;
-    const factory = this.opts.decoderFactory ?? this.defaultDecoderFactory();
-    this.decoder = factory(this.codec, this.acceptedConfig ?? undefined);
+    this.buildDecoder();
+    this.started = true;
     this.countersInternal = this.blankCounters();
+    this.firstKeyframeSeen = false;
+  }
+
+  /** 构造并配置解码器（start 与致命错误恢复共用：复用探测通过的 codec/config 重走 configure） */
+  private buildDecoder(): void {
+    const codec = this.codec;
+    if (!codec) throw new ProtocolError('VideoPipeline.probe() 未完成');
+    const factory = this.opts.decoderFactory ?? this.defaultDecoderFactory();
+    this.decoder = factory(codec, this.acceptedConfig ?? undefined);
+  }
+
+  /** 解码器失效处理：close 容错、置空并重开关键帧门（下一关键帧到达 feedRecord 时重建恢复） */
+  private invalidateDecoder(): void {
+    try {
+      this.decoder?.close();
+    } catch {
+      // 已 closed 状态重复 close 容忍
+    }
+    this.decoder = null;
+    // 重开关键帧门：重建后的解码器须等新关键帧，期间 delta 帧走既有 droppedPremature 丢弃路径
     this.firstKeyframeSeen = false;
   }
 
@@ -241,7 +268,11 @@ export class VideoPipeline {
       if (!VideoDecoder) throw new VideoUnsupportedError(missingSupport());
       const dec = new VideoDecoder({
         output: (frame) => this.renderFrame(frame),
-        error: (err) => this.opts.onError?.(err),
+        error: (err) => {
+          // WebCodecs 致命错误后 decoder 进入 closed：标记失效（重开关键帧门，下一关键帧重建恢复），再透传错误
+          this.invalidateDecoder();
+          this.opts.onError?.(err);
+        },
       }) as unknown as VideoDecoderLike & { configure(cfg: VideoDecoderConfigLike): void };
       // 探测接受的完整配置原样下发（Annex B + optimizeForLatency + 探测通过的硬解档位）
       dec.configure(
@@ -257,13 +288,15 @@ export class VideoPipeline {
   }
 
   private renderFrame(frame: VideoFrameLike): void {
-    // 逐帧 decode-then-render：绘制后立即 close，不持帧引用（设计 D4 时序纪律）
-    this.countersInternal.decoded += 1;
-    this.countersInternal.lastPtsUs = BigInt(Math.round(frame.timestamp));
-    this.opts.onFrameDecoded?.(this.countersInternal.lastPtsUs);
+    // 逐帧 decode-then-render：绘制后立即 close，不持帧引用（设计 D4 时序纪律）。
+    // 全函数体纳入 try-finally：BigInt 转换或 onFrameDecoded 回调抛错时也保证 frame.close()，
+    // 防解码输出 VideoFrame 底层资源泄漏。
     try {
+      this.countersInternal.decoded += 1;
+      this.countersInternal.lastPtsUs = BigInt(Math.round(frame.timestamp));
+      this.opts.onFrameDecoded?.(this.countersInternal.lastPtsUs);
       if (this.opts.renderer) this.opts.renderer(frame);
-      else drawToCanvas(this.opts.canvas, frame);
+      else this.drawToCanvas(frame);
     } finally {
       frame.close();
     }
@@ -307,7 +340,29 @@ export class VideoPipeline {
       });
     }
 
-    if (!this.decoder) return; // dump-only 模式（start 前诊断）
+    // decode 前守卫：致命错误后 decoder 置 closed（error 回调未及触发的兜底检测），
+    // 走失效重建路径，防每次 decode 同步抛 TypeError 且帧静默蒸发
+    if (this.decoder && this.decoder.state === 'closed') {
+      this.invalidateDecoder();
+      this.opts.onError?.(new Error('VideoDecoder 已 closed（致命错误兜底检测），等待下一关键帧重建'));
+    }
+
+    if (!this.decoder) {
+      if (!this.started) {
+        // dump-only 模式（start 前诊断）：显式计数，防帧静默蒸发不可定位
+        this.countersInternal.droppedPremature += 1;
+        return;
+      }
+      if (!header.keyframe) {
+        // 解码器失效恢复等待期：delta 帧走既有丢弃路径并计数（关键帧门已重开，此为重建曾失败时的可达分支）
+        this.countersInternal.droppedPremature += 1;
+        return;
+      }
+      // 下一关键帧到达：重走 configure 重建解码器（复用探测通过的 codec/config）
+      this.buildDecoder();
+      if (!this.decoder) return; // buildDecoder 抛错时不可达；防御返回
+    }
+
     const makeChunk =
       this.opts.makeChunk ??
       ((init: EncodedVideoChunkInit): EncodedVideoChunkLike => {
@@ -322,7 +377,7 @@ export class VideoPipeline {
         data: data,
       }),
     );
-    this.countersInternal.decodeQueueSize = this.decoder.decodeQueueSize;
+    this.countersInternal.decodeQueueSize = this.decoder?.decodeQueueSize ?? 0;
   }
 
   /** 计数快照（HUD 轮询用） */
@@ -349,14 +404,25 @@ export class VideoPipeline {
       // 已关闭状态重复 close 容忍
     }
     this.decoder = null;
+    this.started = false; // 关闭后不得经恢复路径重建出新解码器
   }
-}
 
-/** canvas 2D 逐帧绘制（VideoFrame 可被 drawImage 接受；尺寸由会话参数设定） */
-function drawToCanvas(canvas: HTMLCanvasElement, frame: VideoFrameLike): void {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
-  ctx.drawImage(frame as unknown as CanvasImageSource, 0, 0);
+  /** canvas 2D 逐帧绘制（VideoFrame 可被 drawImage 接受；尺寸由会话参数设定）。
+   *  2D 上下文缓存为字段（省逐帧 getContext 开销）；上下文不可用（如被 webgl 占用）时
+   *  计入 renderDropped，仅首次失败经 onError 上报，防静默吞帧与逐帧刷屏。 */
+  private drawToCanvas(frame: VideoFrameLike): void {
+    if (this.ctx2d === undefined) {
+      this.ctx2d = this.opts.canvas.getContext('2d');
+      if (!this.ctx2d) {
+        this.opts.onError?.(new Error('canvas 2D 上下文不可用（可能被其它上下文类型占用），渲染帧将丢弃'));
+      }
+    }
+    if (!this.ctx2d) {
+      this.countersInternal.renderDropped += 1;
+      return;
+    }
+    this.ctx2d.drawImage(frame as unknown as CanvasImageSource, 0, 0);
+  }
 }
 
 // Uint8Array → hex（诊断 dump；不引 Buffer 保持浏览器/双端一致）
