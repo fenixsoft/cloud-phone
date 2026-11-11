@@ -34,3 +34,6 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+
+# ── superpowers 会话临时产物（brainstorm 视觉伴侣截图等，运行时本地状态） ──
+.superpowers/
