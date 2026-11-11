@@ -90,7 +90,7 @@
 2. 连接：WS → TCP → `HELLO{token, p2pOffer=""}`（无加密块 = none 路径）。**HELLO 不建会话**：其 ACK 携 sessionId=0 与全 0 占位参数（StreamService.kt:551-561），并附 hungSessions 挂机会话清单（重连页可据此展示"恢复上次观看"）。档位放 HELLO 无效。
 3. 建会话：`START_SESSION{sessionId=0, mode=FULLSCREEN, w/h/fps/bitrate=档位}` → **响应同为 HELLO_ACK(0x02)**，携真实 sessionId/w/h/fps/bitrateKbps/encoder/displayId（StreamService.kt:563-659；Windows SessionController.kt:287-408 同序）→ 视频开始。APP_LIST 需 ACTIVE 会话，故在此之后。
 4. 应用网格：`APP_LIST_REQUEST` → `APP_LIST` 渲染；点选应用 → `START_SESSION{mode=SINGLE_APP, packageName}` 切入单应用。**每次 START_SESSION 源端自动挂起旧会话并产生新 sessionId**（StreamService.kt:566）——浏览器必须整体换用新 sessionId（后续 INPUT_EVENT/STOP 全部带新 id）并按新 HELLO_ACK 参数重置坐标基准（单应用虚拟屏分辨率可与整屏不同；旧 id 的事件被静默丢弃）。
-5. 断线重连：WS 断开自动重连（指数退避，上限 30s 窗口）→ HELLO → 用记忆的 sessionId（或 HELLO_ACK.hungSessions）走 **`START_SESSION{sessionId=N, mode=ATTACH}`**（附着即 ATTACH，协议 §3.3；Windows SessionController.kt:603-621 同法）→ HELLO_ACK{sessionId=N, 真实参数} 恢复。**附着自动触发 IDR**（SessionManager.kt:137/145），无需也不应再发 IDR_REQUEST——该消息硬连线到整屏共享采集（StreamService.kt:279），对 SINGLE_APP 无效。超时则回连接页带原因。
+5. 断线重连：WS 断开自动重连（指数退避，上限 30s 窗口）→ HELLO → 用记忆的 sessionId（或 HELLO_ACK.hungSessions）走 **`START_SESSION{sessionId=N, mode=ATTACH}`**（附着即 ATTACH，协议 §3.3；Windows SessionController.kt:603-621 同法）→ HELLO_ACK{sessionId=N, 真实参数} 恢复。**附着自动触发 IDR**（SessionManager.kt:137/145），无需也不应再发 IDR_REQUEST——该消息硬连线到整屏共享采集（StreamService.kt:279），对 SINGLE_APP 无效。超时或被源端显式拒绝（REJECT_BUSY——传输层占用闸门或 StreamService.kt:628 恢复失败 / REJECT_UNSUPPORTED_MODE）则停止自动重试、回连接页带原因展示，不盲重试（用户可手动重试）。
 6. 显式"结束"按钮 → `STOP_SESSION`（销毁虚拟屏与 App；**无响应消息**，fire-and-forget，发后即可关页）；直接关页 = 挂机（语义与既有客户端一致）。
 
 ### D9 档位：镜像 `client-ux-and-input-latency` D2 的既有口径
@@ -112,12 +112,12 @@
 - **Safari 系 AAC AudioDecoder 缺口**：显式静音降级（非静默失败）。
 - **frp 明文**：与现状同级；token 即唯一凭据，勿在公共网络使用；TS 加密为 fast-follow。
 - **两会话并行工程冲突**：本变更不触碰 `source/`、`protocol/`、`client/`；`docs/protocol.md` 仅追加"浏览器客户端对接注记"小节（纯文档）。
-- **会话层无并发上限**：REJECT_BUSY 仅在传输层 pending 通道占用时出现（LanDirect/FrpBackend rejectBusyAck），`handleStartSession` 无资源上限 → 两个浏览器（同机多标签或两人）可同时各持会话互不知晓；HELLO 的 `takeover` 尾字节仅在传输层抢占 pending 通道，不踢在役会话。整屏+单应用并存是既定特性，v1 不做抢占/互踢 UI（浏览器永不发送 takeover）。
+- **观看端占用闸门（传输层单通道语义，评审实测修正）**：REJECT_BUSY 有两处来源——①**传输层占用闸门**：`sourceBusyText` 恒非空（TransportBackend.kt:146 默认"源端正被其他设备观看"，全仓无清空点），存在现役通道时新 HELLO（无 takeover）一律被拒（LanDirectBackend.kt:130-135 与 rejectPendingChannel :198-206；FrpBackend.kt:130 同构）→ **同一时刻仅一个观看端通道在役，第二个浏览器（同机多标签或两人）的 HELLO 会收到 REJECT_BUSY 与占用原因**；现役通道断开即清闸（LanDirectBackend.kt:163），挂机会话可被下一个观看端 ATTACH。②**会话层 ATTACH 恢复失败**：StreamService.kt:628 以 REJECT_BUSY 回 `manager.lastError`（正落在浏览器断线重连主路径）。HELLO 的 `takeover` 尾字节在传输层抢占的是**现役通道**（LanDirectBackend.kt:137-145 退役 incumbent、其客户端收 DISCONNECTED），会话层完全不读该字段（StreamService 无 takeover 引用）——被踢端会话转挂机、仍可恢复。浏览器 v1 永不发送 takeover、不做抢占/互踢 UI；对 REJECT_BUSY 一律显式呈现原因（见 D8.5）；"整屏+单应用并存"是同一观看端内的既定特性，`handleStartSession`（StreamService.kt:563-659）确无会话层并发上限。
 
 ## Migration Plan
 
 1. `client-web/gateway/` + `client-web/app/` 新目录，独立 npm 工程，不进任何 Gradle 构建。
-2. `docs/protocol.md` 追加对接注记（WS 承载 = 既有 frp/TCP 流记录模式逐字节同构；HELLO 不带加密块 = none 路径），并勘误三处与源码不符的陈旧描述：§4 附着时序（ATTACH = `START_SESSION{sessionId, mode=ATTACH}`，非 HELLO 字段）、控制方向表（源端→客户端存在 1Hz PING 与 STATS 推送）、§3.1/§5 补记 HELLO 可选 takeover 尾字节与 REJECT_BUSY 的传输层语义。
+2. `docs/protocol.md` 追加对接注记（WS 承载 = 既有 frp/TCP 流记录模式逐字节同构；HELLO 不带加密块 = none 路径），并勘误三处与源码不符的陈旧描述：§4 附着时序（ATTACH = `START_SESSION{sessionId, mode=ATTACH}`，非 HELLO 字段）、控制方向表（源端→客户端存在 1Hz PING 与 STATS 推送）、§3.1/§5 补记 HELLO 可选 takeover 尾字节（传输层抢占现役通道，会话层不读）与 REJECT_BUSY 双来源语义（传输层观看端占用闸门 + 会话层 ATTACH 恢复失败 StreamService.kt:628）。
 3. 部署：宿主机起网关 + frpc 增加 proxy 条目；页面以 `http://<frp host>:<port>/?token=<配对token>` 书签交付。
 4. 后续演进开关：路线 B（WebRTC）时网关原地升级为信令+RTP 端点，浏览器协议层/输入层代码全部保留复用。
 

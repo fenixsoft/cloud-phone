@@ -9,6 +9,8 @@
   kind: new
 - path: client-web/app/package.json
   kind: new
+- path: client-web/app/tsconfig.json
+  kind: new
 - path: client-web/app/index.html
   kind: new
 - path: client-web/app/src/protocol/Framing.ts
@@ -37,6 +39,8 @@
   kind: modify
 - path: docs/web-client.md
   kind: new
+- path: docs/web-latency-samples.json
+  kind: new
 ```
 
 ## 1. 协议 TS 库与 golden 单测
@@ -64,8 +68,8 @@
 
 ## 5. 会话编排与控制面
 
-- [ ] 5.1 `src/net/SessionClient.ts`：连接生命周期（token → HELLO → START_SESSION → HELLO_ACK 真实参数采用；sessionId 换新即重置坐标基准）、APP_LIST、STOP_SESSION；token 错显式失败不静默重试
-- [ ] 5.2 控制面：应答源端 1Hz 入站 PING（Pong nonce/senderUs/nowUs）；offset ≈ echoUs − (t_send+t_recv)/2 与 RTT 估计；消费源端 STATS；断线指数退避重连（≤30s 窗口）→ START_SESSION{sessionId, mode=ATTACH}（不发 IDR_REQUEST），超窗回连接页带原因
+- [ ] 5.1 `src/net/SessionClient.ts`：连接生命周期（token → HELLO → START_SESSION → HELLO_ACK 真实参数采用；sessionId 换新即重置坐标基准）、APP_LIST、STOP_SESSION；token 错与 REJECT_BUSY（观看端占用/ATTACH 恢复失败）显式失败不静默重试
+- [ ] 5.2 控制面：应答源端 1Hz 入站 PING（Pong nonce/senderUs/nowUs）；offset ≈ echoUs − (t_send+t_recv)/2 与 RTT 估计；消费源端 STATS；断线指数退避重连（≤30s 窗口）→ START_SESSION{sessionId, mode=ATTACH}（不发 IDR_REQUEST），超窗或被显式拒绝（REJECT_BUSY/REJECT_UNSUPPORTED_MODE）即停止重试回连接页带原因
 
 ## 6. 输入与 UI 壳
 
@@ -75,6 +79,6 @@
 ## 7. 端到端验收与文档
 
 - [ ] 7.1 `e2e/smoke.spec.ts` Playwright 冒烟（模拟器 FULLSCREEN 口径）：起 bootstrap 环境→token 连接→首帧 canvas 像素非空→注入点击→浏览器侧收到 STATS 且 fps>0、logcat `cloudphone-touch`（t3）与 `cloudphone-source` 打点；模拟器 SINGLE_APP 仅验收"失败带原因回连接页"回退
-- [ ] 7.2 `docs/protocol.md` 追加浏览器对接注记并勘误三处：§4 附着时序（ATTACH=START_SESSION 非 HELLO 字段，附着自动 IDR）、控制方向表（源端→客户端 1Hz PING/STATS 推送）、§3.1 补记 HELLO 可选 takeover 尾字节 + §5 REJECT_BUSY 传输层语义与会话层无并发上限
+- [ ] 7.2 `docs/protocol.md` 追加浏览器对接注记并勘误三处：§4 附着时序（ATTACH=START_SESSION 非 HELLO 字段，附着自动 IDR）、控制方向表（源端→客户端 1Hz PING/STATS 推送）、§3.1 补记 HELLO 可选 takeover 尾字节 + §5 REJECT_BUSY 双来源语义（传输层观看端占用闸门 + ATTACH 恢复失败）与会话层无并发上限
 - [ ] 7.3 `docs/web-client.md`：部署手册（网关 env/systemd、frpc 新增 proxy remotePort→GATEWAY_PORT、token 书签交付）+ **真机单应用人工验收清单**（人工步骤入文档：单应用进入/切换/ATTACH、音频、剪贴板、文本注入、PC 键鼠与平板触屏）
 - [ ] 7.4 延迟采样交付：模拟器会话稳定运行后采集管线延迟 P50/P95 与 RTT 落 `docs/web-latency-samples.json`（口径注明浏览器端），供延迟专项比对

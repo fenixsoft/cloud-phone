@@ -8,7 +8,7 @@
 
 - 新增 `client-web/gateway/`：Node.js 单文件 WebSocket↔TCP 字节中继网关（协议无关，带背压），同端口托管浏览器静态页与 `/ws`，单端口经 frp 暴露。
 - 新增 `client-web/app/`：vanilla TypeScript 浏览器客户端——逐字节复刻 `docs/protocol.md`（HELLO 认证、START_SESSION 会话、APP_LIST、INPUT_EVENT、AUDIO_CHUNK、剪贴板/TEXT_INPUT、STATS/PING/PONG、ATTACH 重连），WebCodecs 解码 canvas 渲染、AudioDecoder+AudioWorklet 播放、指针输入映射、延迟 HUD（RTT/管线延迟/丢帧）。
-- 修正 `docs/protocol.md` 陈旧描述（追加浏览器对接注记）：§4 附着时序（ATTACH = START_SESSION）、控制方向表（源端→客户端 1Hz PING/STATS）、§3.1 补记 HELLO 可选 takeover 尾字节、§5 REJECT_BUSY 传输层语义。
+- 修正 `docs/protocol.md` 陈旧描述（追加浏览器对接注记）：§4 附着时序（ATTACH = START_SESSION）、控制方向表（源端→客户端 1Hz PING/STATS）、§3.1 补记 HELLO 可选 takeover 尾字节、§5 REJECT_BUSY 双来源语义（传输层观看端占用闸门 + 会话层 ATTACH 恢复失败）。
 - 新增部署与使用文档（网关 systemd/frp proxy、token 书签交付）。
 - **零改动**：`source/`、`protocol/`、`client/`、`client-windows/` 既有代码不受影响（ADR-011"客户端新形态零协议 fork、既有工程零改动"纪律的浏览器版）。
 

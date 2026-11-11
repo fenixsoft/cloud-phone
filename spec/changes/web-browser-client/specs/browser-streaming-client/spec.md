@@ -3,7 +3,7 @@
 ## ADDED Requirements
 
 ### Requirement: 连接认证与会话编排
-浏览器端 SHALL 以 `HELLO{token, p2pOffer:""}`（无加密块 = none 路径）发起连接，并 MUST 以 `START_SESSION{sessionId, mode, w/h/fps/bitrateKbps}` 建立会话——HELLO 自身不建会话，其 ACK 的 sessionId/分辨率/档位均为占位 0，真实会话参数以 START_SESSION 响应的 HELLO_ACK(0x02) 为准（sessionId/w/h/fps/bitrateKbps/encoder/displayId）。token 错误 MUST 呈现 REJECT_BAD_TOKEN 明确失败，不静默重试。
+浏览器端 SHALL 以 `HELLO{token, p2pOffer:""}`（无加密块 = none 路径）发起连接，并 MUST 以 `START_SESSION{sessionId, mode, w/h/fps/bitrateKbps}` 建立会话——HELLO 自身不建会话，其 ACK 的 sessionId/分辨率/档位均为占位 0，真实会话参数以 START_SESSION 响应的 HELLO_ACK(0x02) 为准（sessionId/w/h/fps/bitrateKbps/encoder/displayId）。token 错误（REJECT_BAD_TOKEN）与观看端占用（REJECT_BUSY——传输层占用闸门：同一时刻仅一个观看端通道在役）MUST 呈现明确失败与原因，不静默重试。
 
 #### Scenario: 正确 token 建会话出画
 - **WHEN** 用户输入正确 token 并连接，浏览器依次完成 HELLO → START_SESSION{mode=FULLSCREEN, 档位}
@@ -12,6 +12,10 @@
 #### Scenario: 错误 token 显式失败
 - **WHEN** 用户输入错误 token 连接
 - **THEN** 页面呈现认证失败（REJECT_BAD_TOKEN）与原因，不进入视频画面
+
+#### Scenario: 占用拒绝显式呈现
+- **WHEN** 另一观看端已持有源端通道时，浏览器发起连接并发出 HELLO
+- **THEN** 页面呈现 REJECT_BUSY 与占用原因（如"源端正被其他设备观看"），不进入视频画面且不静默重试
 
 ### Requirement: 应用列表与单应用切换
 存在 ACTIVE 会话时，浏览器 SHALL 经 `APP_LIST_REQUEST` 拉取应用网格；点选应用 MUST 经 `START_SESSION{mode=SINGLE_APP, packageName}` 切入单应用。**每次 START_SESSION 源端挂起旧会话并产生新 sessionId**，浏览器 MUST 立即换用新 sessionId（后续 INPUT_EVENT/STOP 全部携带）并按新 HELLO_ACK 参数重置坐标映射基准。
@@ -25,7 +29,7 @@
 - **THEN** 浏览器采用 B 的 HELLO_ACK 新 sessionId，旧 A 的 sessionId 不再出现在任何后续消息中
 
 ### Requirement: 断线自动重连（ATTACH）
-WS 意外断开后，浏览器 SHALL 以指数退避自动重连（上限 30s 窗口），用记忆的 sessionId 走 `START_SESSION{sessionId=N, mode=ATTACH}` 恢复；附着由源端自动触发关键帧，浏览器 MUST NOT 依赖 IDR_REQUEST（该消息仅作用于整屏共享采集）。恢复后画面出显时间符合协议 ≤1s 口径；超过窗口则回连接页并带原因。
+WS 意外断开后，浏览器 SHALL 以指数退避自动重连（上限 30s 窗口），用记忆的 sessionId 走 `START_SESSION{sessionId=N, mode=ATTACH}` 恢复；附着由源端自动触发关键帧，浏览器 MUST NOT 依赖 IDR_REQUEST（该消息仅作用于整屏共享采集）。恢复后画面出显时间符合协议 ≤1s 口径；超过窗口或 ATTACH 被显式拒绝（REJECT_BUSY / REJECT_UNSUPPORTED_MODE）则停止自动重试并回连接页展示原因。
 
 #### Scenario: 断网恢复续看
 - **WHEN** 会话进行中网络中断 5 秒后恢复
