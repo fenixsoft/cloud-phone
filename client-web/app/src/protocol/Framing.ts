@@ -63,8 +63,9 @@ export class ByteWriter {
   }
 
   u8(v: number): this {
+    if (v < 0 || v > 0xff) throw new ProtocolError(`u8 out of range: ${v}`);
     this.ensure(1);
-    this.view.setUint8(this.pos, v & 0xff);
+    this.view.setUint8(this.pos, v);
     this.pos += 1;
     return this;
   }
@@ -93,8 +94,9 @@ export class ByteWriter {
     return this;
   }
 
-  /** i64 写出；v 为 bigint（安全承载全值域），也容忍 |v| < 2^53 的整数 number */
+  /** i64 写出；v 为 bigint（安全承载全值域），也容忍 |v| < 2^53 的整数 number（非安全整数抛错） */
   i64(v: bigint | number): this {
+    if (typeof v === 'number' && !Number.isSafeInteger(v)) throw new ProtocolError(`i64 not a safe integer: ${v}`);
     const big = typeof v === 'bigint' ? v : BigInt(Math.trunc(v));
     if (big < -(2n ** 63n) || big >= 2n ** 63n) throw new ProtocolError(`i64 out of range: ${big}`);
     this.ensure(8);
@@ -238,33 +240,49 @@ export function encodeRecord(recordType: number, payload: Uint8Array): Uint8Arra
  * 声明长度超上限视为线路损坏（ProtocolError），由调用方关闭连接。
  */
 export class RecordStreamParser {
-  private pending: Uint8Array = new Uint8Array(0);
-  private view: DataView = new DataView(this.pending.buffer);
+  private buf = new Uint8Array(4096);
+  private view = new DataView(this.buf.buffer);
+  private start = 0; // 已消费前缀起点（惰性回收）
+  private end = 0; // 有效字节尾界
 
   /** 喂入一段任意切分的字节；返回其中完整记录 */
   feed(chunk: Uint8Array): Record[] {
-    // 拼接存量 + 新到字节
-    const merged = new Uint8Array(this.pending.byteLength + chunk.byteLength);
-    if (this.pending.byteLength > 0) merged.set(this.pending, 0);
-    merged.set(chunk, this.pending.byteLength);
-    this.pending = merged;
-    this.view = new DataView(merged.buffer, merged.byteOffset, merged.byteLength);
+    // 容量保障：空间不足先回收前部已消费区，仍不足再倍增（避免高频小分片下每次 feed 全量重拷贝）
+    if (this.buf.byteLength < this.end - this.start + chunk.byteLength) {
+      if (this.start > 0) {
+        this.buf.copyWithin(0, this.start, this.end); // 同缓冲前移（memmove 语义）
+        this.end -= this.start;
+        this.start = 0;
+      }
+      if (this.buf.byteLength < this.end + chunk.byteLength) {
+        let cap = this.buf.byteLength;
+        while (cap < this.end + chunk.byteLength) cap *= 2;
+        const grown = new Uint8Array(cap);
+        grown.set(this.buf.subarray(0, this.end), 0);
+        this.buf = grown;
+        this.view = new DataView(grown.buffer);
+      }
+    }
+    this.buf.set(chunk, this.end);
+    this.end += chunk.byteLength;
 
     const records: Record[] = [];
-    let offset = 0;
+    let offset = this.start;
     for (;;) {
-      if (merged.byteLength - offset < RECORD_HEADER_BYTES) break;
+      if (this.end - offset < RECORD_HEADER_BYTES) break;
       const type = this.view.getUint8(offset);
       const len = this.view.getUint32(offset + 1, false);
       if (len > MAX_RECORD_BYTES) throw new ProtocolError(`bad record length: ${len}`);
-      if (merged.byteLength - offset - RECORD_HEADER_BYTES < len) break;
-      const payload = merged.slice(offset + RECORD_HEADER_BYTES, offset + RECORD_HEADER_BYTES + len);
+      if (this.end - offset - RECORD_HEADER_BYTES < len) break;
+      const payload = this.buf.slice(offset + RECORD_HEADER_BYTES, offset + RECORD_HEADER_BYTES + len);
       records.push({ type, payload });
       offset += RECORD_HEADER_BYTES + len;
     }
-    if (offset > 0) {
-      this.pending = merged.slice(offset);
-      this.view = new DataView(this.pending.buffer, this.pending.byteOffset, this.pending.byteLength);
+    this.start = offset;
+    // 缓冲耗尽即归零回收，控制常驻内存
+    if (this.start === this.end) {
+      this.start = 0;
+      this.end = 0;
     }
     return records;
   }
@@ -331,12 +349,12 @@ export function decodeTcpVideoFrame(payload: Uint8Array): TcpVideoFrame {
   const header = decodeVideoHeader(payload);
   if (header.fragmentCount !== 1 || header.fragmentIndex !== 0) {
     throw new ProtocolError(
-      `TCP 流模式仅承载整帧单分片记录，收到 fragIdx=${header.fragmentIndex} fragCnt=${header.fragmentCount}`,
+      `TCP stream mode only carries single-fragment records: fragIdx=${header.fragmentIndex} fragCnt=${header.fragmentCount}`,
     );
   }
   const data = payload.slice(VIDEO_HEADER_BYTES);
   if (data.byteLength !== header.totalLength) {
-    throw new ProtocolError(`帧数据长度与帧头不符: data=${data.byteLength} totalLen=${header.totalLength}`);
+    throw new ProtocolError(`frame data length mismatch: data=${data.byteLength} totalLen=${header.totalLength}`);
   }
   return { header, data };
 }
