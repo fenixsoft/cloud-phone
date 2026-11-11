@@ -1,22 +1,22 @@
 # 验证报告：web-browser-client
 
-> ⚠️ 本报告由框架于 2026-11-11T16:45:08Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
-> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-11T16:34:13.583191+00:00+run-result@mtime1794415495704769476
+> ⚠️ 本报告由框架于 2026-11-11T18:20:27Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
+> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-11T18:06:58.990461+00:00+run-result@mtime1794421218297852965
 
 ## 结论：✅ 通过（verified）
 
-**状态：verified — 20/32 场景通过，0 失败，0 错误（结构化数据存在失败明细，终局判定以 verification.verdict 为准）**
+**状态：verified — 20/32 场景通过，1 失败，0 错误（结构化数据存在失败明细，终局判定以 verification.verdict 为准）**
 
-32 场景：20 pass、12 warning（0 fail）。唯一根因（env，聚合计 1 条不重复计数）：模拟器 MediaProjection 易失性——本轮 logcat 铁证 00:34:00.979 recv StartSession → 00:34:00.984『shared capture lost (projection stopped)』(StreamService.kt:127-134 清 currentSession) → APP_LIST『ignored (no active session)』，视频/PING/APP_LIST 三个会话非空闸门(:665/:698/:312)级联关闭，与 wire-e2e-fullsession-via-gateway 探针 6 项 FAIL 一一吻合；产品控制面健康佐证：HELLO/START 实参/STATS 1Hz/hung 清零 8 项 PASS、golden 31/31、relay 8/8 全绿。该 env 根因级联波及依赖链 11 个场景（blocked-env 传播，均零自身失败信号），与上轮同族（上轮 START 被拒=凭据已死，本轮 ACK 后 5ms 丢投影）。场景静态情报 3 项均核实为误报不予修复：gateway-env-config-live 8090=spec 规定 GATEWAY_PORT 缺省值验证目标(GW_DEFAULT_8090_OK 实测 200)、29999=刻意不可达 UPSTREAM 覆盖值；emulator-bootstrap-env 22333=源端固定串流端口(adb forward tcp:22333=网关 UPSTREAM 缺省)非 serving 端口；web-aux-input-feedback 断言『你好』——client-web/app 零 antd 依赖(grep=0)原生 DOM textContent 无 autoInsertSpace。未验证覆盖面声明：web 全会话 UI 链（web-fullsession-first-flow 等 7 个 web/e2e 场景）因模拟器投影环境未获执行，报告以 warning 标注不记产品缺陷；上两轮同一集成点均因投影/凭据环境波动受阻，建议后续验证轮在 bootstrap 后即时串接 wire 链或在探针内前置重授权兜底以压环境窗口。
+验证通过（0 产品缺陷）。32 场景：20 PASS；12 非全部归 env 豁免——wire-e2e-fullsession-via-gateway 实证为模拟器 MediaProjection 授权丢失（bootstrap 重装 source APK 触发 signal9 杀已授权实例，重授权点击未生效，源端按协议显式拒绝 START_SESSION status=4 并附明确 reason；复现#1 同指纹、#2 原始 ack 解码实证；网关透传/HELLO/STATS 协议语义全程正常），其余 11 场景为该 env 根因的依赖失败传播（跨轮指纹一致，原样写回）。产品侧 client-web 网关/浏览器客户端 20 项静态+动态断言全绿。缺口：占用闸门/单应用/ATTACH/辅助通道等 11 个 E2E 场景本轮因依赖传播未获执行，待环境授权修复后重验。静态情报 4 项均核实为误报不改场景：gateway-env-config-live 两处字面端口为规格语义（8090=spec 缺省 GATEWAY_PORT 自起实例验证；29999=UPSTREAM 覆盖目标无需可达，本轮 GW_DEFAULT_8090_OK/GW_OVERRIDE_OK 全过）；emulator-bootstrap-env 22333 为 adb forward 源端流端口（与服务端口 37447 不同族，TOKEN_PROBE_ACCEPTED）；web-aux-input-feedback「你好」断言打在 #toast text_contains（剪贴板回显），app 无 antd 依赖（package.json/index.html grep=0），autoInsertSpace 前提不成立。
 
 | 指标 | 数量 |
 | --- | --- |
 | 通过 | 20 |
-| 失败 | 0 |
+| 失败 | 1 |
 | 错误 | 0 |
 | 产品 Bug | 0 |
-| 本链增量 Token（输入） | 1.62M |
-| 本链增量 Token（输出） | 0.40M |
+| 本链增量 Token（输入） | 1.74M |
+| 本链增量 Token（输出） | 0.45M |
 
 
 ## 场景结果
@@ -43,7 +43,7 @@
 | protocol-golden-tests-pass | 协议 golden 单测全绿（client-web/app 下 vitest run tests/protocol.golden.test.ts）：17 条消息逐字段 golden 向量双向断言逐字节一致（向量从 Kotlin FramingTest.kt/MessagesTest.kt 用例与真机实际字节导出）、HELLO takeover 尾字节出现/缺失两形态、未知尾部字节容忍用例、Framing 读写往返与分片重组（出处：tasks.md 1.4；design.md D10 协议单测条目；D1 golden 以真机实际字节为准） | pass | 0/2 | - |
 | gateway-relay-tests-pass | 网关中继集成测试全绿（client-web/gateway/test/relay.test.js）：脚本化假源端（Node TCP server 回放录制字节流）下 上行/下行逐字节透传（含 0x02 视频记录与 0x01 控制记录）、REJECT_BAD_TOKEN 原样送达 WS 后随关（非 1000 正常码）、慢消费者 8MB 二进制不丢字节不乱序（背压高水位暂停读）、双 WS 并发各自独立 upstream 不串扰、env 缺省（8090/127.0.0.1:22333）与覆盖（出处：specs/web-gateway/spec.md「协议无关字节中继」「背压与不丢不乱」「连接生命周期」「环境变量配置」四 Requirement 全部 Scenario；tasks.md 2.3） | pass | 0/2 | - |
 | gateway-env-config-live | 网关 env 配置活体验证：不带环境变量启动 server.js → 本机 8090 端口 HTTP GET / 返回 200（缺省 GATEWAY_PORT）；以 GATEWAY_PORT=<随机空闲端口> 再次启动 → 监听覆盖端口；UPSTREAM 覆盖值可配置（连接语义由 gateway-relay-tests-pass 覆盖）；两实例均干净退出（出处：specs/web-gateway/spec.md「环境变量配置」缺省与覆盖 Scenario：首次监听 8090、二次监听覆盖值；design.md D2 env 配置） | pass | 0/4 | - |
-| wire-e2e-fullsession-via-gateway | 协议全链路 E2E（浏览器网关口径，WS→gateway→TCP→源端活体）：经 FENIX_VERIFY_PORT 定位当轮 served 网关，ws 客户端完成 HELLO{token=cloudphone-m0, p2pOffer:""}（无加密块）→ HELLO_ACK 接受且 sessionId=0/参数占位 0（HELLO 不建会话）→ START_SESSION{0, FULLSCREEN, 1280x720, 60fps, 8000kbps}（默认档）→ 响应 HELLO_ACK 携真实非零 sessionId/w/h/fps/bitrateKbps、encoder 非空、displayId≥0、w/h 均 /16 对齐 → 收到 0x02 视频记录 ≥10 条且 sequence 单调不减 → 3s 窗口收到 ≥2 条 STATS(0x07)（1Hz 推送）→ 收到源端入站 PING(0x08) ≥1 并回 Pong{nonce 原样, senderUs, nowUs} → APP_LIST_REQUEST 得 APP_LIST 非空（会话 ACTIVE 后才应答）→ STOP_SESSION 后重建 HELLO 确认 hungCount=0。环境依赖（双模拟器+源端管线）；有 fallback: emulator-bootstrap-env 重授权兜底（出处：specs/browser-streaming-client/spec.md「连接认证与会话编排」正路径与「应用列表与单应用切换」前置；design.md D8.2/D8.3/D7；docs/protocol.md §3.1/3.2/3.3/3.10/3.11 线格式） | warning | 2/2 | env |
+| wire-e2e-fullsession-via-gateway | 协议全链路 E2E（浏览器网关口径，WS→gateway→TCP→源端活体）：经 FENIX_VERIFY_PORT 定位当轮 served 网关，ws 客户端完成 HELLO{token=cloudphone-m0, p2pOffer:""}（无加密块）→ HELLO_ACK 接受且 sessionId=0/参数占位 0（HELLO 不建会话）→ START_SESSION{0, FULLSCREEN, 1280x720, 60fps, 8000kbps}（默认档）→ 响应 HELLO_ACK 携真实非零 sessionId/w/h/fps/bitrateKbps、encoder 非空、displayId≥0、w/h 均 /16 对齐 → 收到 0x02 视频记录 ≥10 条且 sequence 单调不减 → 3s 窗口收到 ≥2 条 STATS(0x07)（1Hz 推送）→ 收到源端入站 PING(0x08) ≥1 并回 Pong{nonce 原样, senderUs, nowUs} → APP_LIST_REQUEST 得 APP_LIST 非空（会话 ACTIVE 后才应答）→ STOP_SESSION 后重建 HELLO 确认 hungCount=0。环境依赖（双模拟器+源端管线）；有 fallback: emulator-bootstrap-env 重授权兜底（出处：specs/browser-streaming-client/spec.md「连接认证与会话编排」正路径与「应用列表与单应用切换」前置；design.md D8.2/D8.3/D7；docs/protocol.md §3.1/3.2/3.3/3.10/3.11 线格式） | fail | 2/2 | env |
 | wire-e2e-attach-hang-resume | 挂机→ATTACH 恢复线级 E2E：建 FULLSCREEN 会话（记 sessionId=N）→ 不发 STOP 直接断开 WS（关页挂机语义）→ 重连 HELLO → HELLO_ACK.hungSessions 含 sessionId=N → START_SESSION{sessionId=N, mode=ATTACH} → HELLO_ACK 回 sessionId=N 与真实参数 → 全程不发送 IDR_REQUEST(0x05)（附着自动触发关键帧 SessionManager.kt:137/145）仍收到视频记录（恢复出画）→ STOP_SESSION 清理并确认 hungCount 归零（出处：specs/browser-streaming-client/spec.md「断线自动重连（ATTACH）」「结束语义」关页挂机可恢复 Scenario；design.md D8.5/D8.6；docs/protocol.md §3.3 ATTACH 口径） | blocked-env | - | env |
 | wire-e2e-occupied-busy | 观看端占用闸门线级 E2E：先以独立 TCP 连接完成 HELLO 并保持不断开（现役观看端通道）→ 第二条 WS 经网关发 HELLO{token 正确, 无 takeover} → 收到 HELLO_ACK status=2 REJECT_BUSY 且 reason 非空（传输层占用闸门 TransportBackend.kt:146 缺省文案「源端正被其他设备观看」语族）且连接被关闭——本步结束时占位连接保持存活供下一 web 场景 UI 呈现断言复用（出处：specs/browser-streaming-client/spec.md「连接认证与会话编排」占用拒绝显式呈现 Scenario；design.md Risks 观看端占用闸门（传输层单通道语义）LanDirectBackend.kt:130-135/:198-206） | blocked-env | - | env |
 | web-busy-rejection-display | 浏览器占用拒绝显式呈现：传输层闸门被占位连接持有期间（前置 wire-e2e-occupied-busy 留下的现役通道），浏览器输入正确 token 点击连接 → 页面呈现 REJECT_BUSY 与占用原因（含「源端正被其他设备观看」源端缺省文案，TransportBackend.kt:146 经 HELLO_ACK.reason 原样透传），不进入视频画面（会话信息/画布不出现）；等待 3s 后仍停留连接页且错误横幅仍在——不静默重试不盲重连（出处：specs/browser-streaming-client/spec.md「连接认证与会话编排」占用拒绝显式呈现 Scenario；design.md D8.5 对 REJECT_BUSY 一律显式呈现原因；navigate 目标 http://127.0.0.1:8090/ 出自 specs/web-gateway/spec.md「同端口静态托管与 WS 升级」/ 入口页与 design.md D2 GATEWAY_PORT 缺省 8090，origin 由框架按当轮实例改写） | blocked-env | - | env |
@@ -63,8 +63,8 @@
 
 | 场景 | 断言 | 归类 | 豁免理由 | 证据 |
 | --- | --- | --- | --- | --- |
-| wire-e2e-fullsession-via-gateway | exit_code steps.probe 期望 0 实际 1 | env | 环境因素（非产品缺陷） | logcat：00:34:00.979 recv StartSession→00:34:00.984 shared capture lost (projection stopped)→00:34:01.010 仍回 ACCEPTED(sid=1 实参)。MediaProjection 授权后约 8s 被系统终止（... |
-| wire-e2e-fullsession-via-gateway | output_match 期望 FULLSESSION_PROBE_PASS | env | 环境因素（非产品缺陷） | 投影丢失级联：STATS 无会话也照发(:683 sessionId=0)故 count=3 PASS，而 PING 仅会话非空才发(:698) count=0、视频帧 :665 直接丢弃 count=0、APP_LIST :312 ignored——四类失败同根因；relay 8/8、golden 31/31 ... |
+| wire-e2e-fullsession-via-gateway | exit_code step probe expected=0 actual=1 | env | 环境因素（非产品缺陷） | 复现#1（02:17 经网关 37447）同指纹复现；源端 logcat：recv StartSession→HelloAck(129B) 无 shared capture ready，AppListRequest 被拒「no active session」——环境授权缺失致会话未创建，网关透传与 HELLO/S... |
+| wire-e2e-fullsession-via-gateway | output_match expected=FULLSESSION_PROBE_PASS | env | 环境因素（非产品缺陷） | 8 项子 FAIL 均为「会话未创建」级联；复现#2 原始字节解码该 129B ack：status=4 reason=需要 MediaProjection 授权（先在源端 App 点『授予 MediaProjection 授权』重新授权）——源端按协议显式拒绝并给出明确原因，非静默 |
 | wire-e2e-attach-hang-resume | dependency_blocked skipped_depends_on=wire-e2e-fullsession-via-gateway | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游 wire-e2e-fullsession-via-gateway 的投影丢失级联（已另行归因 env），本场景零断言零步骤执行 |
 | wire-e2e-occupied-busy | dependency_blocked skipped_depends_on=wire-e2e-attach-hang-resume | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游投影丢失级联（已另行归因 env）；上轮 occupier 死等缺陷已修复，本轮场景未获执行、零断言零步骤 |
 | web-busy-rejection-display | dependency_blocked skipped_depends_on=wire-e2e-occupied-busy | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游投影丢失级联（已另行归因 env），本场景零断言零步骤执行，无占位连接夹具残留 |
