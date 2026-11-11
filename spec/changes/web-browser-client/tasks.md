@@ -58,13 +58,13 @@
 
 ## 3. 视频管线（首个采集里程碑，含可观测性交付）
 
-- [ ] 3.1 `src/media/VideoPipeline.ts`：`isConfigSupported` 探测（不支持→含浏览器名的错误页）；VideoDecoder Annex B + optimizeForLatency + prefer-hardware；逐帧 canvas drawImage 渲染（渲染后 close）
-- [ ] 3.2 管线可观测性：decoded/dropped(seq 缺口)/decodeQueueSize/关键帧四类逐级计数 + 诊断开关导出首 N 帧原始负载 dump（帧 dump + 计数双交付，供延迟专项比对）
+- [x] 3.1 `src/media/VideoPipeline.ts`：`isConfigSupported` 探测（不支持→含浏览器名的错误页）；VideoDecoder Annex B + optimizeForLatency + prefer-hardware；逐帧 canvas drawImage 渲染（渲染后 close）
+- [x] 3.2 管线可观测性：decoded/dropped(seq 缺口)/decodeQueueSize/关键帧四类逐级计数 + 诊断开关导出首 N 帧原始负载 dump（帧 dump + 计数双交付，供延迟专项比对）
 
 ## 4. 音频管线
 
-- [ ] 4.1 `src/media/AudioPipeline.ts` + `src/media/audio-worklet.js`：首帧 ADTS 解析→AudioSpecificConfig description→AudioDecoder('mp4a.40.2')；AudioWorklet 环形缓冲，起播水位 120ms、不足即 skip 并计数，兼容静音抑制 keepalive
-- [ ] 4.2 无 `window.AudioDecoder` 显式降级：音频控件置灰 + 原因提示，视频触控不受影响
+- [x] 4.1 `src/media/AudioPipeline.ts` + `src/media/audio-worklet.js`：首帧 ADTS 解析→AudioSpecificConfig description→AudioDecoder('mp4a.40.2')；AudioWorklet 环形缓冲，起播水位 120ms、不足即 skip 并计数，兼容静音抑制 keepalive
+- [x] 4.2 无 `window.AudioDecoder` 显式降级：音频控件置灰 + 原因提示，视频触控不受影响
 
 ## 5. 会话编排与控制面
 
