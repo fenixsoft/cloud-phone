@@ -13,6 +13,9 @@
 
 import { expect, test } from '@playwright/test';
 import { ensureSourcePipeline } from './grant';
+import { RECORD_HEADER_BYTES } from '../src/protocol/Framing';
+import { MsgType } from '../src/protocol/Messages';
+import { E2E_STATE } from './global-setup';
 
 test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应用拒绝回退', async ({ page }) => {
   // 复位路径（force-stop + UI 授权 + 管线重建）最坏 ~2min，放宽单用例超时
@@ -20,20 +23,22 @@ test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应�
   // 镜像约束：确保共享采集管线在位（投影丢失时自动重授权重建）
   await ensureSourcePipeline();
 
-  // WS 出站帧统计（INPUT_EVENT 0x06 断言用）
+  // WS 出站帧统计（INPUT_EVENT 断言用）：控制记录头 [u8 recordType][u32 payloadLen]，
+  // 头后首字节为 msgType，统计键由 MsgType 常量生成
   const sentTypes: Record<string, number> = {};
+  const inputEventKey = `0x${MsgType.INPUT_EVENT.toString(16)}`;
   page.on('websocket', (ws) => {
     ws.on('framesent', (f) => {
       if (typeof f.payload === 'string') return;
       const u8 = Buffer.from(f.payload as Buffer);
-      const key = u8.length > 5 ? `0x${u8[5].toString(16)}` : 'short';
+      const key = u8.length > RECORD_HEADER_BYTES ? `0x${u8[RECORD_HEADER_BYTES].toString(16)}` : 'short';
       sentTypes[key] = (sentTypes[key] ?? 0) + 1;
     });
   });
 
-  await page.goto('/?token=cloudphone-m0');
+  await page.goto(`/?token=${E2E_STATE.token}`);
   // token 已从 URL 收进 localStorage（地址栏不滞留）
-  await expect(page.getByLabel('配对 Token')).toHaveValue('cloudphone-m0');
+  await expect(page.getByLabel('配对 Token')).toHaveValue(E2E_STATE.token);
 
   await page.getByRole('button', { name: '连接' }).click();
 
@@ -55,10 +60,12 @@ test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应�
     )
     .toBeGreaterThan(0);
 
-  // 触控注入：画布点击（会话 720x1280，画布 CSS 1:1）→ WS 出站 INPUT_EVENT（0x06）
+  // 触控注入：画布点击 → WS 出站 INPUT_EVENT。viewport 480×960（playwright.config），
+  // 会话档位 UI 默认 720p60（720×1280）：画布 letterbox 适配视口，点击坐标经
+  // InputBridge 归一化为会话 u16 坐标，与 CSS 像素非 1:1，取视口中部点即可
   await page.locator('#video-canvas').click({ position: { x: 240, y: 480 } });
   await expect
-    .poll(async () => sentTypes['0x6'] ?? 0, { timeout: 10_000, intervals: [500] })
+    .poll(async () => sentTypes[inputEventKey] ?? 0, { timeout: 10_000, intervals: [500] })
     .toBeGreaterThan(0);
 
   // STATS：HUD fps 字段为正数（源端 ≥1Hz 推送，浏览器消费渲染；非 '—' 占位）
