@@ -42,6 +42,7 @@
 
 - 网关不理解任何消息语义：WS 二进制帧 ↔ upstream TCP 双向搬运（带背压：TCP 慢时暂停读 WS，反之同理）。认证、会话、错误全部由源端协议层裁决（token 错 → 源端 REJECT_BAD_TOKEN 并关闭 → 网关随机关 WS）。
 - 理由：协议只写一遍（TS 版 `protocol.ts`，浏览器与未来工具共用）；网关永远不需要跟协议演进；Windows 客户端已验证"跨语言逐字节复刻 + golden 测试"可行（`docs/protocol.md` §6 即为此约定而写）。
+- 解码器健壮性规则：TS 解码器对**未知尾部字节一律容忍跳过**（线格式先例：HELLO 有 protocol.md 未记载的可选 `takeover` 尾字节，Messages.kt:132 编码仅置位时出现、:550 解码容忍缺失）；golden 向量以真机实际字节为准，protocol.md 陈旧处在对接注记中勘误。
 
 ### D2 网关实现：Node.js 单文件 + `ws` 依赖，同端口托管静态页
 
@@ -71,24 +72,26 @@
 
 ### D6 输入与辅助通道
 
-- 触摸：`pointerdown/move/up/cancel` → `INPUT_EVENT{action, pointerId, x, y}`。坐标：canvas 实际显示区域（含 letterbox 黑边裁剪）线性映射到会话分辨率，再归一化 ×65535 取 u16；越界钳制。pointerId → u8 活动指针表映射（浏览器 pointerId 可为任意 int，源端仅 1 字节；上限 10 指针）。
+- 触摸：`pointerdown/move/up/cancel` → `INPUT_EVENT{action, pointerId, x, y}`。坐标：canvas 实际显示区域（含 letterbox 黑边裁剪）线性映射到会话分辨率，再归一化 ×65535 取 u16；越界钳制。pointerId → u8 活动指针表映射（浏览器 pointerId 可为任意 int，源端仅 1 字节；上限 10 指针）。**注意：源端 v1 忽略 pointerId、单点合成注入**（InputInjector.kt:31），多点触控仅为协议保留能力——Web UI 不承诺捏合/多指手势。
 - BACK：工具条返回键 + 桌面键盘 Esc → `action=3`。
 - 文本注入：工具条"文本"按钮唤起隐藏 `<input>`（移动端拉起系统键盘），提交走 `TEXT_INPUT(kind=0)`，按 ACK（kind=1, seq 回显）提示成败。
 - 剪贴板：读取/写入两按钮走 `CLIPBOARD_GET/SET`，回执与错误经 `CLIPBOARD_TEXT(kind)` 处理，kind=1 置灰按钮并 toast 原因。
-- 会话参数以 **HELLO_ACK 实测 w/h** 为坐标基准（协议 §3.3 的 /16 对齐偏差语义）。
+- 会话参数以**建会话 START_SESSION 响应的 HELLO_ACK 实测 w/h** 为坐标基准（协议 §3.3 的 /16 对齐偏差语义）；HELLO 自身的 ACK 参数全为占位 0（见 D8），**每次切换会话（新 START_SESSION）后必须重置坐标基准**。
 
 ### D7 时钟与统计 HUD
 
-- `PING/PONG ≥1Hz`：以 `offset ≈ ((t2−t1) − (t3−t4))/2` 类 NTP 口径估源端钟偏移（PONG 已含 senderUs/echoUs，协议字段就是为此设计）。
-- 每帧管线延迟 = `now() − (ptsUs + offset)`；HUD 展示：fps、码率（STATS+滑动窗口实测）、RTT、管线延迟 P50/P95、解码队列 `decodeQueueSize`、seq 缺口丢帧数。数据可落 `docs/web-latency-samples.json`（口径注明浏览器端），供延迟专项比对。
+- `PING/PONG ≥1Hz`：PONG 线格式为 `(nonce, senderUs, echoUs)`——**senderUs 是浏览器发送时间戳的原样回显**（浏览器钟，StreamService.kt:287），echoUs 是源端应答时刻（源端钟）。没有第二个源端时间戳，**不是四时戳 NTP**。估计口径：`RTT = t_recv − t_send`；`offset ≈ echoUs − (t_send + t_recv)/2`（假设源端应答延迟 ≪ RTT）。
+- **入站控制必须应答**：源端在会话期间 1Hz 主动向客户端发 PING（StreamService.kt:705）并 1Hz 推送 STATS（:675-716）。浏览器必须解码入站 PING 并回 `Pong(nonce, senderUs, nowUs())`——源端以 Pong 样本维护 smoothedRttMs 作音频积压 watchdog（>800ms 清排队 AUDIO_CHUNK）。protocol.md 方向表"PING 仅 C→S"已陈旧，对接注记勘误；浏览器→源端的 STATS 被源端忽略（:289），HUD 直接消费源端推送的 STATS。
+- 每帧管线延迟 = `now() − (ptsUs + offset)`；HUD 展示：fps、码率（源端 STATS + 滑动窗口实测）、RTT、管线延迟 P50/P95、解码队列 `decodeQueueSize`、seq 缺口丢帧数。数据可落 `docs/web-latency-samples.json`（口径注明浏览器端），供延迟专项比对。
 
-### D8 会话 UX 流（对齐既有客户端行为）
+### D8 会话 UX 流（对齐既有客户端行为，经源码核实）
 
 1. 连接页：token 输入（URL `?token=` 自动填并存 localStorage，可清除）+ 档位选择（D9）。
-2. 连接：WS → TCP → `HELLO{mode=FULLSCREEN, token, 档位, p2pOffer=""}`（APP_LIST 需 ACTIVE 会话，协议 §3.11，故先建整屏会话；这也是 Android/Windows 客户端的既有时序）。
-3. 应用网格：`APP_LIST_REQUEST` → `APP_LIST` 渲染；点选应用 → `START_SESSION{mode=SINGLE_APP, packageName}` 切入单应用；再点网格返回可 START_SESSION 切换（挂机会话经 HELLO_ACK.hungSessions 可 ATTACH）。
-4. 断线重连：WS 断开自动重连（指数退避，上限 30s 窗口），用记忆的 sessionId 走 `HELLO{mode=ATTACH}` + `IDR_REQUEST`（协议 §4 附着时序，出画 ≤1s）；超时则回连接页带原因。
-5. 显式"结束"按钮 → `STOP_SESSION`（销毁虚拟屏与 App）；直接关页 = 挂机（语义与既有客户端一致）。
+2. 连接：WS → TCP → `HELLO{token, p2pOffer=""}`（无加密块 = none 路径）。**HELLO 不建会话**：其 ACK 携 sessionId=0 与全 0 占位参数（StreamService.kt:551-561），并附 hungSessions 挂机会话清单（重连页可据此展示"恢复上次观看"）。档位放 HELLO 无效。
+3. 建会话：`START_SESSION{sessionId=0, mode=FULLSCREEN, w/h/fps/bitrate=档位}` → **响应同为 HELLO_ACK(0x02)**，携真实 sessionId/w/h/fps/bitrateKbps/encoder/displayId（StreamService.kt:563-659；Windows SessionController.kt:287-408 同序）→ 视频开始。APP_LIST 需 ACTIVE 会话，故在此之后。
+4. 应用网格：`APP_LIST_REQUEST` → `APP_LIST` 渲染；点选应用 → `START_SESSION{mode=SINGLE_APP, packageName}` 切入单应用。**每次 START_SESSION 源端自动挂起旧会话并产生新 sessionId**（StreamService.kt:566）——浏览器必须整体换用新 sessionId（后续 INPUT_EVENT/STOP 全部带新 id）并按新 HELLO_ACK 参数重置坐标基准（单应用虚拟屏分辨率可与整屏不同；旧 id 的事件被静默丢弃）。
+5. 断线重连：WS 断开自动重连（指数退避，上限 30s 窗口）→ HELLO → 用记忆的 sessionId（或 HELLO_ACK.hungSessions）走 **`START_SESSION{sessionId=N, mode=ATTACH}`**（附着即 ATTACH，协议 §3.3；Windows SessionController.kt:603-621 同法）→ HELLO_ACK{sessionId=N, 真实参数} 恢复。**附着自动触发 IDR**（SessionManager.kt:137/145），无需也不应再发 IDR_REQUEST——该消息硬连线到整屏共享采集（StreamService.kt:279），对 SINGLE_APP 无效。超时则回连接页带原因。
+6. 显式"结束"按钮 → `STOP_SESSION`（销毁虚拟屏与 App；**无响应消息**，fire-and-forget，发后即可关页）；直接关页 = 挂机（语义与既有客户端一致）。
 
 ### D9 档位：镜像 `client-ux-and-input-latency` D2 的既有口径
 
@@ -97,9 +100,9 @@
 
 ### D10 测试与验收
 
-- **协议单测（vitest）**：Framing 读写往返、分片重组、17 条消息逐字段 golden vector（向量从 Kotlin `FramingTest.kt` 用例与 `docs/protocol.md` 手工字节导出，双向断言逐字节一致）。
+- **协议单测（vitest）**：Framing 读写往返、分片重组、17 条消息逐字段 golden vector（向量从 Kotlin `FramingTest.kt`/`MessagesTest.kt` 用例与真机实际字节导出，双向断言逐字节一致；解码器按 D1 规则容忍未知尾部字节）。
 - **网关集成测试**：脚本化假源端（Node TCP server 回放录制的字节流）+ WS 客户端解析断言；含背压用例（upstream 停读不丢字节）。
-- **Playwright 冒烟（模拟器，FULLSCREEN 口径）**：起 bootstrap 环境 → 打开页面 → token 连接 → 断言首帧渲染（canvas 像素非空）→ 注入点击 → 断言 STATS fps>0 且 logcat `cloudphone-stats`/INPUT 打点出现。模拟器 **SINGLE_APP 不可用**（device-notes §2.1，镜像级限制），单应用路径在模拟器只验收"失败带原因回连接页"回退，直达口径由真机人工复测（与 client-ux D6 验收口径一致）。
+- **Playwright 冒烟（模拟器，FULLSCREEN 口径）**：起 bootstrap 环境 → 打开页面 → token 连接 → 断言首帧渲染（canvas 像素非空）→ 注入点击 → 断言浏览器侧收到 STATS 且 fps>0、logcat 出现源端真实标签 `cloudphone-touch`（INPUT 注入 t3 打点，InputInjector.kt:35）与 `cloudphone-source`。（`cloudphone-stats` 是 Android 客户端侧标签，源端不存在，勿用。）模拟器 **SINGLE_APP 不可用**（device-notes §2.1，镜像级限制），单应用路径在模拟器只验收"失败带原因回连接页"回退，直达口径由真机人工复测（与 client-ux D6 验收口径一致）。
 - **真机人工验收单**：单应用进入/切换/挂机 ATTACH、音频、剪贴板、文本注入、PC 键鼠与平板触屏各过一遍。
 
 ## Risks / Trade-offs
@@ -109,11 +112,12 @@
 - **Safari 系 AAC AudioDecoder 缺口**：显式静音降级（非静默失败）。
 - **frp 明文**：与现状同级；token 即唯一凭据，勿在公共网络使用；TS 加密为 fast-follow。
 - **两会话并行工程冲突**：本变更不触碰 `source/`、`protocol/`、`client/`；`docs/protocol.md` 仅追加"浏览器客户端对接注记"小节（纯文档）。
+- **会话层无并发上限**：REJECT_BUSY 仅在传输层 pending 通道占用时出现（LanDirect/FrpBackend rejectBusyAck），`handleStartSession` 无资源上限 → 两个浏览器（同机多标签或两人）可同时各持会话互不知晓；HELLO 的 `takeover` 尾字节仅在传输层抢占 pending 通道，不踢在役会话。整屏+单应用并存是既定特性，v1 不做抢占/互踢 UI（浏览器永不发送 takeover）。
 
 ## Migration Plan
 
 1. `client-web/gateway/` + `client-web/app/` 新目录，独立 npm 工程，不进任何 Gradle 构建。
-2. `docs/protocol.md` 追加对接注记（WS 承载 = 既有 frp/TCP 流记录模式逐字节同构；HELLO 不带加密块 = none 路径）。
+2. `docs/protocol.md` 追加对接注记（WS 承载 = 既有 frp/TCP 流记录模式逐字节同构；HELLO 不带加密块 = none 路径），并勘误三处与源码不符的陈旧描述：§4 附着时序（ATTACH = `START_SESSION{sessionId, mode=ATTACH}`，非 HELLO 字段）、控制方向表（源端→客户端存在 1Hz PING 与 STATS 推送）、§3.1/§5 补记 HELLO 可选 takeover 尾字节与 REJECT_BUSY 的传输层语义。
 3. 部署：宿主机起网关 + frpc 增加 proxy 条目；页面以 `http://<frp host>:<port>/?token=<配对token>` 书签交付。
 4. 后续演进开关：路线 B（WebRTC）时网关原地升级为信令+RTP 端点，浏览器协议层/输入层代码全部保留复用。
 
