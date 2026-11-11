@@ -155,6 +155,13 @@ case "${1:-all}" in
     # 屏幕常亮：虚拟显示镜像依赖宿主屏持续合成，熄屏会让编码器断粮
     adb -s "$SOURCE_SERIAL" shell svc power stayon true >/dev/null
     adb -s "$CLIENT_SERIAL" shell svc power stayon true >/dev/null
+    # 关闭 cached-app freezer（admin-web-browser-client-1794415508 事故固化）：
+    # freezer 冻结进程会使授权/控件 input tap 延迟 13-21s 才生效，grant 自动化在
+    # 「对话框仍在」的假象下重复 tap 授予 → 同 UID 第二个投影落地时系统收回第一个
+    # 活跃投影（一投影一应用强制）→ shared capture lost 级联清闸。关闭后 tap 即时
+    # 生效，单次授权序列稳定；device_config 持久化，幂等重放无害。
+    adb -s "$SOURCE_SERIAL" shell device_config put activity_manager_native_boot cached_apps_freezer_enabled false >/dev/null 2>&1 || true
+    adb -s "$CLIENT_SERIAL" shell device_config put activity_manager_native_boot cached_apps_freezer_enabled false >/dev/null 2>&1 || true
     # 触摸延迟修复（SPEC 5.3）：输入窗口合成驱动需要 SYSTEM_ALERT_WINDOW（透明 1×1 悬窗
     # 以 5fps 失效自身，强制 display 0 逐次合成）。属设备侧一次性登记；未授权时源端降级运行并 WARN。
     adb -s "$SOURCE_SERIAL" shell appops set cloudphone.source SYSTEM_ALERT_WINDOW allow
