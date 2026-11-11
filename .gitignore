@@ -44,3 +44,12 @@ client-web/app/dist/
 client-web/app/test-results/
 client-web/app/playwright-report/
 client-web/app/frame-dump/
+
+# ── admin 根治 maintree_stray_wip_stale 复发（2026-11-11，untrack_stray_wip）──
+# bootstrap_adb.sh uiautomator 授权重试截图（try1/2/3）与 win_vm_smoke.sh 冒烟截图目录：
+# 每次验证重跑必重写，已 git rm --cached 出库，此后改动由 ignore 吸收、不再产生散件告警；
+# docs 引用的是证据存放路径（运行时再生），截图本体保留在磁盘不入库
+docs/bootstrap-screenshots/
+
+# 根级构建产物目录（APK / 桌面 portable zip，脚本产出）
+/dist/
