@@ -289,3 +289,9 @@
   - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
   > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：①会话时点就近授权：wire-e2e-fullsession 的 ensure_pipeline/步骤 0 就地复位+grant+等 ready（凭据新鲜度与会话创建对齐）；②或场景集编排把 wire-e2e-fullsession 紧邻 bootstrap 放置（编排语义取舍需产品面拍板）；③或与源端产品面协商延长凭据有效期/支持免弹窗静默授权（产品缺陷面，走实现分支立项）。
+- **[arbiter:web-brow] arbiter-rerigger-duplicate-after-escalate**
+  - 影响：同签名 frozen spec 在升级包 pending 期间被重复唤起 Arbiter，每轮 ~1-2M tokens 重复裁决消耗，结论必然重复；升级包越多、回扫唤起越频繁，消耗线性放大。
+  - 证据：arbiter_ledger.jsonl：前任 run 18:34:37 收工落 escalate 报告，chain-1794421227392 于 18:34:43.429 入链（arbiter-escalated，pending 人工）；同秒回扫唤起本 run arbiter-1794422083（转单上下文两字段空串=非转单），无新增证据，本次终裁与前任一致（escalate）。；触发 run_id=arbiter-web-browser-client-1794422083（签名 web-browser-client::verify_env_blocked，来源 escalation-alert）
+  - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
+  > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：消费端对已有 pending escalation package（handled=false）的签名抑制 Arbiter 重唤起；或 re-trigger payload 附前次 ruling 摘要并声明『仅新证据落地后再裁』的增量裁决语义。
