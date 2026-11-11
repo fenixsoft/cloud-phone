@@ -52,9 +52,9 @@
 
 ## 2. 协议无关网关
 
-- [ ] 2.1 `client-web/gateway/server.js`（Node + ws 单依赖）：同端口静态托管 + `/ws` 升级，env `GATEWAY_PORT`（默认 8090）/`UPSTREAM`（默认 127.0.0.1:22333），每条 WS 一条 upstream TCP，双向字节搬运，WS 断↔TCP 断联动
-- [ ] 2.2 背压：upstream 写缓冲高水位暂停读 WS（反之同理），不丢字节不乱序
-- [ ] 2.3 `gateway/test/relay.test.js`：脚本化假源端集成测试——上/下行逐字节透传、REJECT_BAD_TOKEN 透传后随关、慢消费者 8MB 不丢不乱、双 WS 并发不串扰、env 缺省与覆盖
+- [x] 2.1 `client-web/gateway/server.js`（Node + ws 单依赖）：同端口静态托管 + `/ws` 升级，env `GATEWAY_PORT`（默认 8090）/`UPSTREAM`（默认 127.0.0.1:22333），每条 WS 一条 upstream TCP，双向字节搬运，WS 断↔TCP 断联动
+- [x] 2.2 背压：upstream 写缓冲高水位暂停读 WS（反之同理），不丢字节不乱序
+- [x] 2.3 `gateway/test/relay.test.js`：脚本化假源端集成测试——上/下行逐字节透传、REJECT_BAD_TOKEN 透传后随关、慢消费者 8MB 不丢不乱、双 WS 并发不串扰、env 缺省与覆盖
 
 ## 3. 视频管线（首个采集里程碑，含可观测性交付）
 
