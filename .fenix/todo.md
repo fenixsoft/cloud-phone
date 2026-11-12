@@ -285,49 +285,58 @@
   - 调查评估：在处置 web-browser-client 的 7.4 任务（浏览器端延迟采样，需模拟器会话稳定运行≥60秒采集真实管线延迟样本）收口时暴露。已核实：升级件与其所指环境阻塞的根治件在同一 spec 上先后落地，但告警存储（admin_alerts）没有「关联根治件/重验证据回写」通路，重验结果同样不会更新升级件。归因证据边界：0a30212 根治的是处置回执点名的「二次授权互杀级联」，而 7.4 证据列举的一次性凭据时效等依赖是否同样解除尚未验证（重验在飞、报告未出），故本条只断言「升级件快照陈旧、缺更新通路」的形态层结论，不断言 7.4 重验必过。与存量工作关系：既有条目「人工裁定落位后升级告警仍回派（human disposition 吸收窗缺失）」讲升级件不吸收人工裁定，本条是其反面——升级件也不吸收 admin 根治证据，同属升级件生命周期缺更新通路，互补不重复。结论：升级件一旦创建即成孤本快照，是转人工机制的结构性短板，值得立项补「证据回写/自动消解」通路。
   - 建议：SPEC 提案：admin 处置落根治提交时，若提交说明或处置关联信号命中某未处理升级件的证据要素，在该升级件记录追加「根治件 hash + 待重验标注」；重验覆盖受影响场景后自动把升级件转 resolved 附重验证据，未通过才保留人工确认，人工包内并列展示申报时证据与根治后证据。
 - **[arbiter:web-brow] bootstrap-grant-confirmation（授权自动化无活性确认即报成功）**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：所有依赖 emulator-bootstrap-env 的场景族（wire-e2e-*/web-*/playwright-smoke，共 12+ 场景）在授权静默失败/失效时级联 blocked-env；每轮验证 ~2.2M tokens 在无活性确认下盲烧；验证报告被洗白门禁拒收后整轮作废。
   - 证据：scripts/bootstrap_adb.sh:116-145 grant_projection 点击确认弹窗后立即 return 0，不校验投影是否真正落地；round B 实证：projection_grant_try1.png mtime=02:06:45 单次确认分支退出（try2/try3 未写），而 02:17 wire-e2e 已 status=4（凭据失效/未落地均静默）；两源互证：验证报告豁免证据 + 截图 mtime 链。对照：实现侧 e2e/grant.ts「探针 12s 超时+等 shared capture ready 日志信号」已验证可正确识别授权落地（e2e-evidence.md）。grant 子命令（L180）也不含 freezer 关闭与复位链，单独调用时与 all 分支行为不对齐。；触发 run_id=arbiter-web-browser-client-1794421227（签名 web-browser-client::verify_env_blocked，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
   > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：①grant_projection tap 后轮询 logcat「shared capture ready」或 dumpsys MediaProjection 活性，超时重试、最终非零退出；②grant 前强制 HOME+force-stop 复位（防同任务其他 Activity 遮挡授予按钮——活体实测 LatencyTestActivity 遮挡形态）；③grant 子命令对齐 all 分支的 freezer/FGS 前置。
 - **[arbiter:web-brow] wire-e2e-credential-lifecycle（一次性凭据与场景编排时序错配）**
+  - 自进化：问题部分成立 / 建议部分合理 / — 不需要
   - 影响：wire-e2e-fullsession 及 11 个依赖传播场景在当前编排下每轮必然 env-block（结构性、非偶发），任何「修活后重验」都重复失败；是该 spec 冻结循环的直接机制。
   - 证据：源端 MediaProjection 为一次性凭据设计：一授权一凭据、闲置 ~60s 失效、captureLost 自动重授权立即消费凭据（MainActivity.kt:259/263-269 注释明示；e2e-evidence.md 实现侧两轮 9 次尝试取证）；而当前 32 场景集将 wire-e2e-fullsession-via-gateway 排在第 14 位（前置 13 场景含 npm/vitest/playwright 分钟级耗时），轮首授权到会话创建间隔 11 分钟（02:06:45→02:17 实测）；场景声明的「emulator-bootstrap-env 重授权兜底」在本轮未实际触发 bootstrap grant（try1.png 未被 02:17 重写）。两源互证：验证报告跨轮指纹一致 + 截图/进程时间链。；触发 run_id=arbiter-web-browser-client-1794421227（签名 web-browser-client::verify_env_blocked，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
   > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：①会话时点就近授权：wire-e2e-fullsession 的 ensure_pipeline/步骤 0 就地复位+grant+等 ready（凭据新鲜度与会话创建对齐）；②或场景集编排把 wire-e2e-fullsession 紧邻 bootstrap 放置（编排语义取舍需产品面拍板）；③或与源端产品面协商延长凭据有效期/支持免弹窗静默授权（产品缺陷面，走实现分支立项）。
 - **[arbiter:web-brow] arbiter-rerigger-duplicate-after-escalate**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：同签名 frozen spec 在升级包 pending 期间被重复唤起 Arbiter，每轮 ~1-2M tokens 重复裁决消耗，结论必然重复；升级包越多、回扫唤起越频繁，消耗线性放大。
   - 证据：arbiter_ledger.jsonl：前任 run 18:34:37 收工落 escalate 报告，chain-1794421227392 于 18:34:43.429 入链（arbiter-escalated，pending 人工）；同秒回扫唤起本 run arbiter-1794422083（转单上下文两字段空串=非转单），无新增证据，本次终裁与前任一致（escalate）。；触发 run_id=arbiter-web-browser-client-1794422083（签名 web-browser-client::verify_env_blocked，来源 escalation-alert）
   - 调查评估：触发信号 verify_env_blocked（spec=web-browser-client）：用户指令冻结：验证环境阻塞连续 2 轮，admin 处置未奏效，转人工 — env 失败场景不得判 verified（须升级 admin 处置）: wire-e2e-fullsession-via-gateway、wire-e2e-attach-hang-resume、wire-e2e-occupied-busy、web-busy-rejection-display、occupied-gate-cleanup、web-wrong-token-explicit-fail、web-fullsession-first-flow、web-tier-selection-custom
   > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：消费端对已有 pending escalation package（handled=false）的签名抑制 Arbiter 重唤起；或 re-trigger payload 附前次 ruling 摘要并声明『仅新证据落地后再裁』的增量裁决语义。
 - **[arbiter:web-brow] admin-monitor-orphan-check-generation-blind**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：凡「处置生效后 spec 又被后续验证轮再冻结」的场景都会重演：孤儿处置收敛核查把状态前移误判为处置失败，产生假阴性人工升级，并经回扫重复触发同签名仲裁调查（烧仲裁预算、污染人工告警面）；触发建议中「已生效可手动 resolve 收口信号」分支永远不会被框架自动走向，因为生效核查只比对当前状态、不认「生效后状态已合法前移」。
   - 证据：fenixd.log 18:05:47.151（直通道 blocked→testing 复位成功）与 18:06:23-59（round B 重验实际发生）证明处置已生效；18:20:27.206/.311（verified 洗白门禁再冻结）为处置后的新代际状态；19:10:23 admin_monitor「Orphaned final disposition group not effective, escalated to human: admin-web-browser-client-1794419307」以当前 frozen/blocked 反推旧处置未生效（fail-closed），admin_alerts 条目 40e8d6fd4292/43a51528ef70 留痕；arbiter ledger 证明同签名 1 小时内第 3 次仲裁调查（1794421227/1794422083/1794425770）。两源互证：fenixd.log 时序 + admin_alerts/arbiter_ledger 台账。；触发 run_id=arbiter-web-browser-client-1794425770（签名 web-browser-client::blocked_stuck，来源 startup）
   - 调查评估：触发信号 blocked_stuck（spec=web-browser-client）：Administrator 处置终态未收口（run admin-web-browser-client-1794419307）：处置组已终态但底层信号 blocked_stuck 仍未收口，生效核查未找到动作已实际生效的真实状态证据，需人工介入。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：生效核查引入处置代际水位线：处置完成时记录直通道复位时间戳与消费轮次；收敛核查失败前先核对处置后是否出现过「离开 blocked/testing 的推进轨迹」（STATE 更新时序或 gate transition 日志），有则判「已生效、被新代际取代」并转记为新信号而非升级人工；或对处置后再冻结的代际开新信号条目并回链旧处置组，避免旧组孤儿误判。
 - **[arbiter:web-brow] scenario-same-class-defect-one-per-round**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：影响所有批量生成含 probe/fixture 步骤场景的 spec：同款缺陷按依赖链深度串行放大为 N 轮重跑，直接拖撞 judge_rerun_cap（本案例即此机制与 gap-1 叠加致冻结）；验证收敛时间与 token 成本随链深度线性膨胀
   - 证据：.fenix/verify-progress/web-browser-client/{prev-judge-result.json,.fenix-run-result.json,test_scenarios.json}：fake-source-up（第14轮）与 web-busy-holder-up（第15轮）先后以完全同款缺陷失败——步骤命令内冗余 cd client-web/gateway（引擎已按 step.cwd 切目录）+ 裸 node 丢 NODE_PATH 致 MODULE_NOT_FOUND('ws')；且残余 active 集内 busy-holder-down 仍带同款 redundant-cd+无 NODE_PATH 模式。三个实例同源（同代批量生成场景），但依赖链执行顺序使其逐轮各浮现一个，每实例消耗一整轮 judge（~10min、~0.1M tokens）与一次修复申报配额；触发 run_id=arbiter-web-browser-client-1794459958（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：①场景加载期静态 lint：validate_scenario_dicts 增加「命令内 cd 与 step.cwd 目录重复」与「命令引用 /tmp 脚本且裸调 node 无 NODE_PATH」两条机械检查，加载即报而非执行期才败；②judge 裁决协议允许同因类批修复：同一缺陷类命中多场景时一次修复全链并一次申报，不必逐轮等失败复现；③批量生成器模板收敛 cd/NODE_PATH 口径（生成端根治）
 - **[arbiter:web-brow] 纯归因模式testing停泊与Recovery重派回环**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：无修复纯归因模式下验证链结构性不可收敛：每次 Recovery 重派机械重放同一未修复缺陷、rerun 计数必然递增至触顶，产生必然的冻结与人工升级，每轮白耗一次 34 场景执行与 judge token（本链累计 input 2.5M+/output 690K+）；同时把可由框架自愈的局面反复升级给人类。
   - 证据：fenixd.log：06:51:39Z 拒收修复申报后 spec 保持 testing 且无驱动（「场景文件不改写、不重入执行，转纯归因」）→ 07:09:20Z orphaned_state（testing 超 17 分钟无驱动）→ 07:14:18Z「Recovery: re-triggering verify for undriven testing」全量重执行 34 场景 → 07:15:26Z rerun 6/5 触顶冻结。本窗口两小时内 rerun 计数 0→6，其中末轮为 Recovery 自动重派而非 judge 主动复判。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：无修复纯归因模式进入时将 spec 停泊在不可调度保持态（如 frozen_hold 类）而非 testing；或 Recovery 重派在「场景集+产物指纹未变且末轮含未修复 test-defect」时跳过执行直接沿用既有归因、不递增 rerun 计数；或首次「耗尽后拒收」即转人工决策路径而非继续消耗 rerun 上限。
 - **[arbiter:web-brow] 跨轮裁决缓存与闭包征用失配**
+  - 自进化：问题部分成立 / 建议部分合理 / — 不需要
   - 影响：缓存写而不用导致每次派发全量重执行，纯归因模式下结果机械可预期（同场景集+同未修复缺陷），全量重跑只烧预算不改结论；也使 rerun 上限被无信息增量消耗。
   - 证据：fenixd.log 06:51:39Z「跨轮裁决缓存已更新 34 个场景结论入缓存（四元组分量 build=✓/config=✓）」，但 07:14:49Z 紧随其后的派发「闭包征用后无可采信缓存条目，全量执行」——分钟级前写入的缓存未被下一次派发采信；verdict_stability.json 仍只含 04:18:54Z 第 1 轮记录（prev_stamp=null、report_mtime_ns 指向旧报告），解冻后各轮均未入册。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：闭包征用对同指纹（场景集+build/config 四元组不变）条目的采信策略放宽；verdict_stability 戳记接入派发前判定，使「指纹未变」轮次复用裁决而非重执行；为纯归因模式定义显式的缓存复用语义。
 - **[arbiter:web-brow] no_click_interception断言批后置求值系统性时序缺陷**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：runner 级「断言批后置统一求值」设计使所有导航进会话视图的场景系统性产生 no_click_interception 误报，逐轮各浮现一个（whack-a-mole），单个场景缺陷消耗整轮修复预算与一次 rerun 计数；已修场景的修法是逐场景补丁，同类误报会持续再生。
   - 证据：judge_attribution.json 三条互证：web-token-url-autofill-persist-clear（断言时序，点击先于断言求值，web_runner.py:435 后置统一求值）、web-fullsession-apps-hud（05:43:24 accept：断言批在全部步骤后执行、应用页已被 show('session') 隐藏、trial click 报 not visible 非遮挡、真实点击与功能断言全过）、report.json@07:15:26 web-profile-custom-tier（9 步+功能断言全过，唯一失败为同类 no_click_interception .app-item not visible）。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：web_runner 支持 per-step 断言求值窗口或视图切换感知的断言求值时机（而非全部后置）；或 judge 修复轮按同模式批量修一批场景断言落点（一次申报覆盖同类全部场景）；或为 no_click_interception 增加求值时刻的页面视图状态快照作为归因证据。
 - **[arbiter:web-brow] impl-unattainable-alert-startup-sweep-recall-lag**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：人工待办类告警（impl_unattainable_tasks）的 arbiter 验证层存在最长 ~5h 盲窗（04:41 写入 → 09:46 补派）；若人类在此窗口内直接 /fenix-approve，「先确认人工动作完成后再推送」的前置校验落空，诚实申报的门禁语义被架空。本次恰因 stale-code 触发 daemon 重启才补召回。
   - 证据：fenixd.log：11-11T13:46:58Z 与 11-12T04:41:21Z 两次「诚实退出放行…（已写人工待办告警）」（即 alert=9900aa8588fd 类）；11-12T06:14:16.940Z startup 存量回扫「候选=0 派发=0」（告警已落盘却未召回）；直至 09:46:02.327Z 重启后回扫才补派。supervisor.log 两源互证 06:14 与 09:46 两次 daemon 启动均真实执行了回扫（非日志缺失）。；触发 run_id=arbiter-web-browser-client-1794476762（签名 web-browser-client::impl_unattainable_tasks，来源 startup）
   - 调查评估：触发信号 impl_unattainable_tasks（spec=web-browser-client）：实现者诚实申报 1 个任务无法由 agent 完成，门禁已放行——这些任务需人工完成/确认。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
