@@ -332,3 +332,7 @@
   - 证据：fenixd.log：11-11T13:46:58Z 与 11-12T04:41:21Z 两次「诚实退出放行…（已写人工待办告警）」（即 alert=9900aa8588fd 类）；11-12T06:14:16.940Z startup 存量回扫「候选=0 派发=0」（告警已落盘却未召回）；直至 09:46:02.327Z 重启后回扫才补派。supervisor.log 两源互证 06:14 与 09:46 两次 daemon 启动均真实执行了回扫（非日志缺失）。；触发 run_id=arbiter-web-browser-client-1794476762（签名 web-browser-client::impl_unattainable_tasks，来源 startup）
   - 调查评估：触发信号 impl_unattainable_tasks（spec=web-browser-client）：实现者诚实申报 1 个任务无法由 agent 完成，门禁已放行——这些任务需人工完成/确认。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：startup 存量回扫的候选筛选改为「未派发且未终态化的 signal 告警全量召回」（不依赖 dedup/在飞状态条件）；或告警写入时同步入派发队列、派发失败带重试；或回扫基线按告警存储全表 mtime 扫描而非增量条件匹配。
+
+## 2026-11-13
+### 知识真相源
+- audit 语义项转写失败：contradiction（spec/knowledge/domains/client/windows-desktop-client.md × spec/knowledge/domains/web-client/browser-streaming-client.md），请人工核查
