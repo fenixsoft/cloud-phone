@@ -1,5 +1,5 @@
 # 知识真相源
-> 最后更新：2026-11-10 22:14 UTC+8
+> 最后更新：2026-11-12 23:16 UTC+8
 
 本项目为安卓→安卓「云端手机」单应用串流系统：源端 App 采集编码 → 网络传输 → 客户端 App 解码渲染，触摸回传闭环，支持断开挂机、重连秒回与单应用/整屏两种观看范式。检索路径：先在本表定位能力域，进域导航页后定位能力页。
 
@@ -13,6 +13,7 @@
 | 4 | [transport](domains/transport/_domain.md) | 传输：lan-direct / p2p / frp 三网络路径、跨网打洞与流加密、直连诊断 | 3 | 2026-11-10 17:07 |
 | 5 | [validation](domains/validation/_domain.md) | 验证：负载生成、验收矩阵与端到端延迟测量，真机一键接入诊断与重测检查表 | 2 | 2026-11-10 18:29 |
 | 6 | [aux-channels](domains/aux-channels/_domain.md) | 辅助通道：远端 App 音频下行、剪贴板双向同步与完整 Unicode 文字注入 | 1 | 2026-11-10 17:25 |
+| 7 | [web-client](domains/web-client/_domain.md) | 浏览器观看端：零安装第三观看形态——WS↔TCP 协议无关字节中继网关与 WebCodecs 浏览器串流客户端 | 2 | 2026-11-12 23:16 |
 
 ## 架构决策记录
 
@@ -30,3 +31,4 @@
 | [ADR-010](adr/ADR-010-ime-focus-proxy-clipboard-textinput.md) | accepted | 剪贴板/组合文本注入经源端内置 IME 焦点代理，方向不对称如实降级 |
 | [ADR-011](adr/ADR-011-desktop-client-consumes-protocol-nofork.md) | accepted | 客户端新形态经复合构建消费 protocol 单一事实源，协议零 fork、既有工程零改动 |
 | [ADR-012](adr/ADR-012-windows-vm-smoke-verification-chain.md) | accepted | Windows 实机验证走 dockur/windows VM 脚本化冒烟链，软渲染回退 + 分阶段截图取证 + 不可达显式诊断 |
+| [ADR-013](adr/ADR-013-web-gateway-protocol-agnostic.md) | accepted | Web 观看面网关协议无关纯字节中继，浏览器端 TS 逐字节复刻协议以 golden 向量对齐真相源 |

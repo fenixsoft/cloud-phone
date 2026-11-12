@@ -10,3 +10,4 @@
 | transport | 传输：lan-direct / p2p / frp 三网络路径、NAT 诊断与传输统计 |
 | validation | 验证：负载生成 App、一键验收矩阵、端到端延迟双口径测量与可用判定线 |
 | aux-channels | 辅助通道：远端 App 音频下行、剪贴板双向同步（IME 焦点代理）、完整 Unicode 文字注入三体验通道 |
+| web-client | 浏览器观看端：零安装第三观看形态——WS↔TCP 协议无关字节中继网关（同端口静态托管）+ WebCodecs 浏览器串流客户端 |

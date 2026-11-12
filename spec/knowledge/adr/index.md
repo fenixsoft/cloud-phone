@@ -14,3 +14,4 @@
 | [ADR-010](ADR-010-ime-focus-proxy-clipboard-textinput.md) | accepted | 剪贴板/组合文本注入经源端内置 IME 焦点代理，方向不对称如实降级 |
 | [ADR-011](ADR-011-desktop-client-consumes-protocol-nofork.md) | accepted | 客户端新形态经复合构建消费 protocol 单一事实源，协议零 fork、既有工程零改动 |
 | [ADR-012](ADR-012-windows-vm-smoke-verification-chain.md) | accepted | Windows 实机验证走 dockur/windows VM 脚本化冒烟链，软渲染回退 + 分阶段截图取证 + 不可达显式诊断 |
+| [ADR-013](ADR-013-web-gateway-protocol-agnostic.md) | accepted | Web 观看面网关协议无关 WS↔TCP 纯字节中继，浏览器端 TS 逐字节复刻协议、golden 向量对齐真相源 |
