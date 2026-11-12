@@ -87,13 +87,14 @@ function probeSessionAccepted(): Promise<boolean> {
     s.on('data', (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       while (buf.length >= RECORD_HEADER_BYTES) {
+        const recordType = buf[0]; // 记录头类型字节：切片推进前读取（口径对齐 Framing.RecordStreamParser）
         const len = buf.readUInt32BE(1);
         if (buf.length < RECORD_HEADER_BYTES + len) break;
         const record = buf.subarray(RECORD_HEADER_BYTES, RECORD_HEADER_BYTES + len);
         buf = buf.subarray(RECORD_HEADER_BYTES + len);
-        if (record[0] !== RECORD_CONTROL) continue;
+        if (recordType !== RECORD_CONTROL) continue;
         try {
-          const msg = decodeControlMessage(record.subarray(1));
+          const msg = decodeControlMessage(record); // record 即控制载荷，首字节为 msgType（非 recordType）
           if (msg.kind !== 'helloAck') continue;
           if (!helloAcked) {
             // 第一响应 = HELLO 裁决（token 不匹配 → REJECT_BAD_TOKEN）

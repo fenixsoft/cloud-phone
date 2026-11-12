@@ -7,7 +7,7 @@
  */
 
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
@@ -42,6 +42,10 @@ const GATEWAY_PROBE_INTERVAL_MS = 200;
 const GATEWAY_READY_TIMEOUT_MS = GATEWAY_PROBE_COUNT * GATEWAY_PROBE_INTERVAL_MS;
 
 let gateway: ChildProcess | null = null;
+// 装配侧网关清理责任标记：spawn 后置 true，setup 成功返回即移交 teardown（置 false）。
+// SIGINT/SIGTERM/exit 兜底仅在标记为 true（装配未完成、teardown 尚未接管）时生效，
+// 正常路径仍由 teardown 按 PID 文件杀网关并回收，避免重复 kill 噪音。
+let gatewayOwnedBySetup = false;
 
 /** e2e token 覆盖通道：E2E_STATE.token = process.env.E2E_TOKEN 回退默认 cloudphone-m0，
  *  消费方为 e2e 探针与冒烟用例（grant.ts / smoke.spec.ts）。网关进程不经此模块传递——
@@ -96,6 +100,39 @@ async function waitForGateway(): Promise<void> {
     await sleep(GATEWAY_PROBE_INTERVAL_MS);
   }
   throw new Error(`网关 ${GATEWAY_READY_TIMEOUT_MS / 1000}s 内未就绪`);
+}
+
+/** 异常退出兜底（幂等）：仅当清理责任仍在装配侧时杀网关并回收 PID 文件，返回是否
+ *  实际执行了清理。装配中途被杀若无兜底，网关会成为无 PID 记录的孤儿占住 8090，
+ *  后续运行 waitForGateway 探到旧网关「假就绪」，新网关因端口占用退出。 */
+function cleanupGatewayBestEffort(): boolean {
+  if (!gatewayOwnedBySetup) return false;
+  gatewayOwnedBySetup = false;
+  try {
+    gateway?.kill();
+  } catch {
+    /* 网关已退出 */
+  }
+  try {
+    unlinkSync(PID_FILE);
+  } catch {
+    /* PID 文件未落盘或已被回收 */
+  }
+  return true;
+}
+
+/** 装配期进程级兜底：SIGINT/SIGTERM/exit 时杀网关并回收 PID 文件，SIGINT/SIGTERM
+ *  按信号惯例退出码终止（130/143）。装配成功返回后 gatewayOwnedBySetup=false，
+ *  三者均 no-op——正常路径由 globalTeardown 按 PID 文件清理，信号处理交还 Playwright
+ *  自身的优雅退出流程。 */
+function installGatewayExitGuards(): void {
+  process.on('SIGINT', () => {
+    if (cleanupGatewayBestEffort()) process.exit(130);
+  });
+  process.on('SIGTERM', () => {
+    if (cleanupGatewayBestEffort()) process.exit(143);
+  });
+  process.on('exit', () => cleanupGatewayBestEffort());
 }
 
 export default async function globalSetup(): Promise<void> {
@@ -178,14 +215,20 @@ export default async function globalSetup(): Promise<void> {
     },
     stdio: ['ignore', 'inherit', 'inherit'],
   });
+  gatewayOwnedBySetup = true;
+  installGatewayExitGuards();
   try {
-    await waitForGateway();
+    // spawn 后立即落盘 PID（不等就绪）：装配中途被 SIGINT/崩溃终止时 teardown 与
+    // 信号兜底仍能按 PID 找到网关，避免其在 8090 成为无 PID 记录的孤儿
     writeFileSync(PID_FILE, String(gateway.pid ?? 0));
+    await waitForGateway();
   } catch (err) {
-    // 就绪等待/PID 落盘失败：先杀掉已 spawn 的网关再重抛——否则孤儿进程占住端口，
-    // 下次运行 waitForGateway 会探到旧网关而「假就绪」
-    gateway.kill();
+    // 就绪等待/PID 落盘失败：先杀掉已 spawn 的网关并回收 PID 文件再重抛——否则孤儿
+    // 进程占住端口，下次运行 waitForGateway 会探到旧网关而「假就绪」
+    cleanupGatewayBestEffort();
     throw err;
   }
+  // setup 成功：清理责任移交 globalTeardown（读 PID 文件杀并回收），信号兜底转 no-op
+  gatewayOwnedBySetup = false;
   console.log(`[e2e] 环境就绪：网关 :${GATEWAY_PORT} → 源端 :${HOST_PORT}（${SOURCE_SERIAL}）`);
 }
