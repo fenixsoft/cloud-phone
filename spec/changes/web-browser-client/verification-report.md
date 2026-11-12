@@ -1,22 +1,35 @@
 # 验证报告：web-browser-client
 
-> ⚠️ 本报告由框架于 2026-11-12T04:01:07Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
-> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-12T03:53:20.212035+00:00+run-result@mtime1794456056391402906
+> ⚠️ 本报告由框架于 2026-11-12T04:18:54Z 自动合成（裁决 Agent 未写报告，已由框架合成），内容为结构化验证产物（report.json / .fenix-run-result.json）的忠实渲染。
+> 报告时效标记（判定本报告是否属上一轮）：合成源轮次指纹：report.json@2026-11-12T04:10:43.930873+00:00+run-result@mtime1794457122132282640
 
-## 结论：✅ 通过（verified）
+## 结论：❌ 未通过（Bug Found）
 
-**状态：verified — 19/34 场景通过，1 失败，0 错误（结构化数据存在失败明细，终局判定以 verification.verdict 为准）**
+**状态：bug-found — 20/34 场景通过，1 失败，0 错误（1 个真实产品 Bug）**
 
-34 场景：19 pass；15 非 PASS 全部归因 env，0 产品缺陷、0 测试缺陷。根因单一且已活体证实：宿主常驻守护 scripts/adb_forward_keepalive.sh（pid 2138002, ppid=1, 5s 周期幂等重建）持续持有 tcp:22333（UPSTREAM 缺省通路）——upstream-22333-free 本轮 -s 逐设备移除已正确生效（FORWARD_REMOVED 且零 REMOVE_FAILED，上轮 more-than-one-device 场景缺陷不复现），但移除后 1s 内 forward 被守护在 emulator-5554 重建（5556 的 FORWARD_LEFT 系 adb forward --list 忽略 -s 的全宿主列举假象，-s 5556 remove 报 listener not found 佐证），22333 空闲基线在本轮环境不可达成、重试确定性失败（非 flaky）；杀宿主守护超出场景职责，判 env 并标注「上游通路被宿主保活守护持有，无法验证」。该基线失败沿 depends_on 链传播，致 14 个 e2e/夹具场景 dependency_blocked（零自身失败信号，非产品缺陷）。静态情报 stale_literal_port(22333≠serving 38963) 经源码核实为误报：22333=verify.yaml UPSTREAM 缺省端口（:33/:116；server.js:30 DEFAULT_UPSTREAM='127.0.0.1:22333'，gateway-env-config-live 的 DEFAULTS_OK 断言即证），故不触发 scenario-repaired。正向字面链路（交付物/工具链/协议面/gateway 单测与环境配置/文档/连接页交互与 token 持久化）19 项全绿。
+34 场景：20 pass；1 个产品 bug（web-upstream-unreachable-explicit-fail：上游 WS1011 断连后 onWsClosed 清 helloTimer 不拒绝挂起 helloWaiter，await session.connect() 永悬挂，doConnect finally 不执行，连接按钮永久 disabled 无法重试——第2层 no_click_interception 失败，product-bug）；13 个 blocked-env 场景为依赖失败传播（跨轮已裁决 env 豁免，含同窗并行 parallel_context 上下文，原样写回）。场景静态情报 upstream-22333-free stale_literal_port 复核为误报（22333=UPSTREAM 协议缺省端口 server.js:30 spec 强制，非本轮 serving 端口 47607，本轮执行 UPSTREAM_FREE_OK 通过），已在 report.json 该场景 static_intel_review 注记，无需原地修复场景文件。无场景文件缺陷需修复，无 env 缺配置可由场景自建项。
 
 | 指标 | 数量 |
 | --- | --- |
-| 通过 | 19 |
+| 通过 | 20 |
 | 失败 | 1 |
 | 错误 | 0 |
-| 产品 Bug | 0 |
-| 本链增量 Token（输入） | 2.48M |
-| 本链增量 Token（输出） | 0.66M |
+| 产品 Bug | 1 |
+| 本链增量 Token（输入） | 2.55M |
+| 本链增量 Token（输出） | 0.69M |
+
+
+## 真实产品 Bug
+
+### BUG-01（severity=major）· no_click_interception
+
+- 关联场景：web-upstream-unreachable-explicit-fail
+- 描述：上游不可达显式失败后连接按钮永久禁用、无法重试：网关因上游拒连以 WS 1011 关闭连接时，onWsClosed 只清 HELLO 超时定时器、不拒绝挂起的 HELLO 应答 Promise，await session.connect() 永不落定，doConnect 的 finally 恢复逻辑永不执行，#connect-btn 自点击起持续 disabled（Playwright 3s 重试窗 10 次均 element is not enabled，窗尾已越过 HELLO_TIMEOUT_MS=5s，证 Promise 永久 pending）；用户看到失败横幅后只能刷新页面才能重连。影响范围：该缺陷使假源端/模拟器前置链 13 个下游场景 dependency_blocked 未获执行
+- 根因：client-web/app/src/net/SessionClient.ts onWsClosed(:519) 调 clearRequestTimers()（:486-495 仅 clearTimeout(helloTimer)，不 reject helloWaiter）——WS 在 HELLO_ACK 到达前关闭时 requestHello(:265-277) 的 Promise 永久 pending；main.ts doConnectOnce(:423) await session.connect() 悬挂，doConnect(:345 置 disabled / :350 finally removeAttribute) 的恢复分支永不触发。修复方向：onWsClosed 对挂起的 helloWaiter/startSession waiter 以 ConnectionError 显式 reject
+- 证据（场景 web-upstream-unreachable-explicit-fail 结构化证据，引用）：
+  - failed_assertions: [{"type": "no_click_interception", "selector": "#connect-btn", "expected": "点击未被遮挡拦截", "actual": "Locator.click: Timeout 3000ms exceeded——locator resolved to <button type=\"submit\" disabled=\"true\" id=\"connect-btn\">连接</button>，3s 重试窗内 10 次重试均 element is not enabled（intercept_detail=null，非遮挡）"}]
+  - screenshots: ["/root/cloud-phone/.fenix/verify-progress/web-browser-client/screenshots/web-upstream-unreachable-explicit-fail_assert_fail_0.png"]
+  - first_failed_step: 断言阶段（步骤4 wait 3000ms 后）：连接已显式失败（横幅与停留连接页断言均过），复验点击 #connect-btn 时按钮持续 disabled 不可点——main.ts:345 置禁用后 :350 finally 恢复逻辑未执行
 
 
 ## 场景结果
@@ -26,10 +39,9 @@
 | web-deliverables-exist | 交付物齐备性门：tasks.md Deliverables YAML 全部 21 个路径（gateway 3 + app 工程 3 + app src/tests/e2e 12 + docs 3）在验证树内逐个存在，任一缺失即非零退出并打印 MISSING 路径（出处：spec/changes/web-browser-client/tasks.md Deliverables YAML 3-43 行） | pass | 0/2 | - |
 | webapp-toolchain-ready | 浏览器端工具链就绪：node>=18、client-web/app 与 client-web/gateway 幂等 npm ci（lockfile 定版，跳过 playwright 浏览器下载）、vitest 可运行、gateway 唯一运行时依赖 ws 可 require、vite/typescript/playwright 可解析（出处：design.md D2/D3；tasks.md 1.1） | pass | 0/10 | - |
 | gateway-http-entry-endpoint | 网关同端口 HTTP 静态托管契约：HTTP GET / 返回 200 与入口 HTML（Content-Type text/html）、响应体为非空 HTML 文档（含 CloudPhone 标题）、延迟 <2s——页面与 /ws 升级同端口可用（出处：specs/web-gateway/spec.md「同端口静态托管与 WS 升级」；client-web/gateway/server.js:130 目录回落 index.html；navigate/http 目标 origin 由框架改写到本轮 serving 实例） | pass | 0/5 | - |
-| upstream-22333-free | 上游通路回收前置：幂等移除宿主上 tcp:22333 的 adb forward（常驻模拟器夹具可能持有），随后机械断言 127.0.0.1:22333 连接被拒——为「上游不可达」与「假源端接管」两类场景提供确定性的端口基线（出处：.fenix/verify.yaml serve 段 UPSTREAM 缺省 127.0.0.1:22333；scripts/bootstrap_adb.sh forward 口径）（judge 修复2：forward 移除改按 adb devices 序列号逐设备 -s 执行并回验 forward --list——宿主双模拟器下原无 -s 移除必然报 more than one device 且错误被 \|\| true 吞没） | fail | 2/2 | env |
+| upstream-22333-free | 上游通路回收前置：幂等移除宿主上 tcp:22333 的 adb forward（常驻模拟器夹具可能持有），随后机械断言 127.0.0.1:22333 连接被拒——为「上游不可达」与「假源端接管」两类场景提供确定性的端口基线（出处：.fenix/verify.yaml serve 段 UPSTREAM 缺省 127.0.0.1:22333；scripts/bootstrap_adb.sh forward 口径）（judge 修复2：forward 移除改按 adb devices 序列号逐设备 -s 执行并回验 forward --list——宿主双模拟器下原无 -s 移除必然报 more than one device 且错误被 \|\| true 吞没） | pass | 0/2 | - |
 | web-connect-page-renders | 连接页首屏渲染（无通道依赖）：入口页 / 渲染 token 输入框（required）、档位三选择器（720p/60fps/8000kbps 缺省值）、连接按钮可用、错误横幅为空、会话页保持 hidden；未连接不进会话视图（出处：client-web/app/index.html:19-43,55；client-web/app/src/main.ts:474-475；judge 修复：全部选择器以页面真实 id 落点，弃用幻觉 data-testid） | pass | 0/10 | - |
 | web-token-url-autofill-persist | token 经 URL 自动填入与 localStorage 持久化：以 /?token=e2e-probe-token 打开 → 输入框回填该值并写入 localStorage（URL 参数被 history.replaceState 清除）→ 无参重载 / → 输入框仍回填同值（持久化回填路径）（出处：client-web/app/src/main.ts:136-146,474；specs/browser-streaming-client/spec.md D8.1；judge 修复：回填校验与清除操作拆分为独立场景，断言窗口内不再被清除步骤覆盖） | pass | 0/4 | - |
-| web-upstream-unreachable-explicit-fail | 上游不可达显式失败：网关在而源端通路不在（22333 已回收）时点击连接 → WS 建立但 upstream 拒连致 WS 1011 关闭（server.js:219 WS_CLOSE_UPSTREAM_GONE）→ 页面显式呈现失败原因（会话尚未建立，无法自动重连）并停留连接页，不黑屏不静默重试（出处：specs/browser-streaming-client/spec.md「连接认证与会话编排」显式失败要求；client-web/app/src/net/SessionClient.ts:528-536） | blocked-env | - | env |
 | protocol-framing-surface | Framing.ts 大端记录流落地：[u8 recordType][u32 len][payload]（RECORD_CONTROL=0x01/RECORD_VIDEO=0x02/RECORD_HEADER_BYTES=5）、21B 视频帧头（u32 seq+u64 ptsUs+u8 flags+u16 fragIdx+u16 fragCnt+u32 totalLen）、TCP 整帧口径（fragCnt≠1 抛 ProtocolError）、seq 单调性缺口丢帧计数、u16String UTF-8 编解码落在 Framing（TextEncoder/TextDecoder）（出处：client-web/app/src/protocol/Framing.ts:16-23,242,352；tasks.md 1.2） | pass | 0/2 | - |
 | protocol-messages-surface | Messages.ts 17 条控制消息（0x01 HELLO–0x11 TEXT_INPUT）编解码分支齐全；解码器对未知尾部字节容忍跳过（HELLO 可选 takeover 尾字节先例）；34B 加密协商块可选、缺失回落 none；HELLO_ACK 携 hungSessions 列表；UTF-8 u16String 判定同时覆盖 Messages.ts 与 Framing.ts 委托实现（出处：client-web/app/src/protocol/Messages.ts:27-45,297-299；tasks.md 1.3；judge 修复：UTF-8 检查含 Framing.ts 委托防假阴性） | pass | 0/2 | - |
 | protocol-golden-tests-pass | 协议 golden 单测全绿（client-web/app 下 vitest run tests/protocol.golden.test.ts）：Kotlin 用例导出的字节向量双向逐字节断言，含 takeover 出现/缺失两形态与未知尾字节容忍；退出码以 POSIX 兼容方式捕获（出处：tasks.md 1.4；judge 修复：PIPESTATUS 为 bash 专属，dash 下 Bad substitution，改 POSIX 形态） | pass | 0/2 | - |
@@ -42,6 +54,7 @@
 | docs-protocol-annotations | docs/protocol.md 浏览器对接注记与三处勘误落盘：§4 附着时序勘误（ATTACH=START_SESSION{sessionId,mode=ATTACH} 非 HELLO 字段、附着自动触发关键帧）、控制方向表勘误（源端→客户端 1Hz PING 与 STATS 推送、浏览器必须应答 PONG）、§3.1 补记 HELLO 可选 takeover 尾字节（传输层抢占现役通道、会话层不读、浏览器 v1 永不发送）、§5 REJECT_BUSY 双来源语义（传输层占用闸门 + 会话层 ATTACH 恢复失败）、WS 承载同构注记含 ws:// 与 wss:// 两种形态（出处：docs/protocol.md:129-135,386,396,496-498；tasks.md 7.2；judge 修复：WS 承载词表补 ws(s):// 形态）（judge 修复2：WS 承载词表改为协议文档既有记法 ws(s)://（§8.1 单一记法承载 ws://与 wss:// 两形态，原字面 grep 客观失配）） | pass | 0/2 | - |
 | docs-web-client-manual | docs/web-client.md 部署手册与真机人工验收清单：网关 env 配置（GATEWAY_PORT/UPSTREAM/STATIC_DIR）与 systemd 常驻、frpc 新增 proxy（remotePort→GATEWAY_PORT）、token 书签交付（?token= URL）、交付自检、§6 真机单应用人工验收清单（单应用进入/切换、ATTACH 恢复、音频、剪贴板、文本注入、PC 键鼠与平板触屏）、明文风险如实注记（出处：docs/web-client.md §1-§6；tasks.md 7.3；judge 修复：明文风险词表放宽为 无 TLS\|保密性 同义表述） | pass | 0/2 | - |
 | web-latency-samples-delivery | 延迟采样交付（tasks.md 7.4 偏差注解口径）：docs/web-latency-samples.json 存在且为合法 JSON，含 LatencySamplesDoc schema 键（caliber/profile/browser/collectedAt/summary/samples），caliber 注明浏览器端口径；采样数组为空时 MUST 附 blocker 块（status=env-blocked + 恢复路径 recover），与 tasks.md 7.4「HUD 下载采样按钮为恢复路径交互」注解一致（出处：docs/web-latency-samples.json；client-web/app/src/ui/Hud.ts:51-58；tasks.md 7.4 注解） | pass | 0/2 | - |
+| web-upstream-unreachable-explicit-fail | 上游不可达显式失败：网关在而源端通路不在（22333 已回收）时点击连接 → WS 建立但 upstream 拒连致 WS 1011 关闭（server.js:219 WS_CLOSE_UPSTREAM_GONE）→ 页面显式呈现失败原因（会话尚未建立，无法自动重连）并停留连接页，不黑屏不静默重试（出处：specs/browser-streaming-client/spec.md「连接认证与会话编排」显式失败要求；client-web/app/src/net/SessionClient.ts:528-536） | failed（已修正） | 1/6 | product-bug |
 | web-token-clear-clears-input | 清除记忆的 Token：携带 token 进入（localStorage 已存值）→ 点击「清除记忆的 Token」按钮 → 输入框立即清空且横幅呈现「已清除本机保存的 token」，连接按钮仍可用（出处：client-web/app/src/main.ts:148-152；judge 修复：自 web-token-url-autofill-persist 拆分，清除动作不与回填断言同窗） | pass | 0/6 | - |
 | web-token-empty-input-rejected | 空 token 提交被原生校验拦截：空输入直接点击连接 → index.html required 属性原生拦截提交（不发起 WS、页面无错误横幅、焦点落到 token 输入框）、停留连接页（出处：client-web/app/index.html:23 required；judge 修复：显式校验横幅文案路径被原生校验短路不可达，断言改锚 required 属性与拦截后状态） | pass | 0/8 | - |
 | fake-source-up | 协议假源端接管 22333（Node 脚本化假源端，design.md D10 网关集成测试同款形态）：实现 HELLO 认证（cloudphone-m0）/占用闸门/START_SESSION 三模式（FULLSCREEN/SINGLE_APP 换新 sessionId、ATTACH 校验挂机表）/APP_LIST/1Hz STATS/应答 PONG/TEXT_INPUT ACK/CLIPBOARD_GET 降级通告/STOP 销毁/断开挂机，后台常驻并落健康文件；随后经本轮 serving 网关（FENIX_VERIFY_PORT）以 ws 客户端完成 HELLO→HELLO_ACK accepted→PING→PONG 活体探针——同时活体验证网关 WS↔TCP 双向字节中继（出处：specs/web-gateway/spec.md「协议无关字节中继」；design.md D10；docs/protocol.md §3 线格式） | blocked-env | - | env |
@@ -65,9 +78,6 @@
 
 | 场景 | 断言 | 归类 | 豁免理由 | 证据 |
 | --- | --- | --- | --- | --- |
-| upstream-22333-free | exit_code 步骤1(free)=0（实得 1） | env | 环境因素（非产品缺陷） | 移除语义本轮已正确：judge 修复2 的 -s 逐设备生效（FORWARD_REMOVED:emulator-5554、零 REMOVE_FAILED，上轮 more-than-one-device 缺陷不复现）；复活根源=宿主常驻 adb_forward_keepalive.sh 守护（ppid=1，5s 周... |
-| upstream-22333-free | output_match contains UPSTREAM_FREE_OK | env | 环境因素（非产品缺陷） | 同守护重建根因（活体复现一致：移除后 forward 复活）；5556 的 FORWARD_LEFT 系 adb forward --list 忽略 -s 的全宿主列举假象（活体 -s 5556 remove 报 listener not found，佐证 5556 无自有 forward）。22333=UPST... |
-| web-upstream-unreachable-explicit-fail | dependency_blocked skipped_depends_on=upstream-22333-free | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游 upstream-22333-free 的失败（已另行归因），本场景零断言零步骤执行，同窗并行 batch=2 peers=0 observed_parallel=0 |
 | fake-source-up | dependency_blocked skipped_depends_on=web-upstream-unreachable-explicit-fail | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游 web-upstream-unreachable-explicit-fail 的失败（已另行归因），本场景零断言零步骤执行，同窗并行 batch=3 peers=0 observed_parallel=0 |
 | web-wrong-token-explicit-fail | dependency_blocked skipped_depends_on=occupied-gate-cleanup | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游 occupied-gate-cleanup 的失败（已另行归因），本场景零断言零步骤执行 |
 | web-busy-holder-up | dependency_blocked skipped_depends_on=web-wrong-token-explicit-fail | env | 环境因素（非产品缺陷） | 依赖失败传播（非本场景产品缺陷）：阻断根因在上游 web-wrong-token-explicit-fail 的失败（已另行归因），本场景零断言零步骤执行，同窗并行 batch=5 peers=0 observed_parallel=0 |
