@@ -97,7 +97,9 @@ python3 scripts/measure_latency.py --serial emulator-5556 --seconds 20
 
 - 视频流未加密（spec 范围外）：不要把 frp/p2p 端点暴露到公网承载真实内容；
 - 单应用模式在模拟器镜像上不可用（shell 助手被系统 SIGKILL，见 device-notes §2.1），真机需重测；
-- MediaProjection 授权一次性凭据 + 闲置过期（Android 14）：分辨率切换需重新授权（矩阵已自动化）；
+- MediaProjection 授权一次性凭据 + 闲置过期（Android 14）：分辨率切换走零令牌 adaptTo（无需重授权）；
+  管线死亡后由三层自愈恢复（设备侧看门狗自动重授权 + 开机自启 + 宿主 grant/watch 巡检，
+  见 docs/device-notes.md §5.1），授权一次即可长时运行多客户端访问；
 - p2p 在双模拟器同宿主 NAT 下可能假阳性直连，真机异网重测见 device-notes §4。
 
 ---

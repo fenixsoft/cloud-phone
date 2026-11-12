@@ -93,8 +93,32 @@
 
 ## 5. 运维备忘
 
-- 重装源端 APK（`install -r`）会杀进程 → **投影授权与采集管线全部失效**，必须重跑：
-  `bash scripts/bootstrap_adb.sh grant`（内部顺序：起服务 → 授权 →（矩阵）带参建管线）。
+### 5.1 授权生命周期（2026-11-12 起：三层自愈，fix/media-projection-lifecycle）
+
+设计目标「授权一次、长时运行、多客户端随时可访问」由三层机制保障：
+
+1. **设备侧看门狗**（StreamService）：管线死亡（captureLost）后 2s 自动拉起 MainActivity 并
+   经 root helper（UIBTN 命令，uiautomator dump+tap）自动点掉系统授权框 → 管线自愈，
+   指数退避重试（5s→60s 封顶），成功打日志 `capture self-healed`。零人工。
+   同时 `acquireProjection` 凭据即用即清（防陈旧凭据二次铸造 → 同 UID 第二投影落地收回
+   活跃投影的级联自伤，即 admin-web-browser-client-1794415508 事故根因）。
+2. **开机自启**（BootReceiver）：BOOT_COMPLETED → MainActivity(AUTO_RECOVER) → 自动弹
+   授权框（API 34 后台直起 mediaProjection 型 FGS 受限，故经前台 Activity 走顺序铁律）；
+   框等 helper 点掉或宿主 grant/watch 收尾。
+3. **宿主侧**（scripts/bootstrap_adb.sh）：`grant` 子命令 = 前置对齐（stayon/freezer 关/SAW/先起
+   FGS）+ HOME 复位 + 3 次重试 + **活性确认**（dumpsys TYPE_SCREEN_CAPTURE + logcat
+   `shared capture ready` 时间窗过滤），授权落地即建管线（消灭凭据 60s 闲置失效窗口）；
+   `watch` 子命令 = 每 WATCH_INTERVAL 秒巡检投影活性，失活自动 grant。
+   注意：判活必须正向 grep `TYPE_SCREEN_CAPTURE`——本机死态 dumpsys 输出是两行
+   `Media Projection: \nnull`，反向 grep 死态字符串永不命中（曾致 watch 永远误报存活）。
+   logcat -T 时间戳经 adb 传参必须整条打包：`adb shell "date '+%m-%d %H:%M:%S.000'"`，
+   否则 adb 参数重组吃掉引号（曾致 tmark 截断、活性确认全挂）。
+
+- **重装源端 APK（`install -r`）会杀进程 → 投影授权与采集管线全部失效**，跑
+  `bash scripts/bootstrap_adb.sh grant`；此后管线死亡由设备侧看门狗自愈，通常无需再人工干预。
+- **验证/操作前先清场**：检查宿主有无遗留自动化脚本（如 /tmp/source-keeper*.sh 前车之鉴：
+  盲 tap 授权框造成第二投影互杀，把健康管线折腾死）；fenixd 验证轮（.fenix/runs/*.jsonl
+  mtime 判断活跃）也会操作设备与 git 树，先确认无活跃轮再动设备。
 - 客户端重装只需重连（会话级状态在服务端）。
 - `adb emu redir add udp:22334:22334` 幂等性差：已存在时先 `redir del` 再 `add`（bootstrap 已处理）。
 - frpc 隧道由宿主 `frpc -c frpc.toml` 常驻；公网入口 112.74.85.74:22333(TCP)/22334(UDP)。
