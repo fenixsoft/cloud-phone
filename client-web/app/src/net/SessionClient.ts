@@ -113,13 +113,19 @@ const RECONNECT_WINDOW_MS = 30_000;
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_DELAY_MS = 5_000;
 
+/** HELLO/START_SESSION 请求-应答等待者：resolve/reject 成对持有——任一结束路径（应答/超时/连接关闭）必须落定其一，防 await 永悬挂 */
+type AckWaiter = {
+  resolve: (msg: Extract<ControlMessage, { kind: 'helloAck' }>) => void;
+  reject: (err: Error) => void;
+};
+
 export class SessionClient {
   private ws: WebSocketLike | null = null;
   private parser = new RecordStreamParser();
   private handlers = new Map<EventName, Set<Handler<never>>>();
   private pendingStart = false;
-  private helloWaiter: ((msg: Extract<ControlMessage, { kind: 'helloAck' }>) => void) | null = null;
-  private startWaiter: ((msg: Extract<ControlMessage, { kind: 'helloAck' }>) => void) | null = null;
+  private helloWaiter: AckWaiter | null = null;
+  private startWaiter: AckWaiter | null = null;
   private appListWaiters = new Map<number, (msg: Extract<ControlMessage, { kind: 'appList' }>) => void>();
   private textSeq = 0;
   private appListSeq = 0;
@@ -267,11 +273,12 @@ export class SessionClient {
   private requestHello(msg: EncodableControlMessage): Promise<Extract<ControlMessage, { kind: 'helloAck' }>> {
     return new Promise((resolve, reject) => {
       const seq = ++this.ackSeq;
-      this.helloWaiter = resolve;
+      this.helloWaiter = { resolve, reject };
       this.send(msg);
       this.clearRequestTimers();
       this.helloTimer = this.scheduleTimer(() => {
         if (seq !== this.ackSeq) return; // 过期定时器（应答已了结或新请求已发起）：空转不触碰共享状态
+        this.helloWaiter = null;
         reject(new Error(`HELLO 应答超时（源端 ${HELLO_TIMEOUT_MS}ms 内未回，链路异常）`));
       }, HELLO_TIMEOUT_MS);
     });
@@ -281,12 +288,13 @@ export class SessionClient {
     return new Promise((resolve, reject) => {
       const seq = ++this.ackSeq;
       this.pendingStart = true;
-      this.startWaiter = resolve;
+      this.startWaiter = { resolve, reject };
       this.send(msg);
       this.clearRequestTimers();
       this.startSessionTimer = this.scheduleTimer(() => {
         if (seq !== this.ackSeq) return; // 过期定时器：不得清掉新请求的 pendingStart
         this.pendingStart = false;
+        this.startWaiter = null;
         reject(new Error('START_SESSION 应答超时'));
       }, START_SESSION_TIMEOUT_MS);
     });
@@ -390,14 +398,20 @@ export class SessionClient {
     switch (msg.kind) {
       case 'helloAck': {
         if (msg.status === HelloStatus.ACCEPTED) this.lastHungSessions = msg.hungSessions;
-        // 本轮请求已了结：取消超时定时器并递增 ackSeq 使残留的过期回调失效
+        // 本轮请求已了结：取消超时定时器并递增 ackSeq 使残留的过期回调失效；等待者交付即清（后续连接关闭不得重复触碰）
         this.ackSeq += 1;
         this.clearRequestTimers();
         if (this.pendingStart) {
           this.pendingStart = false;
-          this.startWaiter?.(msg);
+          const w = this.startWaiter;
+          this.startWaiter = null;
+          this.helloWaiter = null;
+          w?.resolve(msg);
         } else {
-          this.helloWaiter?.(msg);
+          const w = this.helloWaiter;
+          this.helloWaiter = null;
+          this.startWaiter = null;
+          w?.resolve(msg);
         }
         break;
       }
@@ -512,11 +526,39 @@ export class SessionClient {
     this.lastConnect = opts;
   }
 
+  /**
+   * 连接关闭时落定挂起的请求-应答 Promise（BUG-01 修复）：等待者的超时定时器已被
+   * clearRequestTimers 取消，若不显式 reject，await connect()/startOrSwitchSession() 的
+   * Promise 永久 pending——UI 连接入口的 finally 恢复永不执行，连接按钮永久 disabled，
+   * 用户只能刷新页面（验证场景 web-upstream-unreachable-explicit-fail 实证）。
+   */
+  private failPendingRequestsOnClose(code: number, reason: string): void {
+    // 首连握手阶段断开的文案与 reconnectFailed 收尾口径一致（UI 两条错误路径呈现同一失败原因，后写者仍含关键短语）
+    const detail = `code=${code}${reason ? `：${reason}` : ''}`;
+    const err = new Error(
+      this.currentSession
+        ? `连接已关闭（${detail}），HELLO/START_SESSION 应答未达`
+        : `连接已关闭（${detail}），会话尚未建立，无法自动重连`,
+    );
+    if (this.helloWaiter) {
+      const w = this.helloWaiter;
+      this.helloWaiter = null;
+      w.reject(err);
+    }
+    if (this.startWaiter) {
+      const w = this.startWaiter;
+      this.startWaiter = null;
+      w.reject(err);
+    }
+  }
+
   private onWsClosed(code: number, reason: string): void {
     this.stopPingLoop();
     this.ws = null;
     this.pendingStart = false;
     this.clearRequestTimers();
+    // 挂起的 HELLO/START_SESSION 请求随连接关闭显式失败：必须先于任何早退分支（userClosed/reconnecting 态同样不得悬挂）
+    this.failPendingRequestsOnClose(code, reason);
     // 跨连接状态清零：丢弃迟到的旧 PONG 与失真时钟，避免污染时钟估计/误喂看门狗
     this.pendingPings.clear();
     this.lastPongAtMs = 0;
