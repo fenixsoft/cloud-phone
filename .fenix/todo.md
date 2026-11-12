@@ -322,3 +322,8 @@
   - 证据：fenixd.log 06:51:39Z「跨轮裁决缓存已更新 34 个场景结论入缓存（四元组分量 build=✓/config=✓）」，但 07:14:49Z 紧随其后的派发「闭包征用后无可采信缓存条目，全量执行」——分钟级前写入的缓存未被下一次派发采信；verdict_stability.json 仍只含 04:18:54Z 第 1 轮记录（prev_stamp=null、report_mtime_ns 指向旧报告），解冻后各轮均未入册。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：闭包征用对同指纹（场景集+build/config 四元组不变）条目的采信策略放宽；verdict_stability 戳记接入派发前判定，使「指纹未变」轮次复用裁决而非重执行；为纯归因模式定义显式的缓存复用语义。
+- **[arbiter:web-brow] no_click_interception断言批后置求值系统性时序缺陷**
+  - 影响：runner 级「断言批后置统一求值」设计使所有导航进会话视图的场景系统性产生 no_click_interception 误报，逐轮各浮现一个（whack-a-mole），单个场景缺陷消耗整轮修复预算与一次 rerun 计数；已修场景的修法是逐场景补丁，同类误报会持续再生。
+  - 证据：judge_attribution.json 三条互证：web-token-url-autofill-persist-clear（断言时序，点击先于断言求值，web_runner.py:435 后置统一求值）、web-fullsession-apps-hud（05:43:24 accept：断言批在全部步骤后执行、应用页已被 show('session') 隐藏、trial click 报 not visible 非遮挡、真实点击与功能断言全过）、report.json@07:15:26 web-profile-custom-tier（9 步+功能断言全过，唯一失败为同类 no_click_interception .app-item not visible）。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：web_runner 支持 per-step 断言求值窗口或视图切换感知的断言求值时机（而非全部后置）；或 judge 修复轮按同模式批量修一批场景断言落点（一次申报覆盖同类全部场景）；或为 no_click_interception 增加求值时刻的页面视图状态快照作为归因证据。
