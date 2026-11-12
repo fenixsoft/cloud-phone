@@ -6,6 +6,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 开机自启（capture-lifecycle）：BOOT_COMPLETED → MainActivity(AUTO_RECOVER) 自动重授权 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 输入窗口合成驱动（SPEC 5.3 InputComposer）：透明 1×1 悬窗 5fps 强制 display 0 合成；
          需 bootstrap appops 登记（特殊权限，无运行时弹窗），未授权时自动降级 1Hz idle 合成 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -37,6 +39,15 @@
             android:name="cloudphone.source.LatencyTestActivity"
             android:exported="false"
             android:screenOrientation="portrait" />
+
+        <!-- 开机自启（capture-lifecycle）：系统受保护广播，仅系统可发 -->
+        <receiver
+            android:name="cloudphone.source.BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <service
             android:name="cloudphone.source.StreamService"

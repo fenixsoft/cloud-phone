@@ -41,6 +41,13 @@ import java.util.concurrent.atomic.AtomicLong;
  *                                             base64 规避行协议空格/特殊字符歧义，空格经 %s 转义)
  *   TONE <ms> [hz]              → OK | ERR   (播放 <ms>ms 正弦波，usage MEDIA——M3 音频捕获
  *                                             通道的可捕获负载源，loadgen 同款测试基建)
+ *   KEY <keycode>               → OK | ERR   (执行 `input keyevent <code>`，如 224=WAKEUP——
+ *                                             投影自愈流程熄屏唤醒)
+ *   UIBTN <base64-utf8-regex>   → OK <x>,<y> | ERR <reason>
+ *                                            (uiautomator dump 全屏窗口树，找 text/content-desc
+ *                                             匹配正则的节点并 `input tap` 其中心——投影自愈流程
+ *                                             免人工点「立即开始」系统弹窗；regex base64 规避
+ *                                             行协议空格/中文歧义)
  *   IDR <displayId>             → OK | ERR
  *   CAPS                        → OK <描述>
  *
@@ -232,12 +239,83 @@ public final class ShellHelper {
                     int hz = p.length > 2 ? Integer.parseInt(p[2]) : 440;
                     return playTone(ms, hz);
                 }
+                case "KEY": {
+                    // 投影自愈：`input keyevent`（root 直发 display 0，如 224=WAKEUP 熄屏唤醒）
+                    int keycode = Integer.parseInt(p[1]);
+                    return execLine("input", "keyevent", String.valueOf(keycode));
+                }
+                case "UIBTN": {
+                    // 投影自愈：uiautomator dump + 正则找节点 + tap 中心（免人工点系统弹窗）
+                    String decoded = new String(
+                        java.util.Base64.getDecoder().decode(p[1]), java.nio.charset.StandardCharsets.UTF_8);
+                    return tapUiText(decoded);
+                }
                 default:
                     return "ERR unknown command " + p[0];
             }
         } catch (Exception e) {
             return "ERR " + e.getClass().getSimpleName() + ": " + e.getMessage();
         }
+    }
+
+    /** 执行单行命令并按 TEXT 同款约定判定 OK/ERR（输出含 Error/Exception 即败） */
+    private static String execLine(String... cmd) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            boolean done = proc.waitFor(10, TimeUnit.SECONDS);
+            if (!done) {
+                proc.destroyForcibly();
+                return "ERR timeout: " + String.join(" ", cmd);
+            }
+            String out = readAll(proc.getInputStream());
+            return out.contains("Error") || out.contains("Exception")
+                ? "ERR " + firstLine(out) : "OK";
+        } catch (Exception e) {
+            return "ERR " + e.getClass().getSimpleName() + ": " + e.getMessage();
+        }
+    }
+
+    /**
+     * 投影自愈：uiautomator dump 当前窗口树 → 找 text/content-desc 匹配正则的可点节点 →
+     * `input tap` 其中心坐标（display 0）。找不到/超时回 ERR（调用方重试轮询）。
+     * dump 落 /sdcard/cloudphone_uidump.xml（显式路径，避免与他人 window_dump.xml 互踩）。
+     */
+    private static String tapUiText(String regex) {
+        String dumpPath = "/sdcard/cloudphone_uidump.xml";
+        String dump = execLine("uiautomator", "dump", dumpPath);
+        if (dump.startsWith("ERR")) return "ERR dump failed: " + dump.substring(4);
+        String xml;
+        try {
+            xml = new String(
+                java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(dumpPath)),
+                java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "ERR read dump: " + e.getMessage();
+        }
+        // <node text="…" content-desc="…" bounds="[x1,y1][x2,y2]" …>；正则任一属性命中即取
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+            "<node[^>]*?text=\"([^\"]*)\"[^>]*?content-desc=\"([^\"]*)\"[^>]*?bounds=\"\\[(\\d+),(\\d+)\\]\\[(\\d+),(\\d+)\\]\""
+        ).matcher(xml);
+        while (m.find()) {
+            String text = m.group(1);
+            String desc = m.group(2);
+            boolean hit = false;
+            try {
+                hit = java.util.regex.Pattern.compile(regex).matcher(text).find()
+                    || java.util.regex.Pattern.compile(regex).matcher(desc).find();
+            } catch (Exception e) {
+                return "ERR bad regex: " + e.getMessage();
+            }
+            if (hit) {
+                int x = (Integer.parseInt(m.group(3)) + Integer.parseInt(m.group(5))) / 2;
+                int y = (Integer.parseInt(m.group(4)) + Integer.parseInt(m.group(6))) / 2;
+                String tap = execLine("input", "tap", String.valueOf(x), String.valueOf(y));
+                return tap.startsWith("OK") ? "OK " + x + "," + y : tap;
+            }
+        }
+        return "ERR not found: " + regex;
     }
 
     private static String createDisplay(int w, int h, int dpi) throws IOException {

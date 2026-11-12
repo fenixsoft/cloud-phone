@@ -58,6 +58,12 @@ class StreamService : Service() {
     private var token = DEFAULT_TOKEN
     private var bootstrap: ShellBootstrap? = null
 
+    // ── 投影自愈看门狗（capture-lifecycle）：captureLost 后自动拉起授权 UI 并经 root 助手
+    // 免人工点「立即开始」，恢复共享管线——设计目标「长时运行、多客户端随时可访问」的兜底路径
+    private val recoveryHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val recoveryInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var recoveryAttempt = 0
+
     // ── M3 aux-channels-m3：音频下行（控制 TCP 记录通道）──
 
     /** 音频捕获（会话激活时建，会话结束释放——任务 2.2） */
@@ -88,6 +94,7 @@ class StreamService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instanceRef = this
         startForegroundWithType()
     }
 
@@ -131,11 +138,16 @@ class StreamService : Service() {
         currentSession = null
         captureLost = true // UI 侧据此自动重授权（MediaProjection 令牌一次性+会超时，丢失后旧凭据必失效）
         android.util.Log.w("cloudphone-source", "shared capture lost (projection stopped)")
+        requestRecovery() // 投影自愈：不再等真人回源端 App，看门狗自动走授权流程
     }
 
     /** 授权后立即创建共享采集管线（一授权一 VD；会话 attach 不再触碰投影令牌） */
     private fun ensureSharedCapture(params: EncoderPipeline.SessionParams) {
         if (sharedCapture != null && captureParams == params) {
+            // 凭据不滞留：管线健在时任何存量令牌（如管线未死时的重复授予）都是
+            // 级联隐患——音频路径 acquireProjection 若消费它会铸出第二投影，
+            // 系统按一投影一应用收回活跃视频投影。宁弃勿险，统一即用即清。
+            StreamService.projectionGrant = null
             // 同参幂等：也打 ready 日志（自动化以该行判定管线就绪）
             android.util.Log.i(
                 "cloudphone-source",
@@ -144,6 +156,7 @@ class StreamService : Service() {
             return
         }
         sharedCapture?.let { existing ->
+            StreamService.projectionGrant = null // 同上：不滞留（adapt 分支同样不消费令牌）
             // 异参自适应：换编码器面（零投影令牌消耗），任意客户端档位即插即连，
             // 不再依赖后台重新授权（凭据一次性：二次铸造/二次建 VD 均 SecurityException）
             if (existing.adaptTo(params) { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) }) {
@@ -170,6 +183,7 @@ class StreamService : Service() {
             // 用户会永远卡在「采集管线启动失败」（用户报告的问题 2 的另一半根因）。
             lastStartError = "需要 MediaProjection 授权（先在源端 App 点『授予 MediaProjection 授权』重新授权）"
             captureLost = true
+            requestRecovery() // 投影自愈：客户端会话被拒后自动恢复，不需人工回源端重授权
             return
         }
         // 丢失回调带实例身份校验：旧管线的 onStop 异步迟到时不得误清新管线
@@ -187,13 +201,115 @@ class StreamService : Service() {
             StreamService.projectionGrant = null
             captureLost = true
             lastStartError = "投屏授权已失效，请在源端 App 点『授予 MediaProjection 授权』重新授权后重连"
+            requestRecovery() // 投影自愈
             return
         }
         sharedCapture = sc
         captureParams = params
         captureLost = false
+        recoveryAttempt = 0
         android.util.Log.i("cloudphone-source", "shared capture ready ${params.width}x${params.height}@${params.fps}/${params.bitrateKbps}kbps")
     }
+
+    // ── 投影自愈看门狗（capture-lifecycle）：投影死亡 → 自动授权 → 管线常驻 ──
+
+    /** 恢复轮询体（同一实例防重复排程；主线程 handler） */
+    private val recoveryPass = Runnable { runRecoveryPass() }
+
+    /** 安排一次恢复尝试：2s 后起（投影 stop 回调风暴时给系统留稳定窗） */
+    fun requestRecovery() {
+        recoveryHandler.removeCallbacks(recoveryPass)
+        recoveryHandler.postDelayed(recoveryPass, RECOVERY_FIRST_DELAY_MS)
+    }
+
+    private fun runRecoveryPass() {
+        if (!captureLost || sharedCapture != null) return // 已恢复（人工/客户端路径先到）
+        if (!recoveryInFlight.compareAndSet(false, true)) return
+        Thread {
+            try {
+                recoverProjectionOnce()
+            } catch (e: Exception) {
+                android.util.Log.w("cloudphone-source", "recovery pass error: ${e.message}")
+            } finally {
+                recoveryInFlight.set(false)
+            }
+        }.start()
+    }
+
+    /** 单轮恢复：tap 已在弹窗 → 无窗则唤醒+拉起 MainActivity → 轮询 tap「立即开始」→ 等管线就绪 */
+    private fun recoverProjectionOnce() {
+        val helper = bootstrap ?: ShellBootstrap()
+        val helperOk = helper.detect().status == ShellBootstrap.Status.AVAILABLE
+        if (!helperOk) {
+            // 无 root 助手（重启后未 bootstrap / 非 root 真机）：退化人工路径——仅拉起授权界面，
+            // 真人在源端点一次即可；宿主侧 `bootstrap_adb.sh watch` 亦会兜底重授权
+            android.util.Log.w(
+                "cloudphone-source",
+                "自愈：shell 助手不可用，拉起 MainActivity 等待人工授权",
+            )
+            launchMainActivityForRecovery()
+            scheduleRecoveryRetry()
+            return
+        }
+        // 弹窗可能已在（上轮已拉起）：先试探 tap，避免重复拉起叠出双授权框
+        var tapped = tryTapConsent(helper)
+        if (!tapped) {
+            helper.pressKey(224) // KEYCODE_WAKEUP：熄屏时 uiautomator dump 看不到窗
+            launchMainActivityForRecovery()
+            val deadline = nowMs() + 12_000L
+            while (nowMs() < deadline && !tapped) {
+                Thread.sleep(1_500L)
+                tapped = tryTapConsent(helper)
+            }
+        }
+        if (!tapped) {
+            scheduleRecoveryRetry()
+            return
+        }
+        // 等 onActivityResult → ACTION_START_CAPTURE → ensureSharedCapture 落地
+        val readyDeadline = nowMs() + 20_000L
+        while (nowMs() < readyDeadline) {
+            if (!captureLost && sharedCapture != null) {
+                android.util.Log.i(
+                    "cloudphone-source",
+                    "capture self-healed（第 ${recoveryAttempt + 1} 轮自愈成功；凭据已消费即清）",
+                )
+                recoveryAttempt = 0
+                return
+            }
+            Thread.sleep(1_000L)
+        }
+        scheduleRecoveryRetry()
+    }
+
+    private fun tryTapConsent(helper: ShellBootstrap): Boolean =
+        helper.tapUiText(CONSENT_BUTTON_REGEX).ok
+
+    private fun launchMainActivityForRecovery() {
+        val i = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .putExtra(EXTRA_AUTO_RECOVER, true)
+        runCatching { startActivity(i) }.onFailure {
+            android.util.Log.w(
+                "cloudphone-source",
+                "自愈拉起 MainActivity 失败（SYSTEM_ALERT_WINDOW 未登记？）: ${it.message}",
+            )
+        }
+    }
+
+    /** 指数退避 5s→10s→20s→40s→60s 封顶，长驻常试（云手机源端 = 无人值守设备） */
+    private fun scheduleRecoveryRetry() {
+        recoveryAttempt++
+        val delayMs = minOf(
+            RECOVERY_MAX_DELAY_MS,
+            RECOVERY_BASE_DELAY_MS shl (recoveryAttempt - 1).coerceAtMost(4),
+        )
+        android.util.Log.w("cloudphone-source", "自愈未完成，${delayMs / 1000}s 后重试（第 $recoveryAttempt 轮）")
+        recoveryHandler.removeCallbacks(recoveryPass)
+        recoveryHandler.postDelayed(recoveryPass, delayMs)
+    }
+
+    private fun nowMs(): Long = android.os.SystemClock.elapsedRealtime()
 
     private fun startStreaming(kind: BackendKind, tcpPort: Int, udpPort: Int, useUdp: Boolean) {
         val bootstrap = ShellBootstrap()
@@ -719,6 +835,8 @@ class StreamService : Service() {
 
     override fun onDestroy() {
         running = false
+        recoveryHandler.removeCallbacks(recoveryPass)
+        instanceRef = null
         statsThread?.interrupt()
         onSessionReleased() // 服务销毁释放音频捕获
         audioSenderThread?.interrupt()
@@ -741,6 +859,17 @@ class StreamService : Service() {
         const val CHANNEL_ID = "cloudphone-stream"
         /** 授权成功后由 MainActivity 发起：立即用凭据建共享采集管线 */
         const val ACTION_START_CAPTURE = "cloudphone.source.START_CAPTURE"
+
+        /** 拉起 MainActivity 触发自动重授权的 extra（自愈看门狗/开机自启共用） */
+        const val EXTRA_AUTO_RECOVER = "cloudphone.source.AUTO_RECOVER"
+
+        /** 系统授权弹窗确认按钮正则（设备侧 UIBTN 与宿主侧 bootstrap_adb.sh 同源） */
+        const val CONSENT_BUTTON_REGEX = "立即开始|开始采集|Start [Nn]ow|Share screen|Cast"
+
+        /** 自愈节拍：首次尝试 2s；重试 5s 指数退避（2^n）封顶 60s，长驻常试 */
+        const val RECOVERY_FIRST_DELAY_MS = 2_000L
+        const val RECOVERY_BASE_DELAY_MS = 5_000L
+        const val RECOVERY_MAX_DELAY_MS = 60_000L
         /** 控制通道积压阈值（源端 PING/PONG RTT 看门狗，任务 2.2）：超过即丢积压音频保视频 */
         const val BACKLOG_RTT_THRESHOLD_MS = 800.0
 
@@ -762,17 +891,27 @@ class StreamService : Service() {
         /** 会话开始前取可用投影：优先用凭据新铸，失败回退缓存实例 */
         fun acquireProjection(context: Context): MediaProjection? {
             projectionGrant?.let { (code, data) ->
-                try {
+                // 凭据一次性：铸造成功即消费（置 null）。滞留陈旧凭据会被后续
+                // acquireProjection 二次铸造 → 同 UID 第二投影落地时系统收回第一活跃投影
+                // （一投影一应用强制，freezer 事故同类级联），必须即用即清。
+                // 铸造失败 = 凭据已死（已消费/闲置过期），同样即清防反复空转。
+                val consumed = try {
                     val mgr = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                     val fresh = mgr.getMediaProjection(code, data)
                     projectionRef = fresh
-                    return fresh
+                    true
                 } catch (e: Exception) {
                     android.util.Log.i("cloudphone-source", "fresh projection mint failed: ${e.message}")
+                    false
                 }
+                projectionGrant = null
+                if (consumed) return projectionRef
             }
             return projectionRef
         }
+
+        /** 服务实例交接点：MainActivity（授权取消/自动恢复）触发实例看门狗用 */
+        @Volatile var instanceRef: StreamService? = null
 
         private fun nowUs(): Long = android.os.SystemClock.elapsedRealtimeNanos() / 1000
 

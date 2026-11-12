@@ -128,6 +128,22 @@ class ShellBootstrap(
         return command("TEXT $b64")
     }
 
+    /**
+     * 投影自愈（capture-lifecycle）：`input keyevent <code>` 直发 display 0
+     * （如 224=KEYCODE_WAKEUP 熄屏唤醒——uiautomator dump 熄屏时看不到弹窗）。
+     */
+    fun pressKey(keycode: Int): ShellResult = command("KEY $keycode")
+
+    /**
+     * 投影自愈（capture-lifecycle）：uiautomator dump + 正则找节点 + tap 中心——
+     * 免人工点「立即开始」系统弹窗。返回 OK "x,y"（已 tap）或 ERR（调用方轮询重试）。
+     * 正则 base64(UTF-8) 传输，同 inputText 规避行协议歧义。
+     */
+    fun tapUiText(regex: String): ShellResult {
+        val b64 = java.util.Base64.getEncoder().encodeToString(regex.toByteArray(Charsets.UTF_8))
+        return command("UIBTN $b64")
+    }
+
     fun capabilities(): ShellResult = command("CAPS")
 
     /** 连接指定 display 的帧流（22341，首行 displayId）；返回记录读取器 */

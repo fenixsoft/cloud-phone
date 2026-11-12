@@ -60,6 +60,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        absorbAutoRecover(intent)
         val pad = (16 * resources.displayMetrics.density).toInt()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad) }
 
@@ -198,8 +199,25 @@ class MainActivity : Activity() {
         super.onResume()
         refreshImeStatus()
         refreshOverlayStatus()
-        // 投影失效自动重授权：令牌一次性+可超时（挂机/锁屏/系统回收后失效），
-        // 丢失后客户端连接全被拒——回到源端 App 时自动弹系统授权框，确认即恢复。
+        maybeAutoReproject()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // SINGLE_TOP 复用栈顶实例（自愈看门狗重复拉起时不再叠实例）：吸收 extra 后同样走自动重授权
+        absorbAutoRecover(intent)
+        maybeAutoReproject()
+    }
+
+    /** 自愈/开机自启路径：携带 AUTO_RECOVER extra → 置 captureLost，onResume/onNewIntent 消费即弹授权框 */
+    private fun absorbAutoRecover(intent: Intent?) {
+        if (intent?.getBooleanExtra(StreamService.EXTRA_AUTO_RECOVER, false) == true) {
+            StreamService.captureLost = true
+        }
+    }
+
+    /** captureLost 消费口：弹系统授权框（autoRebuild=true → 授权后立即重建管线） */
+    private fun maybeAutoReproject() {
         if (StreamService.captureLost) {
             StreamService.captureLost = false
             Toast.makeText(this, "投屏授权已失效，请重新授权以恢复串流", Toast.LENGTH_LONG).show()
@@ -257,18 +275,25 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_PROJECTION && resultCode == RESULT_OK && data != null) {
             // 本镜像约束：一授权只能铸一个 MediaProjection 实例且闲置约 60s 失效。
-            // 只缓存凭据，不在此处建管线——管线参数由启动方（UI 默认/矩阵 extras）决定，
-            // 且必须用新铸的凭据建（自动建会抢先消耗凭据，后续带参重建会失败）
+            // 凭据落地即消费（capture-lifecycle）：两条路径都立即建默认参管线——
+            // ①消灭凭据闲置失效窗口；②杜绝新鲜令牌滞留 projectionGrant：滞留令牌若被
+            // 音频路径 acquireProjection 消费会铸出第二投影，系统按一投影一应用收回
+            // 活跃视频投影 → 级联清闸（freezer 事故同款机制）。参数差异由 adaptTo
+            // 零令牌切档消化（换编码器 surface / vd.setSurface+resize），无需新凭据。
             StreamService.projectionGrant = resultCode to data
+            pendingRebuildAfterGrant = false
+            StreamService.captureLost = false
+            val intent = Intent(this, StreamService::class.java).setAction(StreamService.ACTION_START_CAPTURE)
+            if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            statusText.text = "授权已就绪，采集管线建立中…"
+        } else if (requestCode == REQUEST_PROJECTION) {
+            // 授权被取消（人为拒绝/弹窗异常消失）：自动恢复路径不能哑火——
+            // 回灌 captureLost 触发自愈看门狗重试（无人值守源端：串流必须随时可用）
             if (pendingRebuildAfterGrant) {
-                // 投影失效自动重授权路径：凭据立即消费建默认参管线，恢复串流
                 pendingRebuildAfterGrant = false
-                StreamService.captureLost = false
-                val intent = Intent(this, StreamService::class.java).setAction(StreamService.ACTION_START_CAPTURE)
-                if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-                statusText.text = "已重新授权，采集管线恢复中…"
-            } else {
-                statusText.text = "MediaProjection 授权已就绪（点『启动串流服务』建采集管线）"
+                StreamService.captureLost = true
+                StreamService.instanceRef?.requestRecovery()
+                statusText.text = "授权被取消，自愈看门狗将自动重试"
             }
         }
     }

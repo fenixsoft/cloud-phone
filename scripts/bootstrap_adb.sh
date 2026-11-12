@@ -113,10 +113,53 @@ for m in re.finditer(r'<node[^>]*?text="([^"]*)"[^>]*?bounds="\[(\d+),(\d+)\]\[(
 PYEOF
 }
 
+# 投影活性单查：正向判活——dumpsys 列出 TYPE_SCREEN_CAPTURE 投影条目才算活。
+# 勿用反向判死（grep "Media Projection: null"）：本机死态输出实为两行
+# "Media Projection: \nnull"，该模式永不命中 → 永远误报存活（曾致 watch 沉默）。
+projection_alive() {
+  adb -s "$SOURCE_SERIAL" shell dumpsys media_projection 2>/dev/null | grep -q "TYPE_SCREEN_CAPTURE"
+}
+
+wait_projection_alive() { # $1=超时秒（每秒一查）
+  local timeout="${1:-15}" i
+  for ((i = 0; i < timeout; i++)); do
+    if projection_alive; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+# 授权落地即建共享采集管线（capture-lifecycle）：凭据一次性+闲置 ~60s 失效，
+# 只授权不建管线会让凭据死在等待窗口里（wire-e2e-credential-lifecycle 缺口①的根治面）。
+# 管线常驻后任意客户端档位经 adaptTo 零令牌挂接，不再有时效窗口。
+build_capture_pipeline() {
+  adb -s "$SOURCE_SERIAL" shell am start-foreground-service -n cloudphone.source/.StreamService \
+    -a cloudphone.source.START_CAPTURE \
+    --ei width 1280 --ei height 720 --ei fps 60 --ei bitrateKbps 8000 >/dev/null 2>&1
+}
+
+# 管线就绪确认：读 tap 时刻之后的 logcat（-T 设备时刻标记，避免命中本轮之前的 stale ready 行）
+# 注意：adb shell 会重组参数吃掉引号，时间串含空格必须整条命令打包 + 内层单引号
+capture_ready_since() { # $1=起点 "MM-DD HH:MM:SS.mmm" $2=超时秒
+  local tmark="$1" timeout="${2:-20}" i
+  for ((i = 0; i < timeout; i++)); do
+    if adb -s "$SOURCE_SERIAL" shell "logcat -d -T '$tmark' -s cloudphone-source" 2>/dev/null |
+      grep -q "shared capture ready"; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 grant_projection() {
-  adb -s "$SOURCE_SERIAL" shell am start -n cloudphone.source/.MainActivity
+  # 前置复位：HOME 清遮挡——实测同任务其他 Activity（LatencyTestActivity 形态）会挡住授予
+  # 按钮，tap 命中的是别的东西（台账 todo: bootstrap-grant-confirmation ②）
+  adb -s "$SOURCE_SERIAL" shell input keyevent KEYCODE_HOME >/dev/null 2>&1 || true
+  sleep 1
+  adb -s "$SOURCE_SERIAL" shell am start -n cloudphone.source/.MainActivity >/dev/null
   sleep 2
-  local try x y
+  local try x y tmark
   for try in 1 2 3; do
     # 应用内"授予"按钮
     adb -s "$SOURCE_SERIAL" shell uiautomator dump /sdcard/window_dump.xml >/dev/null 2>&1 || true
@@ -131,17 +174,36 @@ grant_projection() {
     adb -s "$SOURCE_SERIAL" shell "cat /sdcard/window_dump.xml" > /tmp/window_dump.xml 2>/dev/null || true
     read -r x y <<< "$(center_of_text /tmp/window_dump.xml '立即开始|开始采集|Start [Nn]ow|Share screen|Cast')"
     if [[ -n "${x:-}" ]]; then
+      # 时刻标记须在 tap 前取：后续 ready 行必须晚于它才算本轮新产出
+      # （adb shell 引号重组陷阱：格式串必须整条命令打包传设备 shell）
+      tmark="$(adb -s "$SOURCE_SERIAL" shell "date '+%m-%d %H:%M:%S.000'" | tr -d '\r')"
       adb -s "$SOURCE_SERIAL" shell input tap "$x" "$y"
-      sleep 1
-      adb -s "$SOURCE_SERIAL" exec-out screencap -p > "$SHOTS_DIR/projection_grant_try${try}.png"
-      say "MediaProjection 授权已点击（截图 $SHOTS_DIR/projection_grant_try${try}.png）"
-      return 0
+      # 活性确认（台账 todo: bootstrap-grant-confirmation ①）：
+      # ① dumpsys 投影非 null ② logcat 本轮 fresh "shared capture ready"（授权即建管线）
+      if wait_projection_alive 15 && build_capture_pipeline && capture_ready_since "$tmark" 20; then
+        adb -s "$SOURCE_SERIAL" exec-out screencap -p > "$SHOTS_DIR/projection_grant_try${try}.png"
+        say "MediaProjection 授权+管线就绪（活性确认通过，截图 $SHOTS_DIR/projection_grant_try${try}.png）"
+        return 0
+      fi
+      say "授权已点击但活性确认未过（try=$try：投影未落地或管线未就绪）——重试"
     fi
     adb -s "$SOURCE_SERIAL" exec-out screencap -p > "$SHOTS_DIR/projection_grant_try${try}.png"
     sleep 1
   done
-  say "（授权自动点击未确认成功——请手动在源端 App 完成一次授权；截图已存 $SHOTS_DIR）"
-  return 0
+  adb -s "$SOURCE_SERIAL" exec-out screencap -p > "$SHOTS_DIR/projection_grant_failed.png"
+  say "授权自动化 3 次未确认成功——请人工在源端完成一次授权（截图 $SHOTS_DIR/projection_grant_failed.png）"
+  return 1
+}
+
+# grant 前置（与 all 分支对齐，台账 todo: bootstrap-grant-confirmation ③）：
+# freezer 关闭防 tap 延迟 13-21s→重复授权互杀；SAW 登记供设备侧自愈后台拉起；
+# 先起 FGS（顺序铁律：getMediaProjection 时必须已有 mediaProjection 型前台服务）
+grant_prereqs() {
+  adb -s "$SOURCE_SERIAL" shell svc power stayon true >/dev/null
+  adb -s "$SOURCE_SERIAL" shell device_config put activity_manager_native_boot cached_apps_freezer_enabled false >/dev/null 2>&1 || true
+  adb -s "$SOURCE_SERIAL" shell appops set cloudphone.source SYSTEM_ALERT_WINDOW allow
+  adb -s "$SOURCE_SERIAL" shell am start-foreground-service -n cloudphone.source/.StreamService >/dev/null
+  sleep 1
 }
 
 # ── main ────────────────────────────────────────────────────────────
@@ -164,19 +226,50 @@ case "${1:-all}" in
     adb -s "$CLIENT_SERIAL" shell device_config put activity_manager_native_boot cached_apps_freezer_enabled false >/dev/null 2>&1 || true
     # 触摸延迟修复（SPEC 5.3）：输入窗口合成驱动需要 SYSTEM_ALERT_WINDOW（透明 1×1 悬窗
     # 以 5fps 失效自身，强制 display 0 逐次合成）。属设备侧一次性登记；未授权时源端降级运行并 WARN。
+    # 同时是 capture-lifecycle 设备侧自愈的前置（后台拉起 MainActivity 需 SAW）。
     adb -s "$SOURCE_SERIAL" shell appops set cloudphone.source SYSTEM_ALERT_WINDOW allow
-    say "SYSTEM_ALERT_WINDOW 已登记（InputComposer 输入窗口合成驱动）"
-    # 顺序关键：先起服务（Android 14 要求 getMediaProjection 时已有 mediaProjection FGS），再授权
+    say "SYSTEM_ALERT_WINDOW 已登记（InputComposer 输入窗口合成驱动 + 自愈后台拉起）"
+    # 顺序关键：先起服务（Android 14 要求 getMediaProjection 时已有 mediaProjection FGS），再授权；
+    # grant_projection 成功后立即经 ACTION_START_CAPTURE 建共享采集管线（授权即消费，
+    # 消灭凭据闲置失效窗口），客户端此后任意时刻连接都可零令牌挂接。
     adb -s "$SOURCE_SERIAL" shell am start-foreground-service -n cloudphone.source/.StreamService >/dev/null
     sleep 1
     grant_projection
-    say "环境就绪：源端 App 内点『启动串流服务』，客户端 App 连 $SOURCE_SERIAL 的 $SOURCE_HOST_PORT 即可观看"
+    say "环境就绪：共享采集管线已常驻，客户端 App 连 $SOURCE_SERIAL 的 $SOURCE_HOST_PORT 即可观看（无需人工启动服务）"
+    say "长时运行保障：投影失活时源端自愈（SAW+helper）自动重授权；宿主可另起 '$0 watch' 兜底巡检"
     ;;
   health) health_check ;;
   install) health_check && build_and_install ;;
   forward) setup_forwarding ;;
   helper) start_shell_helper ;;
   ime) setup_ime ;;
-  grant) grant_projection ;;
-  *) echo "用法: $0 [all|health|install|forward|helper|ime|grant]" >&2; exit 2 ;;
+  grant)
+    # 对齐 all 分支前置（台账 todo: bootstrap-grant-confirmation ③）：
+    # freezer 关闭防 tap 延迟互杀；SAW 登记供自愈；先起 FGS（顺序铁律）
+    need_adb
+    adb -s "$SOURCE_SERIAL" wait-for-device
+    grant_prereqs
+    grant_projection
+    ;;
+  watch)
+    # 宿主侧长驻看门狗（capture-lifecycle 第三层兜底）：巡检投影活性，
+    # 失活即自动重授权+活性确认。覆盖设备侧自愈无能为力的形态
+    # （进程被杀/helper 未拉起/重启后 SAW 丢失等）。设备侧自愈为主，本路径兜底。
+    need_adb
+    health_check
+    WATCH_INTERVAL="${WATCH_INTERVAL:-10}"
+    say "watch 启动：每 ${WATCH_INTERVAL}s 巡检投影活性（WATCH_INTERVAL 环境变量可调，Ctrl-C 退出）"
+    while true; do
+      # 设备掉线（模拟器关闭/adb 断开）时不误报，仅等待恢复
+      if adb -s "$SOURCE_SERIAL" get-state 2>/dev/null | grep -q device; then
+        if ! projection_alive; then
+          say "$(date '+%F %T') 投影失活 → 自动重授权+重建管线"
+          start_shell_helper
+          grant_projection || say "$(date '+%F %T') 重授权未确认成功（下轮巡检继续）"
+        fi
+      fi
+      sleep "$WATCH_INTERVAL"
+    done
+    ;;
+  *) echo "用法: $0 [all|health|install|forward|helper|ime|grant|watch]" >&2; exit 2 ;;
 esac
