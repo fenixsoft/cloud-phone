@@ -118,8 +118,8 @@ const MIME = {
   '.wasm': 'application/wasm',
 };
 
-/** 静态文件解析：拒绝路径穿越，目录请求回落 index.html；不在托管根内返回 null */
-function resolveStaticPath(staticDir, urlPath) {
+/** 静态文件解析：拒绝路径穿越（词法 + 软链逃逸双层），目录请求回落 index.html；不在托管根内返回 null */
+function resolveStaticPath(staticDir, staticRealDir, urlPath) {
   let pathname;
   try {
     pathname = decodeURIComponent(new URL(urlPath, 'http://localhost').pathname);
@@ -130,16 +130,26 @@ function resolveStaticPath(staticDir, urlPath) {
   if (pathname === '/' || pathname === '') pathname = '/index.html';
   const resolved = path.resolve(staticDir, `.${pathname}`);
   if (resolved !== staticDir && !resolved.startsWith(staticDir + path.sep)) return null; // 穿越
+  // 词法前缀比较拦不住 staticDir 内软链指向托管根之外：realpath 解析链接后再校验真实路径
+  // 仍位于托管根真实路径（staticRealDir，启动时算一次）内；解析失败（目标不存在等）回退
+  // 既有词法校验结果，交由后续 fs.stat 走原有 404，保持既有拒绝行为不变
+  let real;
+  try {
+    real = fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+  if (real !== staticRealDir && !real.startsWith(staticRealDir + path.sep)) return null; // 软链逃逸出托管根
   return resolved;
 }
 
 /** 静态文件服务（无框架；仅 GET/HEAD；未命中 404） */
-function serveStatic(staticDir, req, res) {
+function serveStatic(staticDir, staticRealDir, req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { Allow: 'GET, HEAD' }).end();
     return;
   }
-  const filePath = resolveStaticPath(staticDir, req.url ?? '/');
+  const filePath = resolveStaticPath(staticDir, staticRealDir, req.url ?? '/');
   if (!filePath) {
     res.writeHead(403).end('forbidden');
     return;
@@ -323,9 +333,17 @@ export function startGateway(opts = {}) {
     ...opts,
   };
   const log = opts.log;
+  // 托管根真实路径（启动时算一次）：静态文件软链逃逸校验的前缀基准；
+  // 目录尚不存在（构建未产出）时回落词法路径，静态请求按原行为 404
+  let staticRealDir = cfg.staticDir;
+  try {
+    staticRealDir = fs.realpathSync(cfg.staticDir);
+  } catch {
+    // 回落 cfg.staticDir
+  }
   const httpServer = http.createServer((req, res) => {
     try {
-      serveStatic(cfg.staticDir, req, res);
+      serveStatic(cfg.staticDir, staticRealDir, req, res);
     } catch (err) {
       // 兜底：静态服务同步异常（如异常请求路径）不得穿透为 uncaughtException 击穿进程
       log?.(`static handler error: ${err?.message ?? err}`);
@@ -339,61 +357,86 @@ export function startGateway(opts = {}) {
   // 协议单记录上限 8MiB（MAX_RECORD_BYTES），加记录头余量即可；坏流量不必在网关放大内存占用
   const wss = new WebSocketServer({ noServer: true, maxPayload: 9 * 1024 * 1024 });
   const relays = new Set();
-  const wsConnsByIp = new Map(); // ip → { active, windowStart, windowCount }：并发与新建速率记账
+  const wsConnsByIp = new Map(); // ip → { active, windowStart, windowCount }：并发与新建速率记账；并发归零且窗口过期即回收条目
 
   httpServer.on('upgrade', (req, socket, head) => {
-    const { pathname } = new URL(req.url ?? '/', 'http://localhost');
-    if (pathname !== '/ws') {
-      rejectUpgrade(socket, '404 Not Found');
-      return;
-    }
-    // 同源校验：浏览器一定携带 Origin，跨站页面（与 Host 不符）直接拒绝；
-    // 非浏览器客户端（如 npm ws）不带 Origin，放行——认证语义仍由源端 token 裁决。
-    const origin = req.headers.origin;
-    if (origin) {
-      let originHost = null;
-      try {
-        originHost = new URL(origin).host;
-      } catch {
-        originHost = null;
-      }
-      if (!originHost || originHost !== req.headers.host) {
-        rejectUpgrade(socket, '403 Forbidden');
+    try {
+      const { pathname } = new URL(req.url ?? '/', 'http://localhost');
+      if (pathname !== '/ws') {
+        rejectUpgrade(socket, '404 Not Found');
         return;
       }
-    }
-    // 每 IP 并发上限 + 新建速率限制：防连接洪水 / 把网关当免费中继对源端做 token 爆破
-    const ip = req.socket.remoteAddress ?? 'unknown';
-    const bucket = wsConnsByIp.get(ip) ?? { active: 0, windowStart: 0, windowCount: 0 };
-    wsConnsByIp.set(ip, bucket);
-    const now = Date.now();
-    if (now - bucket.windowStart >= 1000) {
-      bucket.windowStart = now;
-      bucket.windowCount = 0;
-    }
-    if (bucket.active >= WS_MAX_CONNS_PER_IP || bucket.windowCount >= WS_MAX_NEW_CONNS_PER_SECOND) {
-      rejectUpgrade(socket, '429 Too Many Requests');
-      return;
-    }
-    bucket.windowCount += 1;
-    bucket.active += 1;
-    let slotReleased = false;
-    const releaseSlot = () => {
-      if (slotReleased) return;
-      slotReleased = true;
-      bucket.active -= 1;
-    };
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      const relay = relayConnection(ws, cfg.upstreamHost, cfg.upstreamPort, log);
-      relays.add(relay);
-      ws.on('close', () => {
-        relays.delete(relay);
-        releaseSlot();
+      // 同源校验：浏览器一定携带 Origin，跨站页面（与 Host 不符）直接拒绝；
+      // 非浏览器客户端（如 npm ws）不带 Origin，放行——认证语义仍由源端 token 裁决。
+      const origin = req.headers.origin;
+      if (origin) {
+        let originHost = null;
+        try {
+          originHost = new URL(origin).host;
+        } catch {
+          originHost = null;
+        }
+        if (!originHost || originHost !== req.headers.host) {
+          rejectUpgrade(socket, '403 Forbidden');
+          return;
+        }
+      }
+      // 每 IP 并发上限 + 新建速率限制：防连接洪水 / 把网关当免费中继对源端做 token 爆破
+      const ip = req.socket.remoteAddress ?? 'unknown';
+      const bucket = wsConnsByIp.get(ip) ?? { active: 0, windowStart: 0, windowCount: 0 };
+      wsConnsByIp.set(ip, bucket);
+      const now = Date.now();
+      if (now - bucket.windowStart >= 1000) {
+        bucket.windowStart = now;
+        bucket.windowCount = 0;
+      }
+      if (bucket.active >= WS_MAX_CONNS_PER_IP || bucket.windowCount >= WS_MAX_NEW_CONNS_PER_SECOND) {
+        rejectUpgrade(socket, '429 Too Many Requests');
+        return;
+      }
+      bucket.windowCount += 1;
+      bucket.active += 1;
+      let slotReleased = false;
+      const releaseSlot = () => {
+        if (slotReleased) return;
+        slotReleased = true;
+        bucket.active -= 1;
+        // 记账条目回收：并发归零且限速窗口（同上方 1s 窗口）已过期才删除，防 Map 随来源 IP 数无界增长；
+        // 窗口未过期 MUST NOT 删——提前删除会让该 IP 的下一次升级拿到全新计数，绕过新建速率限制
+        if (bucket.active === 0 && Date.now() - bucket.windowStart >= 1000) {
+          wsConnsByIp.delete(ip);
+        }
+      };
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        const relay = relayConnection(ws, cfg.upstreamHost, cfg.upstreamPort, log);
+        relays.add(relay);
+        ws.on('close', () => {
+          relays.delete(relay);
+          releaseSlot();
+        });
       });
-    });
-    // 握手中途夭折（未完成升级）也释放并发名额：socket 关闭兜底
-    socket.once('close', releaseSlot);
+      // 握手中途夭折（未完成升级）也释放并发名额：socket 关闭兜底
+      socket.once('close', releaseSlot);
+    } catch (err) {
+      // 兜底：upgrade 处理同步异常不得穿透为 uncaughtException 击穿进程——请求行携带无法被 URL
+      // 解析的绝对形式 request-target（如 "GET http://"）时 new URL 抛 TypeError，无需认证即可
+      // 远程触发单包 DoS；对齐上方 HTTP 处理器兜底风格：记日志后拒绝升级，不放任进程崩溃
+      log?.(`upgrade handler error: ${err?.message ?? err}`);
+      if (!socket.destroyed) rejectUpgrade(socket, '400 Bad Request');
+    }
   });
+
+  // 死条目定时清扫：releaseSlot 的就地删除只覆盖「有后续释放事件且释放时窗口已过期」的条目，
+  // 同窗口内短连接释放后该 IP 再无连接时条目无从触发删除（恰为扫描器快连快断的形态），
+  // 故每小时清一次 active===0 且限速窗口已过期的桶，杜绝 Map 随来源 IP 数无界增长；
+  // 语义与就地删除一致（active===0 且窗口过期时保留与删除等价），unref 不阻碍进程退出
+  const bucketSweeper = setInterval(() => {
+    const now = Date.now();
+    for (const [ip, b] of wsConnsByIp) {
+      if (b.active === 0 && now - b.windowStart >= 1000) wsConnsByIp.delete(ip);
+    }
+  }, 60 * 60 * 1000);
+  bucketSweeper.unref?.();
 
   return new Promise((resolve, reject) => {
     httpServer.once('error', reject);
@@ -406,6 +449,7 @@ export function startGateway(opts = {}) {
         relays,
         close: () =>
           new Promise((done) => {
+            clearInterval(bucketSweeper); // 停止限流记账清扫（close 后 Map 随闭包一并回收）
             for (const ws of wss.clients) ws.terminate();
             // 回收非 WS 的 keep-alive 空闲连接：否则 httpServer.close 要等 keepAliveTimeout 自然到期
             httpServer.closeIdleConnections?.();

@@ -247,8 +247,10 @@ export class RecordStreamParser {
 
   /** 喂入一段任意切分的字节；返回其中完整记录 */
   feed(chunk: Uint8Array): Record[] {
-    // 容量保障：空间不足先回收前部已消费区，仍不足再倍增（避免高频小分片下每次 feed 全量重拷贝）
-    if (this.buf.byteLength < this.end - this.start + chunk.byteLength) {
+    // 容量保障：按绝对写入终点 end + chunk 判定空间，不足先回收前部已消费区，回收后仍不足再倍增
+    // （避免高频小分片下每次 feed 全量重拷贝）。判据不能用 pending 口径 end−start+C 作唯一开关：
+    // 存在已消费前缀（start>0）时 pending+C ≤ B 不代表写入终点安全，end+C > B 时 buf.set 会抛 RangeError。
+    if (this.buf.byteLength < this.end + chunk.byteLength) {
       if (this.start > 0) {
         this.buf.copyWithin(0, this.start, this.end); // 同缓冲前移（memmove 语义）
         this.end -= this.start;

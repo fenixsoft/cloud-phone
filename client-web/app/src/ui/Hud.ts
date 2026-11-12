@@ -36,6 +36,8 @@ export interface HudInput {
   /** seq 缺口 + 结构性丢弃合计 */
   dropped: number;
   audioSkipCount?: number;
+  /** RTT 数值是否来自浏览器自发 PING 均值口径（缺省不改 title；title 口径标注挂在本类持有的 rtt 元素上） */
+  rttFromBrowser?: boolean;
 }
 
 /** 单条延迟样本（web-latency-samples.json samples 数组口径） */
@@ -122,6 +124,12 @@ export class Hud {
     this.refs.fps.textContent = input.fps.toFixed(1);
     this.refs.bitrate.textContent = `${(input.bitrateKbps / 1000).toFixed(2)} Mbps`;
     this.refs.rtt.textContent = `${Math.max(0, Math.round(input.rttMs))} ms`;
+    if (input.rttFromBrowser !== undefined) {
+      // RTT 口径标注与数值同一次 update 维护（调用方无需再按 id 查询该元素）
+      this.refs.rtt.title = input.rttFromBrowser
+        ? 'RTT：浏览器自发 PING/PONG（最近 16 样本均值）'
+        : 'RTT：源端 STATS 上报（浏览器 RTT 样本未就绪）';
+    }
     this.refs.decodeQueue.textContent = String(input.decodeQueueSize);
     this.refs.dropped.textContent = `${input.dropped}${input.audioSkipCount ? ` / 音频skip ${input.audioSkipCount}` : ''}`;
     const p = this.percentiles();

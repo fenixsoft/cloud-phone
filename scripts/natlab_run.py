@@ -201,12 +201,21 @@ def restore_client_ip(profile):
         sh_setup("profile", profile, "cl")
 
 
+def _infra_fail_rec(cl_prof, srv_prof, reason):
+    """infra 失败轮的统一记录口径（同「source 未监听」分支）：该轮记 infra_fail 不抛出，后续作业继续。"""
+    return {"outcome": "infra_fail", "reason": reason, "cl": cl_prof, "srv": srv_prof,
+            "ok": False, "punch_ms": None, "prediction_stage": None}
+
+
 def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
               client_timeout=15.0, frames=5):
-    """跑一轮组合；返回轮记录 dict。"""
-    restore_client_ip(cl_prof)          # 迁移场景残留复位（幂等）
-    sh_setup("profile", cl_prof, "cl")
-    sh_setup("profile", srv_prof, "srv")
+    """跑一轮组合；返回轮记录 dict。基础设施失败按该轮 infra_fail 记录呈现，不中断整个矩阵。"""
+    try:
+        restore_client_ip(cl_prof)          # 迁移场景残留复位（幂等）
+        sh_setup("profile", cl_prof, "cl")
+        sh_setup("profile", srv_prof, "srv")
+    except Exception as e:
+        return _infra_fail_rec(cl_prof, srv_prof, f"档位/地址准备失败：{e}")
 
     src = Peer(NS_SRV, ["--mode", "source", "--frp-host", SRV_GW, *STUN_ARGS,
                         # P2P-only lab：打洞 socket 用 ephemeral（固定绑 udpPort 会被内核
@@ -216,7 +225,7 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
     listening = src.wait_event("listening", 8.0)
     if not listening:
         src.kill()
-        return {"outcome": "infra_fail", "reason": "source 未在 8s 内监听", "cl": cl_prof, "srv": srv_prof}
+        return _infra_fail_rec(cl_prof, srv_prof, "source 未在 8s 内监听")
 
     cargs = ["--mode", "client", "--frp-host", SRV_GW, *STUN_ARGS,
              "--timeout", str(int(client_timeout * 1000)), "--frames", str(frames)]
@@ -229,6 +238,7 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
     deadline = time.time() + client_timeout + 15
     result = None
     cli = None
+    infra_err = None                     # 本轮基础设施失败原因：finally 回收后按 infra_fail 记轮，不向上抛
     try:
         cli = Peer(NS_CL, cargs, "client")   # 构造纳入 try：失败也走 finally 回收 src
         while time.time() < deadline:
@@ -240,7 +250,11 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
                 break
             if migration and not switched and frames_ev is not None:
                 time.sleep(0.5)                      # 让后续若干帧继续走老路径
-                switch_client_ip(cl_prof)
+                try:
+                    switch_client_ip(cl_prof)
+                except Exception as e:
+                    infra_err = f"出口 IP 切换失败：{e}"
+                    break                # 走 finally 回收两端，随后按 infra_fail 记本轮
                 switched = True
             if errored and not cli.is_running():
                 break
@@ -250,6 +264,12 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
             cli.kill()
         src.kill()
         time.sleep(0.3)
+
+    if cli is None:
+        # client 对端进程启动失败（如 netns 已被删除致 ip netns exec 失败）：该轮按 infra_fail 呈现，不让整个 run 崩溃
+        return _infra_fail_rec(cl_prof, srv_prof, "client 对端进程启动失败")
+    if infra_err is not None:
+        return _infra_fail_rec(cl_prof, srv_prof, infra_err)
 
     outcome, punch_ms, result, prediction_stage = classify(cli)
     events = cli.snapshot()

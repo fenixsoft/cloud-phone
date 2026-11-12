@@ -105,6 +105,10 @@ type Handler<T> = (payload: T) => void;
 const HELLO_TIMEOUT_MS = 5_000;
 const START_SESSION_TIMEOUT_MS = 5_000;
 const APP_LIST_TIMEOUT_MS = 3_000;
+/** WS 打开等待超时：链路静默黑洞（防火墙丢包/隧道半开）时 onopen/onerror 均可能长时间
+ *  不到达，且 PING 看门狗在 open 之后才启动兜不住此阶段——超时 reject 并主动 close，
+ *  防 connect()/reconnectOnce() 的 await 永久悬挂 */
+const SOCKET_OPEN_TIMEOUT_MS = 5_000;
 const PING_INTERVAL_MS = 1_000;
 /** 看门狗：>6s 无 Pong 判死（对齐 Windows SessionController） */
 const PONG_WATCHDOG_MS = 6_000;
@@ -151,6 +155,8 @@ export class SessionClient {
   private reconnecting = false;
   /** 重连链身份（自增）：旧链的定时器回调凭身份失效 */
   private reconnectChain = 0;
+  /** 首连在飞标志：connect() 重入互斥，防并发调用交叉覆写 this.ws 与 hello/start 等待者 */
+  private connectInFlight = false;
 
   constructor(
     private readonly wsFactory: (url: string) => WebSocketLike,
@@ -172,7 +178,17 @@ export class SessionClient {
 
   private emit<K extends EventName>(event: K, payload: SessionEvents[K]): void {
     const set = this.handlers.get(event);
-    if (set) for (const h of set) (h as Handler<SessionEvents[K]>)(payload);
+    if (!set) return;
+    for (const h of set) {
+      // 每个消费 handler 单独隔离：单个 UI 回调抛错只记录并跳过该 handler，不中止
+      // 同批剩余记录的分发、不影响同事件的其他订阅者，也不以 uncaught error 冒泡
+      try {
+        (h as Handler<SessionEvents[K]>)(payload);
+      } catch (err) {
+        if (err instanceof ProtocolError) throw err; // 协议结构性错误保持现状：上抛交 bindSocket 按断开处理
+        console.error(`[SessionClient] ${String(event)} 事件消费 handler 抛错（已隔离该 handler，继续分发）：`, err);
+      }
+    }
   }
 
   /** 档位区间校验（spec：本地仅做区间校验，/16 对齐交由源端） */
@@ -189,46 +205,58 @@ export class SessionClient {
    * @param wsUrl 形如 ws(s)://host:port/ws
    */
   async connect(opts: { wsUrl: string; token: string; mode: StartMode; profile?: VideoProfile }): Promise<void> {
-    this.userClosed = false;
-    this.reconnecting = false;
-    const ws = this.wsFactory(opts.wsUrl);
-    ws.binaryType = 'arraybuffer';
-    this.ws = ws;
-    this.parser = new RecordStreamParser(); // 每个连接从零按记录边界解析，旧连接残留半包不拼入
-    this.bindSocket(ws);
+    // 重入互斥：同一实例上一连接流程未落定前拒绝再次进入，防止并发 connect 交叉覆写
+    // this.ws 与 hello/start 等待者（先到者的超时回调因 ackSeq 被递增而空转、等待者被抢而永久 pending）
+    if (this.connectInFlight) throw new Error('connect() 重入被拒：同一实例的上一连接流程尚未结束');
+    this.connectInFlight = true;
+    try {
+      // 挂起重连链失效（与 close() 同款处理）：递增 reconnectChain 使旧链定时器回调凭身份
+      // 空转，并清除未触发的 reconnectTimer——挂起中的重连尝试不再与新首连交叉覆写套接字
+      this.reconnectChain += 1;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      this.userClosed = false;
+      this.reconnecting = false;
+      const ws = this.wsFactory(opts.wsUrl);
+      ws.binaryType = 'arraybuffer';
+      this.ws = ws;
+      this.parser = new RecordStreamParser(); // 每个连接从零按记录边界解析，旧连接残留半包不拼入
+      this.bindSocket(ws);
 
-    await new Promise<void>((resolve, reject) => {
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error('WebSocket 连接失败（网关不可达）'));
-    });
+      await this.awaitSocketOpen(ws, 'WebSocket 连接');
 
-    this.emit('connecting', { attempt: 1 });
-    this.startPingLoop();
+      this.emit('connecting', { attempt: 1 });
+      this.startPingLoop();
 
-    // ── HELLO：握手认证（占位参数；真实会话参数以 START_SESSION 应答为准）──
-    const helloMsg: EncodableControlMessage = {
-      kind: 'hello',
-      version: 1,
-      token: opts.token,
-      mode: opts.mode.kind === 'attach' ? WatchMode.ATTACH : opts.mode.kind === 'singleApp' ? WatchMode.SINGLE_APP : WatchMode.FULLSCREEN,
-      packageName: opts.mode.kind === 'singleApp' ? opts.mode.packageName : '',
-      width: opts.profile?.width ?? 0,
-      height: opts.profile?.height ?? 0,
-      fps: opts.profile?.fps ?? 0,
-      bitrateKbps: opts.profile?.bitrateKbps ?? 0,
-      sessionId: opts.mode.kind === 'attach' ? opts.mode.sessionId : 0,
-      p2pOffer: '',
-      crypto: null,
-    };
-    const ack = await this.requestHello(helloMsg);
-    if (ack.status !== HelloStatus.ACCEPTED) {
-      this.failExplicit(ack);
-      throw new SessionRejectedError(ack.status, ack.statusName, ack.reason);
+      // ── HELLO：握手认证（占位参数；真实会话参数以 START_SESSION 应答为准）──
+      const helloMsg: EncodableControlMessage = {
+        kind: 'hello',
+        version: 1,
+        token: opts.token,
+        mode: opts.mode.kind === 'attach' ? WatchMode.ATTACH : opts.mode.kind === 'singleApp' ? WatchMode.SINGLE_APP : WatchMode.FULLSCREEN,
+        packageName: opts.mode.kind === 'singleApp' ? opts.mode.packageName : '',
+        width: opts.profile?.width ?? 0,
+        height: opts.profile?.height ?? 0,
+        fps: opts.profile?.fps ?? 0,
+        bitrateKbps: opts.profile?.bitrateKbps ?? 0,
+        sessionId: opts.mode.kind === 'attach' ? opts.mode.sessionId : 0,
+        p2pOffer: '',
+        crypto: null,
+      };
+      const ack = await this.requestHello(helloMsg);
+      if (ack.status !== HelloStatus.ACCEPTED) {
+        this.failExplicit(ack);
+        throw new SessionRejectedError(ack.status, ack.statusName, ack.reason);
+      }
+      this.emit('handshakeAccepted', undefined);
+
+      // ── START_SESSION：建立（或附着）会话，HELLO_ACK 返回真实参数 ──
+      await this.startOrSwitchSession(opts.mode, opts.profile);
+    } finally {
+      this.connectInFlight = false;
     }
-    this.emit('handshakeAccepted', undefined);
-
-    // ── START_SESSION：建立（或附着）会话，HELLO_ACK 返回真实参数 ──
-    await this.startOrSwitchSession(opts.mode, opts.profile);
   }
 
   /**
@@ -361,6 +389,37 @@ export class SessionClient {
     const ws = this.ws;
     if (!ws || ws.readyState !== 1) return;
     ws.send(encodeControlRecord(msg));
+  }
+
+  /**
+   * 等待 WS 打开（connect / reconnectOnce 共用；仿 requestHello 的定时器兜底模式）。
+   * 正常不可达时浏览器触发 onerror 使 Promise 拒绝；但链路静默黑洞（防火墙丢包、frp
+   * 隧道半开）时 onopen/onerror 均可能长时间不到达，且 PING 看门狗尚未启动（open 之后
+   * 才 startPingLoop）兜不住此阶段——无超时则 await 永久 pending、UI 连接入口永不复位。
+   * 超时即 reject 并主动 close 掐死半开连接：触发 onclose 走统一断开清理路径。
+   */
+  private awaitSocketOpen(ws: WebSocketLike, label: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (err) {
+          ws.close(4000, 'open timeout');
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+      ws.onopen = () => settle();
+      ws.onerror = () => settle(new Error(`${label}失败（网关不可达）`));
+      timer = this.scheduleTimer(
+        () => settle(new Error(`${label}超时（${SOCKET_OPEN_TIMEOUT_MS / 1000}s 内未建立连接，链路可能静默黑洞）`)),
+        SOCKET_OPEN_TIMEOUT_MS,
+      );
+    });
   }
 
   /** 接线 WS 事件（connect/reconnect 内部使用；测试替身直接接线） */
@@ -625,10 +684,7 @@ export class SessionClient {
     this.ws = ws;
     this.parser = new RecordStreamParser(); // 新连接从零按记录边界解析，旧连接残留半包不拼入
     this.bindSocket(ws);
-    await new Promise<void>((resolve, reject) => {
-      ws.onopen = () => resolve();
-      ws.onerror = () => reject(new Error('重连失败（网关不可达）'));
-    });
+    await this.awaitSocketOpen(ws, '重连');
     this.emit('connecting', { attempt: this.reconnectAttempt + 1 });
     this.startPingLoop();
     const helloMsg: EncodableControlMessage = {

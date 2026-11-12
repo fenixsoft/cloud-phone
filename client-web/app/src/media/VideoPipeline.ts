@@ -309,8 +309,8 @@ export class VideoPipeline {
 
   /**
    * 喂入一条 0x02 视频记录载荷（TCP 流模式整帧口径）。
-   * 解码失败结构性错误（fragCnt≠1 等）原样上抛 ProtocolError 由会话层处置；
-   * 首关键帧未到前丢弃 delta 帧（解码器不可解 delta，防错误级联）。
+   * 结构性错误（fragCnt≠1 等）原样上抛 ProtocolError，由消费方就地 catch 告警并丢弃该帧
+   * （无会话级处置路径）；首关键帧未到前丢弃 delta 帧（解码器不可解 delta，防错误级联）。
    */
   feedRecord(payload: Uint8Array): void {
     const { header, data } = decodeTcpVideoFrame(payload);
@@ -388,13 +388,16 @@ export class VideoPipeline {
     };
   }
 
-  /** 会话切换/ATTACH：重置 seq 基线与关键帧门（不重建解码器，attach 自动 IDR 喂新关键帧） */
+  /** 会话切换/ATTACH：重置 seq 基线与关键帧门；解码器走失效重建——WebCodecs reset() 会把已配置解码器
+   *  打回 unconfigured（此后 decode 同步抛 InvalidStateError 且不经 error 回调，重建守卫不识别该状态，
+   *  视频将永久黑屏），故经 invalidateDecoder 置空，attach 自动 IDR 到达时由 feedRecord 既有
+   *  buildDecoder 路径重建恢复 */
   resetForNewSession(): void {
     this.seqTracker.reset();
     this.firstKeyframeSeen = false;
     this.countersInternal = this.blankCounters();
     this.dumpedFrames = 0;
-    this.decoder?.reset();
+    this.invalidateDecoder();
   }
 
   close(): void {

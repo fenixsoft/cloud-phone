@@ -83,8 +83,9 @@ test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应�
   await appItem.click();
   await expect(page.locator('#connect-error')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('#connect-error')).toContainText(/REJECT|拒绝/);
-  // 回连接页后不残留会话页
-  await expect(page.locator('#video-canvas')).toHaveCount(0);
+  // 回连接页后会话页隐藏：#video-canvas 静态声明于 #session-page 内，会话拆除只切换
+  // section 的 hidden 属性、DOM 节点不清除，故断言隐藏态而非节点计数归零
+  await expect(page.locator('#video-canvas')).toBeHidden();
 });
 
 test('REJECT_BAD_TOKEN：错误原因显式呈现，停留连接页', async ({ page }) => {

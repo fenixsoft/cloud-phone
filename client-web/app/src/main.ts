@@ -305,15 +305,13 @@ function bindSessionEvents(s: SessionClient, profile: VideoProfile): void {
     hudCtl?.update({
       fps: st.fps,
       bitrateKbps: st.bitrateKbps,
-      // 口径优先级：浏览器自发 PING 最近 16 样本均值；样本未就绪回退源端 STATS RTT（测量点不同），title 标注当前口径来源
+      // 口径优先级：浏览器自发 PING 最近 16 样本均值；样本未就绪回退源端 STATS RTT（测量点不同），title 口径标注由 Hud 一并维护
       rttMs: browserRttMs > 0 ? browserRttMs : st.rttMs,
+      rttFromBrowser: browserRttMs > 0,
       decodeQueueSize: counters?.decodeQueueSize ?? 0,
       dropped: (counters?.droppedSeqGap ?? 0) + (counters?.droppedPremature ?? 0) + (counters?.renderDropped ?? 0),
       audioSkipCount: audio?.stats().skipCount,
     });
-    $('hud-rtt').title = browserRttMs > 0
-      ? 'RTT：浏览器自发 PING/PONG（最近 16 样本均值）'
-      : 'RTT：源端 STATS 上报（浏览器 RTT 样本未就绪）';
   });
 
   s.on('clipboardText', ({ text }) => void bridge?.onClipboardText(text));
@@ -394,7 +392,10 @@ async function doConnectOnce(): Promise<void> {
     audio = new AudioPipeline({});
     const audioReady = await audio.start();
     applyAudioAvailability();
-    if (audioReady) void audio.resumeContext(); // 用户手势内恢复（自动播放策略）
+    if (audioReady) {
+      // 用户手势内恢复（自动播放策略）；ctx 关闭/失败态时 resume() 会 reject，附加 catch 防 unhandledrejection 并提示用户
+      audio.resumeContext().catch((err) => showToast(`音频恢复失败：${(err as Error).message}`));
+    }
 
     session = new SessionClient(wsFactory);
     session.rememberConnect({ wsUrl: buildWsUrl(window.location), token, profile });
@@ -431,6 +432,9 @@ async function doConnectOnce(): Promise<void> {
     if (err instanceof VideoUnsupportedError) {
       showError(`当前浏览器不支持视频硬解（${err.support.browser}）：${err.support.reason ?? ''}`);
     } else if (err instanceof SessionRejectedError) {
+      // 明确鉴权类拒绝（REJECT_BAD_TOKEN = token 错）：自动清除本机持久化 token 副本，防失效凭据长期滞留 localStorage；
+      // 输入框保留原值便于改错重试；REJECT_BUSY/REJECT_UNSUPPORTED_MODE 非凭据问题，不动本地副本
+      if (err.statusName === 'REJECT_BAD_TOKEN') localStorage.removeItem(TOKEN_KEY);
       showError(`连接被拒绝（${err.statusName}）：${err.reason}`);
     } else {
       showError((err as Error).message);
@@ -453,10 +457,13 @@ $('btn-text').addEventListener('click', () => {
   if (!visible) textInput.focus();
 });
 
-btnEnd.addEventListener('click', () => {
+/** 「结束会话」共用入口（工具条「结束」与应用网格「退出」同语义）：STOP_SESSION 无响应消息 fire-and-forget，随后回连接页 */
+function endSessionToConnect(): void {
   session?.stopSession();
   backToConnect('');
-});
+}
+
+btnEnd.addEventListener('click', endSessionToConnect);
 
 btnAudio.addEventListener('click', () => {
   if (!audio) return;
@@ -466,10 +473,7 @@ btnAudio.addEventListener('click', () => {
   btnAudio.textContent = muted ? '音频' : '已静音';
 });
 
-logoutBtn.addEventListener('click', () => {
-  session?.stopSession();
-  backToConnect('');
-});
+logoutBtn.addEventListener('click', endSessionToConnect);
 
 // ── 启动 ──
 

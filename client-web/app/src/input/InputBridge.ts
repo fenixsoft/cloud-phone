@@ -171,7 +171,15 @@ export class InputBridge {
     const sendText = (): void => {
       const text = this.dom.textInput.value;
       if (!text) return;
-      this.sender.textInput(text);
+      // 发送失败兜底（对齐剪贴板路径 .catch 防护）：TEXT_INPUT 经 SessionClient.send →
+      // encodeControlRecord → u16String 编码，UTF-8 超 65535B 抛 ProtocolError；
+      // 不兜底则异常从事件处理器直接抛出——输入框不清空、无任何提示，用户无从感知失败
+      try {
+        this.sender.textInput(text);
+      } catch (err) {
+        this.toastSink.toast(`文字发送失败：${err instanceof Error ? err.message : String(err)}（输入内容已保留）`);
+        return;
+      }
       this.dom.textInput.value = '';
       this.toastSink.toast(`文字已发送（seq 回执后提示结果）`);
     };
