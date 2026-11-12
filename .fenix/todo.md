@@ -317,3 +317,8 @@
   - 证据：fenixd.log：06:51:39Z 拒收修复申报后 spec 保持 testing 且无驱动（「场景文件不改写、不重入执行，转纯归因」）→ 07:09:20Z orphaned_state（testing 超 17 分钟无驱动）→ 07:14:18Z「Recovery: re-triggering verify for undriven testing」全量重执行 34 场景 → 07:15:26Z rerun 6/5 触顶冻结。本窗口两小时内 rerun 计数 0→6，其中末轮为 Recovery 自动重派而非 judge 主动复判。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：无修复纯归因模式进入时将 spec 停泊在不可调度保持态（如 frozen_hold 类）而非 testing；或 Recovery 重派在「场景集+产物指纹未变且末轮含未修复 test-defect」时跳过执行直接沿用既有归因、不递增 rerun 计数；或首次「耗尽后拒收」即转人工决策路径而非继续消耗 rerun 上限。
+- **[arbiter:web-brow] 跨轮裁决缓存与闭包征用失配**
+  - 影响：缓存写而不用导致每次派发全量重执行，纯归因模式下结果机械可预期（同场景集+同未修复缺陷），全量重跑只烧预算不改结论；也使 rerun 上限被无信息增量消耗。
+  - 证据：fenixd.log 06:51:39Z「跨轮裁决缓存已更新 34 个场景结论入缓存（四元组分量 build=✓/config=✓）」，但 07:14:49Z 紧随其后的派发「闭包征用后无可采信缓存条目，全量执行」——分钟级前写入的缓存未被下一次派发采信；verdict_stability.json 仍只含 04:18:54Z 第 1 轮记录（prev_stamp=null、report_mtime_ns 指向旧报告），解冻后各轮均未入册。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
+  - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：闭包征用对同指纹（场景集+build/config 四元组不变）条目的采信策略放宽；verdict_stability 戳记接入派发前判定，使「指纹未变」轮次复用裁决而非重执行；为纯归因模式定义显式的缓存复用语义。
