@@ -69,7 +69,8 @@ setup_forwarding() {
 start_shell_helper() {
   adb -s "$SOURCE_SERIAL" shell "CLASSPATH=/data/local/tmp/shellhelper.dex nohup app_process /system/bin --nice-name=cloudphone-helper cloudphone.shell.ShellHelper >/dev/null 2>&1 &" || true
   sleep 1
-  if adb -s "$SOURCE_SERIAL" shell "command -v nc >/dev/null && echo PING | nc 127.0.0.1 22340 -w 1" 2>/dev/null | grep -q PONG; then
+  # toybox nc：-w 必须前置（尾置报 bad argument count，见 device-notes §3）
+  if adb -s "$SOURCE_SERIAL" shell "command -v nc >/dev/null && echo PING | nc -w 1 127.0.0.1 22340" 2>/dev/null | grep -q PONG; then
     say "shell 助手就绪（127.0.0.1:22340）"
   else
     say "（shell 助手应答校验跳过——nc 缺失或未启动；源端 App 将自行检测并降级提示）"
