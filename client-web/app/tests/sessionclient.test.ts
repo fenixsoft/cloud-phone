@@ -170,6 +170,36 @@ describe('SessionClient 首连与显式失败', () => {
     client.close();
   });
 
+  it('握手 ACK 的 hungSessions 不被 START_SESSION 参数应答覆写（挂机恢复入口，web-hang-attach-resume 回归）', async () => {
+    const registry = new FakeSocketRegistry();
+    const timers = new ManualTimers();
+    const client = makeClient(registry, timers);
+
+    const promise = client.connect({
+      wsUrl: 'ws://gw/ws',
+      token: 'tok',
+      mode: { kind: 'fullscreen' },
+      profile: { width: 1280, height: 720, fps: 60, bitrateKbps: 8000 },
+    });
+    const ws = registry.last;
+    ws.onopen!();
+    await Promise.resolve();
+    // 握手 ACK：占位参数 + 非空挂机清单（design.md D8.2：重连页据此展示恢复入口）
+    ws.serverSend(
+      acceptedAck({ hungSessions: [{ sessionId: 5, mode: 1, packageName: 'com.demo.app', width: 720, height: 1280 }] }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    // START_SESSION 参数应答：仅真实会话参数，源端省略挂机清单（解码缺省空表，design.md D8.3）
+    ws.serverSend(
+      acceptedAck({ sessionId: 7, width: 1280, height: 720, fps: 60, bitrateKbps: 8000, encoder: 'enc', displayId: 0, hungSessions: [] }),
+    );
+    await promise;
+    // 挂机清单保持握手 ACK 的值——被参数应答覆写清空即恢复入口恒缺
+    expect(client.lastHungSessions).toEqual([{ sessionId: 5, mode: 1, packageName: 'com.demo.app', width: 720, height: 1280 }]);
+    client.close();
+  });
+
   it('HELLO REJECT_BAD_TOKEN：显式失败抛 SessionRejectedError，不排重连', async () => {
     const registry = new FakeSocketRegistry();
     const timers = new ManualTimers();
@@ -421,6 +451,32 @@ describe('断线重连（ATTACH）', () => {
       displayId: 0,
     });
     expect(client.currentSession?.sessionId).toBe(42);
+    dateSpy.mockRestore();
+    client.close();
+  });
+
+  it('重连链：握手 ACK 刷新的挂机清单不被 ATTACH 参数应答覆写（web-hang-attach-resume 回归）', async () => {
+    const registry = new FakeSocketRegistry();
+    const timers = new ManualTimers();
+    const client = makeClient(registry, timers);
+    client.rememberConnect({ wsUrl: 'ws://gw/ws', token: 'tok', profile: { width: 1280, height: 720, fps: 60, bitrateKbps: 8000 } });
+    const first = await establish(registry, timers, client);
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    first.close(1006, 'upstream gone');
+    timers.flush(); // 触发重连：新 WS + HELLO + ATTACH
+    const ws2 = registry.last;
+    expect(ws2).not.toBe(first);
+    ws2.onopen!();
+    await Promise.resolve();
+    // 重连握手 ACK：源端挂机表含原会话 #42
+    ws2.serverSend(acceptedAck({ hungSessions: [{ sessionId: 42, mode: 1, packageName: '', width: 1280, height: 720 }] }));
+    await Promise.resolve();
+    await Promise.resolve();
+    // ATTACH 参数应答：省略挂机清单——不得覆写握手 ACK 的清单
+    ws2.serverSend(acceptedAck({ sessionId: 42, width: 1280, height: 720, fps: 60, bitrateKbps: 8000, encoder: 'enc', displayId: 0 }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(client.currentSession?.sessionId).toBe(42);
+    expect(client.lastHungSessions).toEqual([{ sessionId: 42, mode: 1, packageName: '', width: 1280, height: 720 }]);
     dateSpy.mockRestore();
     client.close();
   });

@@ -397,7 +397,11 @@ export class SessionClient {
   private dispatch(msg: ControlMessage): void {
     switch (msg.kind) {
       case 'helloAck': {
-        if (msg.status === HelloStatus.ACCEPTED) this.lastHungSessions = msg.hungSessions;
+        // design.md D8.2/D8.3：hungSessions 挂机清单只随 HELLO 握手 ACK 下发（恢复入口数据源）；
+        // START_SESSION 参数应答同为 HELLO_ACK(0x02) 但仅携真实会话参数（源端省略挂机清单，
+        // 解码缺省空表）——在飞 START_SESSION（pendingStart）的应答不得覆写清单，
+        // 否则握手 ACK 的非空清单被清空、恢复入口永不渲染（web-hang-attach-resume 回归）
+        if (!this.pendingStart && msg.status === HelloStatus.ACCEPTED) this.lastHungSessions = msg.hungSessions;
         // 本轮请求已了结：取消超时定时器并递增 ackSeq 使残留的过期回调失效；等待者交付即清（后续连接关闭不得重复触碰）
         this.ackSeq += 1;
         this.clearRequestTimers();
