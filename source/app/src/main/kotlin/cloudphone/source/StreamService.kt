@@ -95,7 +95,11 @@ class StreamService : Service() {
     override fun onCreate() {
         super.onCreate()
         instanceRef = this
-        startForegroundWithType()
+        // API 34：project_media appop 未 running（全新进程尚无授权）时 startForeground 会抛
+        // SecurityException——不能让 service 创建失败（FGS 10s 超时另行兜底），
+        // 正式转前台在 ACTION_START_CAPTURE（授权后）入口完成。
+        runCatching { startForegroundWithType() }
+            .onFailure { android.util.Log.w("cloudphone-source", "startForeground 待授权后重试: ${it.message}") }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -116,6 +120,11 @@ class StreamService : Service() {
             startStreaming(backendKind, tcpPort, udpPort, useUdp)
         }
         if (intent?.action == ACTION_START_CAPTURE) {
+            // 先转前台再 getMediaProjection（顺序铁律）：此处用户已授权（onActivityResult 链路），
+            // project_media appop 已 running，startForeground 合法；onCreate 时未成的在这里补上
+            //（同时满足 startForegroundService 的 10s 转前台时限）。
+            runCatching { startForegroundWithType() }
+                .onFailure { android.util.Log.w("cloudphone-source", "startForeground 仍失败: ${it.message}") }
             // 授权即建管线：MediaProjection 令牌只够建一次 VD（闲置还会过期），
             // 采集/编码常驻，会话仅挂接帧流。参数由启动方 extras 决定（矩阵自动化下发）。
             ensureSharedCapture(

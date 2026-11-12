@@ -43,9 +43,16 @@
   尺寸，客户端 letterbox 兼容）。协议线格式未改，客户端 APK 无需更新。
   实证：`scripts/test_adaptive_client.py` 两轮异参（1080x1920@30/5000 → 720x1280@24/3000）
   经 127.0.0.1 与公网 112.74.85.74:22333 均 PASS（HelloAck ACCEPTED + adaptTo 日志 + 出帧）。
-- 顺序铁律：**必须先启动 `mediaProjection` 型前台服务，再调 `getMediaProjection`**
-  （Android 14 要求授权时 FGS 已在运行，否则令牌无效）。`bootstrap_adb.sh` 与
-  `MainActivity.requestProjection()` 均已保证该顺序。
+- 顺序铁律（**2026-11-12 修订**）：**「先 FGS 后令牌」的硬约束只落在 `getMediaProjection`
+  调用点；授权框必须先行**。API 34 实测（crash 缓冲实证）：全新进程（新开机/重装）尚无
+  `project_media` appop 时先起 `mediaProjection` 型 FGS，`Service.onCreate→startForeground
+  (MEDIA_PROJECTION)` 直接 `SecurityException` 崩进程，授权框成僵尸（点了无人收 result）。
+  正确时序：`createScreenCaptureIntent` 授权框 → onActivityResult（用户已授权，appop 已
+  running）→ `startForegroundService(ACTION_START_CAPTURE)` → `onCreate/startForeground`
+  合法 → `getMediaProjection`。`MainActivity.requestProjection`、`bootstrap grant/all 前置`
+  均按此实现；`StreamService.onCreate` 对 startForeground runCatching（未授权态不崩，转
+  前台在 ACTION_START_CAPTURE 入口补做，同时满足 FGS 10s 时限）。历史旧序在长驻模拟器
+  （同 boot 内有既往授权 appop 残留）上碰巧能跑，reboot/重装形态必崩——曾长期掩盖。
 
 ### 2.3 模拟器 goldfish 解码器「吃帧不出帧」
 - 现象：客户端自动选中 `c2.goldfish.h264.decoder`（模拟器虚拟硬解）后，输入缓冲正常消费、

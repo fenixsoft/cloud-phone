@@ -200,11 +200,18 @@ grant_projection() {
 # freezer 关闭防 tap 延迟 13-21s→重复授权互杀；SAW 登记供设备侧自愈后台拉起；
 # 先起 FGS（顺序铁律：getMediaProjection 时必须已有 mediaProjection 型前台服务）
 grant_prereqs() {
+  # 重启后 adbd 回到 shell uid：非 exported 的 StreamService 从 shell 起 FGS 会被
+  # API 34 以「Requires permission not exported from uid」拒绝（实测 11-12 重启后暴露）。
+  # userdebug 镜像恢复 root（已 root 时幂等 no-op）。
+  adb -s "$SOURCE_SERIAL" root >/dev/null 2>&1 || true
+  adb -s "$SOURCE_SERIAL" wait-for-device
   adb -s "$SOURCE_SERIAL" shell svc power stayon true >/dev/null
   adb -s "$SOURCE_SERIAL" shell device_config put activity_manager_native_boot cached_apps_freezer_enabled false >/dev/null 2>&1 || true
   adb -s "$SOURCE_SERIAL" shell appops set cloudphone.source SYSTEM_ALERT_WINDOW allow
-  adb -s "$SOURCE_SERIAL" shell am start-foreground-service -n cloudphone.source/.StreamService >/dev/null
-  sleep 1
+  # 注意：不在授权前起 StreamService FGS——API 34 全新进程（新开机/重装）无 project_media
+  # appop，onCreate→startForeground(MEDIA_PROJECTION) 会 SecurityException 崩掉进程，授权框
+  # 变僵尸。FGS 由授权链路（onActivityResult→ACTION_START_CAPTURE）在授权后自行拉起。
+  echo ok
 }
 
 # ── main ────────────────────────────────────────────────────────────
@@ -230,11 +237,10 @@ case "${1:-all}" in
     # 同时是 capture-lifecycle 设备侧自愈的前置（后台拉起 MainActivity 需 SAW）。
     adb -s "$SOURCE_SERIAL" shell appops set cloudphone.source SYSTEM_ALERT_WINDOW allow
     say "SYSTEM_ALERT_WINDOW 已登记（InputComposer 输入窗口合成驱动 + 自愈后台拉起）"
-    # 顺序关键：先起服务（Android 14 要求 getMediaProjection 时已有 mediaProjection FGS），再授权；
+    # 顺序关键（2026-11-12 修订）：授权框先行，不在授权前起 FGS——API 34 全新进程无
+    # project_media appop，先起 FGS 会在 onCreate startForeground 处崩溃（详见 grant_prereqs 注）。
     # grant_projection 成功后立即经 ACTION_START_CAPTURE 建共享采集管线（授权即消费，
     # 消灭凭据闲置失效窗口），客户端此后任意时刻连接都可零令牌挂接。
-    adb -s "$SOURCE_SERIAL" shell am start-foreground-service -n cloudphone.source/.StreamService >/dev/null
-    sleep 1
     grant_projection
     say "环境就绪：共享采集管线已常驻，客户端 App 连 $SOURCE_SERIAL 的 $SOURCE_HOST_PORT 即可观看（无需人工启动服务）"
     say "长时运行保障：投影失活时源端自愈（SAW+helper）自动重授权；宿主可另起 '$0 watch' 兜底巡检"
@@ -258,6 +264,9 @@ case "${1:-all}" in
     # （进程被杀/helper 未拉起/重启后 SAW 丢失等）。设备侧自愈为主，本路径兜底。
     need_adb
     health_check
+    # 同 grant_prereqs：恢复 root adbd（重启后 shell uid 起不了非 exported FGS）
+    adb -s "$SOURCE_SERIAL" root >/dev/null 2>&1 || true
+    adb -s "$SOURCE_SERIAL" wait-for-device
     WATCH_INTERVAL="${WATCH_INTERVAL:-10}"
     say "watch 启动：每 ${WATCH_INTERVAL}s 巡检投影活性（WATCH_INTERVAL 环境变量可调，Ctrl-C 退出）"
     while true; do

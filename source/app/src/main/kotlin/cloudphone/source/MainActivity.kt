@@ -238,10 +238,12 @@ class MainActivity : Activity() {
             // dump 开关用到 /sdcard（M0 诊断用；非必需权限，拒绝可继续）
             requestPermissions(arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE), 2)
         }
-        // Android 14+ 要求：调用 getMediaProjection 时必须已有 mediaProjection 型前台服务在运行，
-        // 否则令牌无效。授权前先确保服务已启动（幂等）。
-        val svc = Intent(this, StreamService::class.java)
-        if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc)
+        // 顺序修订（2026-11-12 reboot 实测）：授权框必须先行。API 34 上先起 mediaProjection 型
+        // FGS 时，Service.onCreate→startForeground(MEDIA_PROJECTION) 需要 project_media appop
+        // 处于 running（仅授权后成立）——全新进程/新开机时必崩（SecurityException，crash 缓冲
+        // 实证 10:00:18），授权框成僵尸无人收 result。正确时序：onActivityResult（用户已授权）
+        // → startForegroundService(ACTION_START_CAPTURE) → onCreate startForeground 此刻合法
+        // → getMediaProjection，FGS 先于令牌获取的铁律仍由该链路天然满足。
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
         startActivityForResult(mgr.createScreenCaptureIntent(), REQUEST_PROJECTION)
