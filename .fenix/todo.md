@@ -327,3 +327,8 @@
   - 证据：judge_attribution.json 三条互证：web-token-url-autofill-persist-clear（断言时序，点击先于断言求值，web_runner.py:435 后置统一求值）、web-fullsession-apps-hud（05:43:24 accept：断言批在全部步骤后执行、应用页已被 show('session') 隐藏、trial click 报 not visible 非遮挡、真实点击与功能断言全过）、report.json@07:15:26 web-profile-custom-tier（9 步+功能断言全过，唯一失败为同类 no_click_interception .app-item not visible）。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：web_runner 支持 per-step 断言求值窗口或视图切换感知的断言求值时机（而非全部后置）；或 judge 修复轮按同模式批量修一批场景断言落点（一次申报覆盖同类全部场景）；或为 no_click_interception 增加求值时刻的页面视图状态快照作为归因证据。
+- **[arbiter:web-brow] impl-unattainable-alert-startup-sweep-recall-lag**
+  - 影响：人工待办类告警（impl_unattainable_tasks）的 arbiter 验证层存在最长 ~5h 盲窗（04:41 写入 → 09:46 补派）；若人类在此窗口内直接 /fenix-approve，「先确认人工动作完成后再推送」的前置校验落空，诚实申报的门禁语义被架空。本次恰因 stale-code 触发 daemon 重启才补召回。
+  - 证据：fenixd.log：11-11T13:46:58Z 与 11-12T04:41:21Z 两次「诚实退出放行…（已写人工待办告警）」（即 alert=9900aa8588fd 类）；11-12T06:14:16.940Z startup 存量回扫「候选=0 派发=0」（告警已落盘却未召回）；直至 09:46:02.327Z 重启后回扫才补派。supervisor.log 两源互证 06:14 与 09:46 两次 daemon 启动均真实执行了回扫（非日志缺失）。；触发 run_id=arbiter-web-browser-client-1794476762（签名 web-browser-client::impl_unattainable_tasks，来源 startup）
+  - 调查评估：触发信号 impl_unattainable_tasks（spec=web-browser-client）：实现者诚实申报 1 个任务无法由 agent 完成，门禁已放行——这些任务需人工完成/确认。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
+  - 建议：startup 存量回扫的候选筛选改为「未派发且未终态化的 signal 告警全量召回」（不依赖 dedup/在飞状态条件）；或告警写入时同步入派发队列、派发失败带重试；或回扫基线按告警存储全表 mtime 扫描而非增量条件匹配。
