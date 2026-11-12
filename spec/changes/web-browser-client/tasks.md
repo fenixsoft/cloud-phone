@@ -91,6 +91,6 @@
 
 验证修复·原地打回第1轮完成：唯一产品 Bug BUG-01（web-upstream-unreachable-explicit-fail，网关上游拒连 WS1011 关链后 onWsClosed 只清超时定时器不拒绝挂起 HELLO 等待者，await connect() 永悬挂致 #connect-btn 永久 disabled 无法重试）已修复——SessionClient.ts AckWaiter 成对 resolve/reject + failPendingRequestsOnClose 于任何早退分支前显式拒绝（同因修复重连链 reconnectOnce 悬挂），新增回归单测 3 例；复核确认非场景缺陷（断言符合 SPEC 显式失败+可手动重试契约），未改场景文件。修复确认：tsc 零错、vitest 85/85、gateway node:test 9/9、vite build 通过；浏览器级场景回放 REPLAY_PASS（真网关 UPSTREAM 拒连 + Playwright chromium 两次完整尝试：横幅含「会话尚未建立，无法自动重连」、按钮 26ms/16ms 恢复 enabled、二次点击成功），证据 .fenix/verify-evidence/web-browser-client/{bug01-repair-evidence.md,replay_first.png,replay_second.png}。顺手收敛验证链 prepare 环境：@types/node@22.10.5 定版（devDependencies+lockfile、tsconfig types:["node"]）并按 env.d.ts 文件头自身条款删除陈旧垫片（修 fresh npm ci 后 tsc 对 e2e 的 4 处假签名报错）；media.test 断言对齐 
 
-- [ ] 先复核失败有效性：逐条核对 `spec/changes/web-browser-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
-- [ ] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
-- [ ] 修复后重跑验证确认通过
+- [x] 先复核失败有效性：逐条核对 `spec/changes/web-browser-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码（复核结论：`#hung-sessions .hung-item` 断言符合 SPEC「关页挂机可恢复」THEN 与 design.md D8.2/D8.3 契约——HELLO 握手 ACK 附 hungSessions、START_SESSION 参数应答仅真实会话参数；产品行为不符，判真实产品 Bug，未改场景文件）
+- [x] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码（修复：SessionClient.dispatch 以 pendingStart 区分两类 HELLO_ACK——在飞 START_SESSION 参数应答不采纳 hungSessions，仅 HELLO 握手 ACK 采纳，杜绝覆写清空；同因覆盖首连/单应用切换/重连 ATTACH 链；新增回归单测 2 例）
+- [x] 修复后重跑验证确认通过（tsc 零错、vitest 87/87、gateway node:test 9/9、vite build 通过；浏览器级场景回放 REPLAY_PASS 全链 6/6——KEY 步骤重连后 5s 内恢复入口渲染「恢复会话 #1/#2」并可一键 ATTACH 720×1280；无修复反证：暂存修复重建后同脚本恰在 PASS-4 5s 超时失败，与验证报告失败签名逐字一致。证据 .fenix/verify-evidence/web-browser-client/hang-attach-repair-evidence.md）
