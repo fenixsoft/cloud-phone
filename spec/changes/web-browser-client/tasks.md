@@ -84,3 +84,13 @@
 - [x] 7.3 `docs/web-client.md`：部署手册（网关 env/systemd、frpc 新增 proxy remotePort→GATEWAY_PORT、token 书签交付）+ **真机单应用人工验收清单**（人工步骤入文档：单应用进入/切换/ATTACH、音频、剪贴板、文本注入、PC 键鼠与平板触屏）
 - [ ] 7.4 延迟采样交付：模拟器会话稳定运行后采集管线延迟 P50/P95 与 RTT 落 `docs/web-latency-samples.json`（口径注明浏览器端），供延迟专项比对
   > ⚠️ 部分达成（环境阻塞，同 7.1）：交付物文件已按 `Hud.exportSamplesDoc` schema 落盘（口径注明浏览器端），采样数组为空并附 `blocker` 块——模拟器会话在本 run 内无法稳定运行（MediaProjection 一次性凭据 + accept 线程僵尸监听 + 权限框进程冻结，>3 轮同因，证据 .fenix/verify-evidence/web-browser-client/e2e-evidence.md，恢复路径写入 blocker.recover）。真实样本待源端环境健康后由 HUD 下载覆盖。本 run 追记：恢复路径缺口已补——HUD 新增「下载采样」按钮（docs/web-client.md §6「停止后下载」承诺的交互落地，含单元测试），环境健康后连接 → 开采样 → 运行 ≥60s → 停止 → 下载即可覆盖本文件；本轮 3 次复跑仍被源端会话层 HELLO 处理滞后（>12s）阻塞，按三振止损冻结。
+
+## 验证修复（原地打回第 1 轮）
+
+### 上轮实现结论（自动携带，来自上一轮 implementer 收工结论）
+
+接手上轮未完成项 7.1/7.4：7.1 复跑 3 次均被源端环境阻塞（源端会话层 HELLO 处理滞后>12s、授权确认 tap 被冻结进程延迟 13-21s 生效、MediaProjection 一次性凭据；完整取证追加 .fenix/verify-evidence/web-browser-client/e2e-evidence.md），按三振止损冻结；harness 同步加固（grant.ts 探针 12s 超时、复位后等 shared capture ready 日志信号再探——本轮两次验证生效、FULLSCREEN 用例超时 180s），7.1 按任务行注解的替代场景链基准勾选（基建交付+tsc/playwright 校验+上轮一次全绿证据留存，点击注入断言以浏览器侧 WS 出站 INPUT_EVENT 0x06 帧计数替代）。7.4 补齐恢复路径缺口：HUD 新增「下载采样」按钮（docs/web-client.md §6 停止后下载承诺的交互落地，停止且有样本才可见，含单元测试）；真实样本仍需源端环境健康后采集，按 unattainable 诚实申报。本地验证全绿：tsc 0 错、vitest 80/80、gateway node:test 8/8、vite build 通过。
+
+- [ ] 先复核失败有效性：逐条核对 `spec/changes/web-browser-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
+- [ ] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
+- [ ] 修复后重跑验证确认通过
