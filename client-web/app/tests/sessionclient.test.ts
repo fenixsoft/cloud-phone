@@ -203,6 +203,61 @@ describe('SessionClient 首连与显式失败', () => {
     client.close();
   });
 
+  it('WS 在 HELLO_ACK 前关闭（网关上游拒连 1011）：connect() 显式失败不悬挂（BUG-01 回归）', async () => {
+    const registry = new FakeSocketRegistry();
+    const timers = new ManualTimers();
+    const client = makeClient(registry, timers);
+    client.rememberConnect({ wsUrl: 'ws://gw/ws', token: 'tok' }); // 首连即记忆（main.ts doConnectOnce 同序）
+    const failed = collect(client, 'reconnectFailed');
+    const promise = client.connect({ wsUrl: 'ws://gw/ws', token: 'tok', mode: { kind: 'fullscreen' } });
+    const ws = registry.last;
+    ws.onopen!();
+    await Promise.resolve();
+    expect(asKind(ctl(ws.sent[0]), 'hello').token).toBe('tok'); // HELLO 已发出、ACK 未到
+    ws.close(1011, 'upstream gone'); // 网关因上游拒连关链（server.js WS_CLOSE_UPSTREAM_GONE）
+    // 修复前：onWsClosed 只清超时定时器、不拒绝挂起等待者 → 此 await 永悬挂（连接按钮永久 disabled）
+    await expect(promise).rejects.toThrow('会话尚未建立，无法自动重连');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].reason).toBe('会话尚未建立，无法自动重连'); // 与 reconnectFailed 收尾同口径
+    expect(client['helloWaiter']).toBeNull(); // 等待者已落定清理，不残留悬挂态
+  });
+
+  it('WS 在 START_SESSION 应答前关闭：connect() 显式失败不悬挂', async () => {
+    const registry = new FakeSocketRegistry();
+    const timers = new ManualTimers();
+    const client = makeClient(registry, timers);
+    const promise = client.connect({ wsUrl: 'ws://gw/ws', token: 'tok', mode: { kind: 'fullscreen' } });
+    const ws = registry.last;
+    ws.onopen!();
+    await Promise.resolve();
+    ws.serverSend(acceptedAck()); // 握手 ACK（占位参数）
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(asKind(ctl(ws.sent[1]), 'startSession')).toMatchObject({ mode: 1 }); // START_SESSION 在飞
+    ws.close(1011, 'upstream gone'); // 应答未到即断
+    await expect(promise).rejects.toThrow('连接已关闭');
+    expect(client['startWaiter']).toBeNull();
+  });
+
+  it('会话中切换在飞时连接关闭：startOrSwitchSession 显式失败不悬挂', async () => {
+    const registry = new FakeSocketRegistry();
+    const timers = new ManualTimers();
+    const client = makeClient(registry, timers);
+    const promise = client.connect({ wsUrl: 'ws://gw/ws', token: 'tok', mode: { kind: 'fullscreen' } });
+    const ws = registry.last;
+    ws.onopen!();
+    await Promise.resolve();
+    ws.serverSend(acceptedAck());
+    await Promise.resolve();
+    await Promise.resolve();
+    ws.serverSend(acceptedAck({ sessionId: 7, width: 720, height: 1280, fps: 60, bitrateKbps: 8000, encoder: 'enc', displayId: 0 }));
+    await promise; // 会话已建立（currentSession 就位）
+    const sw = client.startOrSwitchSession({ kind: 'singleApp', packageName: 'com.example.app' });
+    await Promise.resolve();
+    ws.close(1011, 'upstream gone');
+    await expect(sw).rejects.toThrow('HELLO/START_SESSION 应答未达');
+  });
+
   it('档位区间校验：越界档位本地拒绝', () => {
     expect(SessionClient.validateProfile({ width: 200, height: 720, fps: 60, bitrateKbps: 8000 })).toContain('width');
     expect(SessionClient.validateProfile({ width: 1280, height: 720, fps: 90, bitrateKbps: 8000 })).toContain('fps');

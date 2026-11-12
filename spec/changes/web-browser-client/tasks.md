@@ -91,6 +91,9 @@
 
 接手上轮未完成项 7.1/7.4：7.1 复跑 3 次均被源端环境阻塞（源端会话层 HELLO 处理滞后>12s、授权确认 tap 被冻结进程延迟 13-21s 生效、MediaProjection 一次性凭据；完整取证追加 .fenix/verify-evidence/web-browser-client/e2e-evidence.md），按三振止损冻结；harness 同步加固（grant.ts 探针 12s 超时、复位后等 shared capture ready 日志信号再探——本轮两次验证生效、FULLSCREEN 用例超时 180s），7.1 按任务行注解的替代场景链基准勾选（基建交付+tsc/playwright 校验+上轮一次全绿证据留存，点击注入断言以浏览器侧 WS 出站 INPUT_EVENT 0x06 帧计数替代）。7.4 补齐恢复路径缺口：HUD 新增「下载采样」按钮（docs/web-client.md §6 停止后下载承诺的交互落地，停止且有样本才可见，含单元测试）；真实样本仍需源端环境健康后采集，按 unattainable 诚实申报。本地验证全绿：tsc 0 错、vitest 80/80、gateway node:test 8/8、vite build 通过。
 
-- [ ] 先复核失败有效性：逐条核对 `spec/changes/web-browser-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
-- [ ] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
-- [ ] 修复后重跑验证确认通过
+- [x] 先复核失败有效性：逐条核对 `spec/changes/web-browser-client/verification-report.md` 中失败场景的期望断言（状态字面量/选择器/前置数据）与产品实际行为是否相符——断言与产品不符属场景缺陷，修场景文件；确属产品行为不符才修产品代码
+  > ✅ 复核结论（2026-11-12）：唯一失败场景 `web-upstream-unreachable-explicit-fail`（BUG-01）的断言与产品契约相符——SPEC browser-streaming-client 显式失败要求 + design.md D8.5「不盲重试（用户可手动重试）」正当化「显式失败后 #connect-btn 恢复可点」断言，非场景缺陷；报告自身结论同（"无场景文件缺陷需修复"）。13 个 blocked-env 场景为依赖失败传播，跨轮已裁决 env 豁免原样写回，不属本轮复核对象。
+- [x] 按复核结论修复：场景缺陷改场景文件，真实产品 Bug 改产品代码
+  > ✅ 真实产品 Bug 修产品代码：SessionClient.ts `AckWaiter` 成对 resolve/reject + `failPendingRequestsOnClose` 于 `onWsClosed` 任何早退分支前显式拒绝挂起等待者（消除 `await connect()` 永悬挂→连接按钮永久 disabled；同因修复重连链 `reconnectOnce` 悬挂）；回归单测 3 例。顺手收敛验证链 prepare 环境：`@types/node` 定版（devDependencies+lockfile、tsconfig types:["node"]）并按 env.d.ts 文件头自身条款删除陈旧垫片（修 fresh npm ci 后 tsc 4 处假签名报错）；media.test 断言对齐 edc308f 改后错误文案（消除存量 1 例失败）。
+- [x] 修复后重跑验证确认通过
+  > ✅ 本地全绿：tsc 零错、vitest 85/85（含新增 BUG-01 回归 3 例）、gateway node:test 9/9、vite build 通过；失败场景浏览器级回放 REPLAY_PASS（真网关 UPSTREAM=127.0.0.1:1 拒连 + Playwright chromium：横幅含「会话尚未建立，无法自动重连」、`#connect-btn` 26ms/16ms 恢复 enabled、二次点击成功；截图 replay_first/second.png 与 bug01-repair-evidence.md 见 .fenix/verify-evidence/web-browser-client/）。

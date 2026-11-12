@@ -24,7 +24,7 @@ import {
   type AudioDecoderLike,
   type WorkletNodeLike,
 } from '../src/media/AudioPipeline';
-import { encodeVideoPayload } from '../src/protocol/Framing';
+import { encodeVideoPayload, ProtocolError } from '../src/protocol/Framing';
 
 // ── 测试替身 ──
 
@@ -128,7 +128,9 @@ describe('VideoPipeline', () => {
       { sequence: 1, ptsUs: 0n, keyframe: true, fragmentIndex: 0, fragmentCount: 2, totalLength: 3 },
       new Uint8Array([1, 2, 3]),
     );
-    expect(() => pipeline.feedRecord(bad)).toThrow(/整帧/);
+    // 错误文案自 edc308f code-fix batch 起为英文诊断（Framing.ts:352）：断言关键短语与分片语义而非旧中文词
+    expect(() => pipeline.feedRecord(bad)).toThrow(/single-fragment/);
+    expect(() => pipeline.feedRecord(bad)).toThrow(ProtocolError);
     pipeline.close();
   });
 

@@ -114,7 +114,9 @@ function showError(msg: string): void {
   connectError.hidden = !msg;
 }
 
-let toastTimer: ReturnType<typeof window.setTimeout> | null = null;
+// DOM lib 的 window.setTimeout 调用返回 number（e2e 引入 @types/node 全局合并后，
+// ReturnType<typeof window.setTimeout> 类型查询会取到 Node 的 Timeout 重载尾部——两端显式用 number）
+let toastTimer: number | null = null;
 function showToast(text: string): void {
   toast.textContent = text;
   toast.hidden = false;
