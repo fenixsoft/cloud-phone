@@ -19,6 +19,7 @@
 import http from 'node:http';
 import net from 'node:net';
 import fs from 'node:fs';
+import { pipeline } from 'node:stream';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -46,16 +47,22 @@ function parseUpstreamAddress(raw, defaultPort) {
     const rest = raw.slice(close + 1);
     if (!host || host.includes('[') || host.includes(']')) return null;
     if (rest === '') return { host, port: defaultPort };
-    const p = Number.parseInt(rest.slice(1), 10);
-    if (!rest.startsWith(':') || !Number.isInteger(p) || p <= 0 || p >= 65536) return null;
+    // 端口整串校验（/^\d+$/）：parseInt 只取前缀数字，"8090abc" 会被静默半接受为错误端口
+    if (!rest.startsWith(':') || !/^\d+$/.test(rest.slice(1))) return null;
+    const p = Number(rest.slice(1));
+    if (!Number.isInteger(p) || p <= 0 || p >= 65536) return null;
     return { host, port: p };
   }
   const colonCount = raw.split(':').length - 1;
   if (colonCount === 1) {
     const idx = raw.indexOf(':');
     const host = raw.slice(0, idx);
-    const p = Number.parseInt(raw.slice(idx + 1), 10);
-    if (host && Number.isInteger(p) && p > 0 && p < 65536) return { host, port: p };
+    const portStr = raw.slice(idx + 1);
+    // 端口整串校验（同 [v6]:port 分支）："8090abc"、"12.5" 等尾随垃圾一律判非法回落，不静默半接受
+    if (host && /^\d+$/.test(portStr)) {
+      const p = Number(portStr);
+      if (Number.isInteger(p) && p > 0 && p < 65536) return { host, port: p };
+    }
     return null;
   }
   if (colonCount > 1) {
@@ -74,7 +81,8 @@ export function resolveConfig(env = process.env) {
   const portRaw = env.GATEWAY_PORT;
   let port = DEFAULT_PORT;
   if (portRaw !== undefined && portRaw !== '') {
-    const parsed = Number.parseInt(portRaw, 10);
+    // 整串十进制校验：parseInt 只取前缀数字（"8090abc"→8090）会静默半接受非法配置；非法走既有 warn 回落缺省
+    const parsed = /^\d+$/.test(portRaw) ? Number(portRaw) : Number.NaN;
     if (Number.isInteger(parsed) && parsed > 0 && parsed < 65536) {
       port = parsed;
     } else {
@@ -169,11 +177,24 @@ function serveStatic(staticDir, staticRealDir, req, res) {
       return;
     }
     const stream = fs.createReadStream(filePath);
-    stream.on('error', () => {
-      // stat 与读取之间文件失效（被删/权限变化/读盘错误）：头已按 st.size 发出，只能销毁响应防悬挂
-      res.destroy();
+    // 客户端中断下载（取消大 map/wasm、连接断开）时 pipe 不会自动销毁源流：res 关闭即销毁
+    // ReadStream，及时释放 fd 与读盘 I/O，而非持续到整个文件读尽
+    res.on('close', () => stream.destroy());
+    // stat 与读取之间文件被重建变大：写出累计超过按 st.size 发出的 Content-Length 即销毁双方，
+    // 防实际写出超过已声明报文长度造成 HTTP 分帧错乱
+    let written = 0;
+    stream.on('data', (chunk) => {
+      written += chunk.length;
+      if (written > st.size) {
+        res.destroy();
+        stream.destroy();
+      }
     });
-    stream.pipe(res);
+    // 双向失败统一收尾（源流读错误/响应写错误/提前关闭）：stat 与读取之间文件失效（被删/权限
+    // 变化/读盘错误）时头已按 st.size 发出，无法改写状态码，只能销毁响应防悬挂
+    pipeline(stream, res, () => {
+      if (!res.writableEnded) res.destroy();
+    });
   });
 }
 

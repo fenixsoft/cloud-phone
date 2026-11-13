@@ -11,13 +11,12 @@
  */
 
 import net from 'node:net';
-import { spawn } from 'node:child_process';
 import { HelloStatus, WatchMode, encodeControlRecord, decodeControlMessage } from '../src/protocol/Messages';
-import { RECORD_HEADER_BYTES, RECORD_CONTROL } from '../src/protocol/Framing';
+import { MAX_RECORD_BYTES, RECORD_HEADER_BYTES, RECORD_CONTROL } from '../src/protocol/Framing';
+import { adb, sleep } from './adbx';
 import { E2E_STATE } from './global-setup';
 import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
 
-const SERIAL = process.env.E2E_SOURCE_SERIAL ?? 'emulator-5554';
 const HOST_PORT = Number(process.env.E2E_SOURCE_PORT ?? 22333);
 
 /** 探针档位 = 浏览器端默认档位（720p 竖屏 60fps / 8Mbps）。源端在「请求档位与现行管线
@@ -26,19 +25,6 @@ const HOST_PORT = Number(process.env.E2E_SOURCE_PORT ?? 22333);
  * RESOLUTIONS['720p']（720×1280）+ index.html 档位控件默认选中项（60 fps / 8 Mbps）；
  * SessionClient 无可 import 的默认档位常量，故本地声明，勿与页面档位各自漂移。 */
 const PROBE_PROFILE = { width: 720, height: 1280, fps: 60, bitrateKbps: 8000 } as const;
-
-function adb(...args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const p = spawn('adb', ['-s', SERIAL, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    p.stdout.on('data', (d: Buffer) => (out += d.toString()));
-    p.stderr.on('data', (d: Buffer) => (out += d.toString()));
-    p.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`adb ${args.join(' ')} → ${out}`))));
-    p.on('error', reject);
-  });
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** 等待 logcat 出现指定标记（cached-app freezing 会把授权确认 tap 的生效延迟到
  * 探针之后——管线重建完成的唯一权威信号是 StreamService 的「shared capture ready」
@@ -73,6 +59,7 @@ function probeSessionAccepted(): Promise<boolean> {
     let buf = Buffer.alloc(0);
     let decided = false;
     let helloAcked = false; // 第一响应（HELLO 裁决）已收，等待 START_SESSION 应答
+    let startAccepted = false; // START_SESSION 已被接受（就绪判据成立，仅余 STOP 回收窗口）
     let startTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = (ok: boolean) => {
       if (decided) return;
@@ -84,11 +71,20 @@ function probeSessionAccepted(): Promise<boolean> {
     };
     const helloTimer = setTimeout(() => finish(false), 12_000);
     s.on('error', () => finish(false));
+    // 对端立即断开（force-stop / 端口 RST / 无数据即关）时立即判失败，不烧满 helloTimer；
+    // START 已被接受后对端关闭属预期（STOP 回收窗口内），不得经 close 回翻成功判据
+    s.on('close', () => { if (!startAccepted) finish(false); });
     s.on('data', (d: Buffer) => {
       buf = Buffer.concat([buf, d]);
       while (buf.length >= RECORD_HEADER_BYTES) {
         const recordType = buf[0]; // 记录头类型字节：切片推进前读取（口径对齐 Framing.RecordStreamParser）
         const len = buf.readUInt32BE(1);
+        if (len > MAX_RECORD_BYTES) {
+          // 记录长度超上限 = 线路损坏（口径对齐 Framing.RecordStreamParser 的同值防护），
+          // 立即失败；否则异常/错位流会空等不存在的记录长度直到 timer 兜底
+          finish(false);
+          return;
+        }
         if (buf.length < RECORD_HEADER_BYTES + len) break;
         const record = buf.subarray(RECORD_HEADER_BYTES, RECORD_HEADER_BYTES + len);
         buf = buf.subarray(RECORD_HEADER_BYTES + len);
@@ -106,6 +102,7 @@ function probeSessionAccepted(): Promise<boolean> {
             startTimer = setTimeout(() => finish(false), 30_000); // START 冷启动窗口
           } else if (msg.status === HelloStatus.ACCEPTED) {
             // 第二响应 = START_SESSION 被接受（就绪判据成立，sessionId 为真实值）
+            startAccepted = true; // 判据已成立：其后对端关闭（STOP 回收）不回翻失败
             s.write(encodeControlRecord({ kind: 'stopSession', sessionId: msg.sessionId }));
             // 留出 STOP 往返窗口再断开：先 destroy 会让 DISCONNECTED 抢在 STOP 前到，
             // 走断开挂机路径遗留挂机会话
@@ -147,7 +144,9 @@ export async function ensureSourcePipeline(): Promise<void> {
   }
   // 授权 tap 的实际生效受系统冻结进程调度延迟（实测 ~13s），必须等管线重建完成的
   // 日志信号再探，否则探针抢跑于对话框确认 → 拒绝
-  await waitForLogMarker('shared capture ready', 45_000);
+  if (!(await waitForLogMarker('shared capture ready', 45_000))) {
+    console.warn('[e2e] 未等到 shared capture ready 日志标记，直接进入探针');
+  }
   for (let i = 0; i < 3; i++) {
     if (await probeSessionAccepted()) return;
     await sleep(2500);

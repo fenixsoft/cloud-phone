@@ -223,12 +223,13 @@ export interface Record {
 
 /** 写一条流记录：[u8 recordType][u32 payloadLen][payload]（长度前缀大端） */
 export function encodeRecord(recordType: number, payload: Uint8Array): Uint8Array {
+  if (recordType < 0 || recordType > 0xff) throw new ProtocolError(`recordType out of range: ${recordType}`);
   if (payload.byteLength > MAX_RECORD_BYTES) {
     throw new ProtocolError(`record too large: ${payload.byteLength}`);
   }
   const out = new Uint8Array(RECORD_HEADER_BYTES + payload.byteLength);
   const view = new DataView(out.buffer);
-  view.setUint8(0, recordType & 0xff);
+  view.setUint8(0, recordType);
   view.setUint32(1, payload.byteLength, false);
   out.set(payload, RECORD_HEADER_BYTES);
   return out;
@@ -281,7 +282,7 @@ export class RecordStreamParser {
       offset += RECORD_HEADER_BYTES + len;
     }
     this.start = offset;
-    // 缓冲耗尽即归零回收，控制常驻内存
+    // 缓冲耗尽仅归零下标（惰性回收已消费前缀）；buf 容量保留高水位不回缩，直至解析器被回收
     if (this.start === this.end) {
       this.start = 0;
       this.end = 0;

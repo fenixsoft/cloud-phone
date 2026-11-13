@@ -4,7 +4,8 @@
 
 从 logcat 抓取 cloudphone-latency 的 `op …` / `g2g …` 行与 cloudphone-touch 的
 `t1 …` 行，按 opId 配对成样本，输出分段延迟统计（P50/P95/max、e2e 直方图、
-按 transport 分组、result 失败拆分）。纯 stdlib。
+按 transport 分组、result 失败拆分）。P50/P95 为最近秩（nearest-rank，下取整）
+口径，较线性插值口径略保守。纯 stdlib。
 
 数据来源（二选一，默认自动跑 adb）：
   python3 scripts/measure_op_latency.py                    # 跑 `adb logcat -d` 解析当前缓冲
@@ -42,6 +43,7 @@ BUCKET_LABELS = ["<20", "20-50", "50-100", "100-200", "200-500", "500-1k", ">=1k
 
 
 def percentile(sorted_vals, pct):
+    """最近秩（nearest-rank）口径：取下取整秩对应样本，较线性插值口径略保守。"""
     if not sorted_vals:
         return None
     idx = ((len(sorted_vals) - 1) * pct) // 100
@@ -50,8 +52,11 @@ def percentile(sorted_vals, pct):
 
 def load_lines(args):
     if args.file:
-        with open(args.file, "r", encoding="utf-8", errors="replace") as f:
-            return f.read().splitlines()
+        try:
+            with open(args.file, "r", encoding="utf-8", errors="replace") as f:
+                return f.read().splitlines()
+        except FileNotFoundError:
+            sys.exit("error: 文件不存在：%s；请确认 --file 路径" % args.file)
     cmd = ["adb"]
     if args.serial:
         cmd += ["-s", args.serial]
@@ -61,6 +66,8 @@ def load_lines(args):
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except FileNotFoundError:
         sys.exit("error: adb 不可用；请把 logcat 存文件后用 --file 解析")
+    except subprocess.TimeoutExpired:
+        sys.exit("error: adb logcat -d 超时（30s）；请把 logcat 存文件后用 --file 解析")
     if out.returncode != 0:
         sys.exit("error: adb logcat -d 失败：%s" % out.stderr.strip()[:200])
     return out.stdout.splitlines()
@@ -117,8 +124,6 @@ def main():
     def wanted(op_id):
         if selected is None:
             return True
-        act = action_by_opid.get(op_id)
-        name = [k for k, v in ACTION_NAMES.items() if v == act]
         return action_by_opid.get(op_id) in {ACTION_NAMES[s] for s in selected}
 
     samples = []
@@ -177,7 +182,9 @@ def main():
         print("e2e 直方图: " + "  ".join("%s:%d" % (l, c) for l, c in zip(labels, counts) if c))
 
     # 验收提示（P95 口径：e2eAck ≤ 200ms）
-    e2e_all = sorted(s["e2eMs"] for s in samples)
+    e2e_all = sorted(s["e2eMs"] for s in samples if s["e2eMs"] >= 0)
+    if not e2e_all:
+        sys.exit("no valid e2e samples (e2eMs 全为 -1 未兑现); 跳过验收线 200ms 判定")
     p95 = percentile(e2e_all, 95)
     verdict = "达标 ✓" if p95 <= 200 else "超标 ✗（优先看 frameWaitMs/encQueueMs 与 downMs 段）"
     print("\nP95(e2e)=%dms — 验收线 200ms：%s" % (p95, verdict))

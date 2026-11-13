@@ -289,13 +289,30 @@ def run_combo(cl_prof, srv_prof, prediction=True, migration=False,
                               ("result", "error", "punch_fallback", "connected")][-4:]
     if migration:
         seqs = [e.get("sequence") for e in events if e.get("event") == "frames"]
+        # docstring 口径落地（迁移场景自动判定，不再只看 resumed_frames>0）：
+        # ① sessionId 不变：迁移前后各次 session_started 的 sessionId 一致（重连重 HELLO 会重复
+        #   emit；源端重建会话会派发新 id，即判不连续）；
+        # ② 帧序列连续（统计不重置）：frames 事件的 sequence 采样非降（源端序列单调，重置/新
+        #   会话会回绕变小）且至少收到过一次 frames 事件；
+        # ③ 恢复后继续收帧：resumed_frames > 0（result.ok 在迁移模式已含重连恢复判据）。
+        session_ids = [e.get("sessionId") for e in events if e.get("event") == "session_started"]
+        session_id_stable = bool(session_ids) and all(s == session_ids[0] for s in session_ids)
+        seq_continuous = (
+            len(seqs) > 0
+            and all(s is not None for s in seqs)
+            and all(b >= a for a, b in zip(seqs, seqs[1:]))
+        )
         rec.update({
             "migration_ip_switched": switched,
             "reconnects": result.get("reconnects") if result else None,
             "resumed_frames": result.get("resumed_frames") if result else None,
             "frame_sequences": seqs,
+            "session_ids": session_ids,
             "session_continuous": bool(
-                result and result.get("ok") and (result.get("resumed_frames") or 0) > 0),
+                result and result.get("ok")
+                and (result.get("resumed_frames") or 0) > 0
+                and session_id_stable
+                and seq_continuous),
         })
     return rec
 
@@ -399,6 +416,13 @@ def main():
     ap.add_argument("--skip-matrix", action="store_true")
     ap.add_argument("--skip-migration", action="store_true")
     args = ap.parse_args()
+
+    if args.rounds < 1:
+        print("[natlab_run] --rounds 必须 ≥ 1（0/负数使矩阵轮集为空、成功率除零）", file=sys.stderr)
+        return 2
+    if args.client_timeout <= 0:
+        print("[natlab_run] --client-timeout 必须为正数（秒）：非正值会使对端超时与轮内 deadline 计算失义", file=sys.stderr)
+        return 2
 
     if os.geteuid() != 0:
         print("[natlab_run] 需要 root（netns/iptables）", file=sys.stderr)

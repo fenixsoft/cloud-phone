@@ -9,7 +9,7 @@
  * 源端按归一化值 + 会话分辨率还原绝对坐标。
  */
 
-import { InputAction } from '../protocol/Messages';
+import { AuxChannel, InputAction } from '../protocol/Messages';
 
 /** MOVE 注入最小位移阈值（归一化 u16 单位，≈源分辨率 0.4%）：抑制高频微动，降低共享控制流噪声 */
 const MOVE_MIN_DELTA_U16 = 256;
@@ -157,6 +157,10 @@ export class InputBridge {
 
     // ── BACK：工具栏按钮 + Esc 键 → INPUT_EVENT{action=3}（指针字段置零）──
     this.listen(this.dom.btnBack, 'click', () => this.sendBack());
+    // 设计口径（spec/knowledge/domains/web-client/browser-streaming-client.md）：
+    // 桌面 Esc 有意全局生效——知识规则仅约定「工具条返回键与桌面 Esc → action=3」，
+    // 未限定会话视图；本监听随 InputBridge 存活于整个连接生命周期，
+    // 应用网格页（无全屏画面）按 Esc 同样注入 BACK 属预期行为。
     if (typeof globalThis.addEventListener === 'function') {
       this.listen(globalThis, 'keydown', (ev) => {
         const ke = ev as KeyboardEvent;
@@ -297,8 +301,7 @@ export class InputBridge {
 
   /** auxNotice kind=1（剪贴板降级）：置灰两个剪贴板按钮 + toast 原因 */
   onAuxNotice(channel: number, reason: string): void {
-    if (channel === 2) {
-      // AuxChannel.CLIPBOARD
+    if (channel === AuxChannel.CLIPBOARD) {
       this.clipboardDisabled = true;
       this.dom.btnClipRead.setAttribute('disabled', 'true');
       this.dom.btnClipWrite.setAttribute('disabled', 'true');
