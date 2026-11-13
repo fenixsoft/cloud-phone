@@ -81,8 +81,8 @@ class StatsView @JvmOverloads constructor(
             }
         }
 
-    /** 喂最新统计（源端 STATS 消息 + 客户端延迟窗口） */
-    fun update(stats: ControlMessage.StatsMessage?, clientDelay: Pair<Long, Long>?) {
+    /** 喂最新统计（源端 STATS 消息 + 客户端延迟窗口 + op-latency E2E P50/P95） */
+    fun update(stats: ControlMessage.StatsMessage?, clientDelay: Pair<Long, Long>?, opE2E: Pair<Long, Long>? = null) {
         lastStats = stats
         lastClientDelay = clientDelay
         val transport = when (stats?.transport) {
@@ -102,6 +102,7 @@ class StatsView @JvmOverloads constructor(
             append(" · ")
             append(crypto)
             if (stats != null) append(" · 会话 #").append(stats.sessionId)
+            if (opE2E != null) append(" · op ").append(opE2E.first).append("/").append(opE2E.second).append("ms")
             append("  ")
             append(resolutionText)
         }

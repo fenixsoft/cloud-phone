@@ -159,7 +159,7 @@ class DecodeRenderActivity : Activity() {
             }
         }
         ClientSession.onStats = { stats ->
-            handler.post { statsView.update(stats, delayStats()) }
+            handler.post { statsView.update(stats, delayStats(), OpLatencyStats.summary()) }
         }
         // M3：辅助通道接线（音频默认开启；静音按钮独立控制）
         aux = AuxChannelClient()
@@ -1192,6 +1192,8 @@ class DecodeRenderActivity : Activity() {
                 "t6 render seq=${frame.sequence} sinceTouchMs=$sinceTouchMs keyframe=${frame.keyframe}",
             )
         }
+        // op-latency：渲染兑现 g2g（frameSeq 命中 INPUT_ACK 登记 → 回填触摸→上屏全程）
+        OpLatencyStats.onFrameRendered(frame.sequence, nowNanos / 1000)
         if (firstFrameRenderedMs.compareAndSet(-1, SystemClock.elapsedRealtime())) {
             val flashMs = firstFrameRenderedMs.get() - connectedAtMs.get()
             android.util.Log.i("cloudphone-latency", "white-flash Ms=$flashMs")

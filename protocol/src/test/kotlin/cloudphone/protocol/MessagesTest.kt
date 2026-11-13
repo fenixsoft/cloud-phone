@@ -137,8 +137,8 @@ class MessagesTest {
 
     @Test
     fun `undefined types interleaved with aux traffic keep connection semantics`() {
-        // 未定义类型（含 aux 邻域外的值；0x0C–0x11 均已定义故取 0x12 起与更低未定义段）整段丢弃不误处理：Unknown 载荷保留原始字节
-        for (t in intArrayOf(0x00, 0x12, 0x20, 0x7F, 0xFF)) {
+        // 未定义类型（含 aux 邻域外的值；0x0C–0x12 均已定义——0x12 已被 op-latency INPUT_ACK 占用——故取 0x13 起与更低未定义段）整段丢弃不误处理：Unknown 载荷保留原始字节
+        for (t in intArrayOf(0x00, 0x13, 0x20, 0x7F, 0xFF)) {
             val payload = byteArrayOf(t.toByte(), 0x01, 0x02, 0x03)
             val msg = decodeControlMessage(payload)
             assertTrue("type ${"0x%02X".format(t)} should be Unknown", msg is ControlMessage.Unknown)

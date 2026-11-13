@@ -76,9 +76,20 @@ class VirtualDisplaySession(
                             break
                         } ?: break
                         if (record.type != Framing.RECORD_VIDEO) continue
-                        // helper 帧记录 = 单分片视频载荷（布局同 docs/protocol.md §2.2）
-                        val frame = cloudphone.transport.TcpStreamChannel.decodeVideoRecord(record.payload)
-                            ?: continue
+                        // helper 帧记录 = 单分片视频载荷（布局同 docs/protocol.md §2.2）；
+                        // 帧级解析同样不得崩进程：decodeVideoRecord 对短/坏 payload 会抛
+                        // ProtocolException（帧头不足 21B 等），守卫之（drop+计数）——
+                        // 2026-11-12 实证该抛点裸露在守卫外曾致整进程 crash。
+                        val frame = try {
+                            cloudphone.transport.TcpStreamChannel.decodeVideoRecord(record.payload)
+                        } catch (e: cloudphone.protocol.ProtocolException) {
+                            android.util.Log.w(
+                                "cloudphone-source",
+                                "vd-frame-$displayId bad frame payload: ${e.message}",
+                            )
+                            cloudphone.source.obs.PipelineCounters.droppedFrames.incrementAndGet()
+                            continue
+                        } ?: continue
                         onFrame(frame.sequence, frame.ptsUs, frame.keyframe, frame.data)
                     }
                 } catch (_: IOException) {

@@ -2,6 +2,7 @@ package cloudphone.client.input
 
 import android.view.MotionEvent
 import android.view.View
+import cloudphone.client.OpLatencyStats
 import cloudphone.protocol.ControlMessage
 import cloudphone.protocol.InputAction
 
@@ -30,9 +31,12 @@ class TouchChannel(
         (v.coerceIn(0f, total.toFloat()) / total.coerceAtLeast(1) * normMax).toInt()
 
     private fun sendAction(pointerId: Int, action: InputAction, x: Int, y: Int) {
-        // ① 触摸事件产生打点（触摸延迟插桩 5.1）
-        android.util.Log.i("cloudphone-touch", "t1 action=${action.id} p=$pointerId x=$x y=$y")
+        // op-latency（清单 ③）：离散事件（DOWN/UP/BACK）携带配对号并登记发送时刻，MOVE 恒 0 防风暴
+        val opId = if (action == InputAction.MOVE) 0 else OpLatencyStats.nextOpId()
+        // ① 触摸事件产生打点（触摸延迟插桩 5.1；opId 供 measure_op_latency.py 按事件类型过滤）
+        android.util.Log.i("cloudphone-touch", "t1 action=${action.id} p=$pointerId x=$x y=$y opId=$opId")
         val t0 = android.os.SystemClock.elapsedRealtime()
+        if (opId != 0) OpLatencyStats.onOpSent(opId, android.os.SystemClock.elapsedRealtimeNanos() / 1000)
         send(
             ControlMessage.InputEvent(
                 sessionId = sessionIdProvider(),
@@ -40,6 +44,7 @@ class TouchChannel(
                 pointerId = pointerId,
                 x = x,
                 y = y,
+                opId = opId,
             ),
         )
         // 写出耗时（定位控制通道排队段：>50ms 说明发送路径阻塞）
@@ -76,6 +81,10 @@ class TouchChannel(
                         kotlin.math.abs(x - startX) > swipeDp
                     ) {
                         backTriggered[id] = true
+                        // op-latency：BACK 同样是离散事件，携带配对号（绕过 sendAction 的直发路径）
+                        val backOpId = OpLatencyStats.nextOpId()
+                        OpLatencyStats.onOpSent(backOpId, android.os.SystemClock.elapsedRealtimeNanos() / 1000)
+                        android.util.Log.i("cloudphone-touch", "t1 action=${InputAction.BACK.id} p=$id opId=$backOpId")
                         send(
                             ControlMessage.InputEvent(
                                 sessionId = sessionIdProvider(),
@@ -83,6 +92,7 @@ class TouchChannel(
                                 pointerId = id,
                                 x = 0,
                                 y = 0,
+                                opId = backOpId,
                             ),
                         )
                         continue

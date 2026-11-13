@@ -12,6 +12,7 @@ import android.os.IBinder
 import cloudphone.protocol.AuxChannel
 import cloudphone.protocol.ControlMessage
 import cloudphone.protocol.HelloStatus
+import cloudphone.protocol.InputAckResult
 import cloudphone.protocol.TransportKind
 import cloudphone.protocol.WatchMode
 import cloudphone.protocol.decodeControlMessage
@@ -49,6 +50,9 @@ class StreamService : Service() {
     /** 触摸延迟修复 5.3：输入窗口合成驱动 */
     private var inputComposer: InputComposer? = null
     @Volatile private var currentSession: SessionManager.Session? = null
+    // onSessionFrame 降采样日志（共享帧丢弃 / sendVideo 失败各 5s 一条，防 60fps 刷屏）
+    @Volatile private var lastSharedDropLogMs = 0L
+    @Volatile private var lastSendErrLogMs = 0L
     /** 授权时创建的共享采集管线（VD+编码器常驻；一授权一实例） */
     @Volatile private var sharedCapture: ScreenCapture? = null
     @Volatile private var captureParams: EncoderPipeline.SessionParams? = null
@@ -168,7 +172,7 @@ class StreamService : Service() {
             StreamService.projectionGrant = null // 同上：不滞留（adapt 分支同样不消费令牌）
             // 异参自适应：换编码器面（零投影令牌消耗），任意客户端档位即插即连，
             // 不再依赖后台重新授权（凭据一次性：二次铸造/二次建 VD 均 SecurityException）
-            if (existing.adaptTo(params) { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) }) {
+            if (existing.adaptTo(params) { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data, fromShared = true) }) {
                 captureParams = params
                 android.util.Log.i(
                     "cloudphone-source",
@@ -202,7 +206,7 @@ class StreamService : Service() {
             holder[0]?.let { onPipelineLost(it) }
         })
         holder[0] = sc
-        val ok = sc.start { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data) }
+        val ok = sc.start { seq, pts, kf, data -> onSessionFrame(seq, pts, kf, data, fromShared = true) }
         if (!ok) {
             sc.stop()
             // 新建失败的唯一现实原因：投影凭据已消费/超时（一次性令牌）。
@@ -401,13 +405,27 @@ class StreamService : Service() {
                     onSessionReleased() // 会话结束释放音频捕获（任务 2.2）
                 }
             }
-            is ControlMessage.IdrRequest -> sharedCapture?.requestIdr()
+            is ControlMessage.IdrRequest -> {
+                // 关键帧请求按当前会话路由：单应用会话的 IDR 必须走该会话的虚拟屏帧源
+                //（两路编码器互不相干，共享管线的 IDR 对单应用客户端无效）
+                val session = currentSession
+                val vd = session?.vdSession
+                if (session?.mode == WatchMode.SINGLE_APP && vd != null) {
+                    vd.requestIdr()
+                } else {
+                    sharedCapture?.requestIdr()
+                }
+            }
             is ControlMessage.InputEvent -> {
                 // ② InputEvent 到达打点（触摸延迟插桩 5.1）+ 输入窗口标记（5.3 修复挂点）
                 android.util.Log.i("cloudphone-touch", "t2 recv action=${msg.action.id} sid=${msg.sessionId}")
                 sharedCapture?.onInputActivity()
                 inputComposer?.onInputActivity()
-                injector?.inject(msg.sessionId, msg.action, msg.pointerId, msg.x, msg.y)
+                // op-latency（清单 ②）：到达/注入完成双侧打点 + 一次 op 一次回执
+                val arrUs = nowUs()
+                val injectError = injector?.inject(msg.sessionId, msg.action, msg.pointerId, msg.x, msg.y)
+                val injDoneUs = nowUs()
+                if (msg.opId != 0) onInputInjected(msg.opId, arrUs, injDoneUs, injectError)
             }
             is ControlMessage.Ping -> send(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
             is ControlMessage.Pong -> onPongSample(msg)
@@ -718,6 +736,12 @@ class StreamService : Service() {
         }
         if (session == null) {
             val reason = manager.lastError.ifBlank { lastStartError.ifBlank { "会话创建失败" } }
+            // 拒绝原因必须落日志：客户端 silent 场景（deeplink/矩阵自动通道）会把 reason 吞掉，
+            // 没有这行日志时源端侧对「秒拒」完全不可观测（2026-11-12 单应用黑屏排查教训）
+            android.util.Log.w(
+                "cloudphone-source",
+                "start rejected (sid=${msg.sessionId} mode=${msg.mode} pkg=${msg.packageName}): $reason",
+            )
             lastStartError = ""
             send(
                 ControlMessage.HelloAck(
@@ -785,13 +809,120 @@ class StreamService : Service() {
 
     @Volatile private var lastStartError = ""
 
+    // ── op-latency 一次触摸一次回执（op-latency-measurement 清单 ②）──
+
+    /** 注入完成、等待注入后首个合成帧的 op（人手速率远低于超时，上限 8 溢出即对最旧发超时回执） */
+    private class PendingOpAck(
+        val opId: Int,
+        val arrUs: Long,
+        val injDoneUs: Long,
+        val timeout: Runnable,
+    )
+
+    private val pendingOpAcks = LinkedHashMap<Int, PendingOpAck>()
+
+    /** frame-wait 兜底超时：超时也必回执一次（客户端分段判读可见 frameWait 超限） */
+    private val inputAckTimeoutMs = 1500L
+
+    /** 注入完成：成功→登记等帧；unknown session/inject 失败→立即回执（无需等帧） */
+    private fun onInputInjected(opId: Int, arrUs: Long, injDoneUs: Long, injectError: String?) {
+        val result = when {
+            injectError == null -> InputAckResult.OK
+            injectError.startsWith("unknown session") -> InputAckResult.UNKNOWN_SESSION
+            else -> InputAckResult.INJECT_FAILED
+        }
+        android.util.Log.i(
+            "cloudphone-touch",
+            "t6a opId=$opId result=${result.name} injectMs=${(injDoneUs - arrUs) / 1000}",
+        )
+        if (result != InputAckResult.OK) {
+            send(ControlMessage.InputAck(opId, result, arrUs, injDoneUs, 0, 0, nowUs()))
+            return
+        }
+        val timeout = Runnable {
+            val pending = synchronized(pendingOpAcks) { pendingOpAcks.remove(opId) } ?: return@Runnable
+            send(
+                ControlMessage.InputAck(
+                    opId, InputAckResult.FRAME_TIMEOUT, pending.arrUs, pending.injDoneUs, 0, 0, nowUs(),
+                ),
+            )
+        }
+        synchronized(pendingOpAcks) {
+            pendingOpAcks[opId] = PendingOpAck(opId, arrUs, injDoneUs, timeout)
+            recoveryHandler.postDelayed(timeout, inputAckTimeoutMs)
+            val iter = pendingOpAcks.entries.iterator()
+            while (pendingOpAcks.size > 8 && iter.hasNext()) {
+                val eldest = iter.next()
+                iter.remove()
+                recoveryHandler.removeCallbacks(eldest.value.timeout)
+                send(
+                    ControlMessage.InputAck(
+                        eldest.key, InputAckResult.FRAME_TIMEOUT,
+                        eldest.value.arrUs, eldest.value.injDoneUs, 0, 0, nowUs(),
+                    ),
+                )
+            }
+        }
+    }
+
+    /** 注入后首个合成帧兑现所有等帧 op（ptsUs≈injDoneUs 边界容 5ms 合成抖动；编码线程回调） */
+    private fun completePendingInputAcks(sequence: Long, ptsUs: Long) {
+        val finished = ArrayList<ControlMessage.InputAck>()
+        synchronized(pendingOpAcks) {
+            if (pendingOpAcks.isEmpty()) return
+            val iter = pendingOpAcks.entries.iterator()
+            while (iter.hasNext()) {
+                val p = iter.next().value
+                if (ptsUs > p.injDoneUs - 5_000) {
+                    iter.remove()
+                    recoveryHandler.removeCallbacks(p.timeout)
+                    finished.add(
+                        ControlMessage.InputAck(
+                            p.opId, InputAckResult.OK, p.arrUs, p.injDoneUs, sequence, ptsUs, nowUs(),
+                        ),
+                    )
+                }
+            }
+        }
+        for (ack in finished) {
+            android.util.Log.i(
+                "cloudphone-touch",
+                "t6b opId=${ack.opId} frameWaitMs=${(ack.encPtsUs - ack.injDoneUs) / 1000}",
+            )
+            send(ack)
+        }
+    }
+
     /** 会话帧 → 传输层（编码线程回调；后端发送线程安全）。无会话时直接丢弃省带宽 */
-    private fun onSessionFrame(sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray) {
-        if (currentSession == null) return
+    private fun onSessionFrame(sequence: Long, ptsUs: Long, keyframe: Boolean, data: ByteArray, fromShared: Boolean = false) {
+        val session = currentSession ?: return
+        // 互斥路由（2026-11-12 单应用黑屏根因）：共享整屏管线与单应用虚拟屏管线各自独立
+        // 编码，帧序号/分辨率互不相干。会话切换（hangup 只标 hung、共享采集不停——
+        // FULLSCREEN 断连恢复依赖管线常驻）后共享管线仍在跑：若不过滤，主屏帧会与
+        // 虚拟屏帧交错下发（seq 回绕 + 分辨率跳变），客户端解码器瘫痪 → 永久黑屏。
+        if (fromShared && session.mode != WatchMode.FULLSCREEN) {
+            PipelineCounters.droppedFrames.incrementAndGet()
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastSharedDropLogMs > 5000) {
+                lastSharedDropLogMs = now
+                android.util.Log.i(
+                    "cloudphone-source",
+                    "shared-pipeline frame dropped (current mode=${session.mode}, not FULLSCREEN)",
+                )
+            }
+            return
+        }
+        // op-latency：回执先于本帧发送（回执与帧同路，先到先结算）
+        completePendingInputAcks(sequence, ptsUs)
         try {
             backend?.sendVideo(sequence, ptsUs, keyframe, data)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             PipelineCounters.droppedFrames.incrementAndGet()
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - lastSendErrLogMs > 5000) {
+                lastSendErrLogMs = now
+                android.util.Log.w("cloudphone-source", "sendVideo failed: ${e.message}")
+            }
         }
     }
 
@@ -850,6 +981,11 @@ class StreamService : Service() {
         onSessionReleased() // 服务销毁释放音频捕获
         audioSenderThread?.interrupt()
         audioSenderThread = null
+        // op-latency：销毁前清空等帧登记，防回调悬挂
+        synchronized(pendingOpAcks) {
+            for (p in pendingOpAcks.values) recoveryHandler.removeCallbacks(p.timeout)
+            pendingOpAcks.clear()
+        }
         inputComposer?.stop()
         inputComposer = null
         currentSession?.let { sessionManager?.hangup(it) }

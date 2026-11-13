@@ -23,9 +23,16 @@ mkdir -p "$CLASSES_DIR"
 echo "[build_shell_helper] javac → $CLASSES_DIR"
 # 注意：lambda 需要 JDK 的 LambdaMetafactory，不能把 android.jar 设为 bootclasspath；
 # 以 -classpath 引入 android.jar（符号来自 classpath，lambda 元工厂来自 JDK）
-"$JDK/bin/javac" -source 8 -target 8 -classpath "$PLATFORM_JAR" \
+# 注意：javac 失败必须中止（曾因管道吞错导致 d8 打包陈旧 classes，2026-11-12 教训）
+JAVAC_OUT="$("$JDK/bin/javac" -source 8 -target 8 -classpath "$PLATFORM_JAR" \
   -d "$CLASSES_DIR" \
-  "$ROOT/source/shellhelper/src/cloudphone/shell/ShellHelper.java" 2>&1 | grep -v "bootstrap class path\|deprecat\|warning" || true
+  "$ROOT/source/shellhelper/src/cloudphone/shell/ShellHelper.java" 2>&1)"
+JAVAC_RC=$?
+printf '%s\n' "$JAVAC_OUT" | grep -v "bootstrap class path\|deprecat\|warning" || true
+if [[ $JAVAC_RC -ne 0 ]]; then
+  echo "ERROR: javac 失败（rc=$JAVAC_RC），拒绝出 dex" >&2
+  exit 1
+fi
 
 echo "[build_shell_helper] d8 → $OUT_DIR/shellhelper.dex"
 rm -f "$OUT_DIR/classes.dex" "$OUT_DIR/shellhelper.dex"

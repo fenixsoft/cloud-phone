@@ -8,6 +8,8 @@
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
 
     <style name="Theme.CloudPhone.Hud" parent="android:Theme.Material">
+        <!-- HUD 无标题栏：全屏沉浸只藏系统栏，标题栏归主题管 -->
+        <item name="android:windowNoTitle">true</item>
         <item name="android:windowBackground">@color/hud_bg</item>
         <item name="android:colorBackground">@color/hud_bg</item>
         <item name="android:statusBarColor">@color/hud_bg</item>

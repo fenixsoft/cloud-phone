@@ -134,12 +134,18 @@ public final class ShellHelper {
 
         Thread frameThread = new Thread(() -> {
             while (true) {
+                final Socket s;
                 try {
-                    Socket s = frameSrv.accept();
-                    serveFrames(s);
+                    s = frameSrv.accept();
                 } catch (IOException e) {
                     return;
                 }
+                // 每连接独立线程：serveFrames 会长时间阻塞（发帧/死连接写超时），
+                // 若在 accept 线程内同步执行，后续所有 openFrameStream 连接将永远
+                // 堆在 backlog 里收不到帧（单应用黑屏，2026-11-12 实测）
+                Thread t = new Thread(() -> serveFrames(s), "frame-" + s.getPort());
+                t.setDaemon(true);
+                t.start();
             }
         }, "frame-accept");
         frameThread.setDaemon(true);
@@ -254,6 +260,8 @@ public final class ShellHelper {
                     return "ERR unknown command " + p[0];
             }
         } catch (Exception e) {
+            // 异常全文落 logcat（含栈），ERR 行只带回简名+消息（脱敏给客户端）
+            android.util.Log.e("cloudphone-helper", "handle(" + p[0] + ") failed", e);
             return "ERR " + e.getClass().getSimpleName() + ": " + e.getMessage();
         }
     }
@@ -319,26 +327,41 @@ public final class ShellHelper {
     }
 
     private static String createDisplay(int w, int h, int dpi) throws IOException {
+        // 编码器友好的尺寸对齐（对齐 16 + 上限 2560，与源端共享管线 aspectExact 同规则）。
+        // 客户端透传真实屏尺寸（如 1080x2400）时未对齐/超限会加大 c2 configure 失败面。
+        w = Math.min(2560, Math.max(320, (w + 15) & ~15));
+        h = Math.min(2560, Math.max(320, (h + 15) & ~15));
         String name = "cloudphone-vd-" + w + "x" + h;
         String mimeType = android.media.MediaFormat.MIMETYPE_VIDEO_AVC;
-        android.media.MediaCodecInfo encInfo = pickEncoder(mimeType);
-        if (encInfo == null) return "ERR no AVC encoder";
-        android.media.MediaCodec codec = android.media.MediaCodec.createByCodecName(encInfo.getName());
         android.media.MediaFormat format = android.media.MediaFormat.createVideoFormat(mimeType, w, h);
         format.setInteger(android.media.MediaFormat.KEY_COLOR_FORMAT,
             android.media.MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
         format.setInteger(android.media.MediaFormat.KEY_BIT_RATE, 8000 * 1000);
         format.setInteger(android.media.MediaFormat.KEY_FRAME_RATE, 60);
-        format.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL, Integer.MAX_VALUE);
-        codec.configure(format, null, null, android.media.MediaCodec.CONFIGURE_FLAG_ENCODE);
-        Surface surface = codec.createInputSurface();
-        codec.start();
+        // I 间隔不再用 Integer.MAX_VALUE（部分 c2 构建按 BAD_VALUE 拒绝，实测 2026-11-12
+        // configure failed err 0xffffffea → 客户端单应用会话被秒拒）；300s≈只在 IDR 命令时出关键帧，
+        // 与「IDR 请求驱动关键帧」语义一致且 c2 必然接受
+        format.setInteger(android.media.MediaFormat.KEY_I_FRAME_INTERVAL, 300);
+        android.media.MediaCodec codec = configureEncoderAny(mimeType, format, w, h);
+        Surface surface;
+        try {
+            surface = codec.createInputSurface();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("createInputSurface: " + e, e);
+        }
+        try {
+            codec.start();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("codec.start: " + e, e);
+        }
 
         int flags = android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC
             | android.hardware.display.DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY;
         android.hardware.display.VirtualDisplay vd;
         try {
             vd = displayManager.createVirtualDisplay(name, w, h, dpi, surface, flags);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("createVirtualDisplay " + w + "x" + h + "@" + dpi + ": " + e, e);
         } catch (SecurityException e) {
             // 退回私有屏（own content；shell uid 通常可 PUBLIC）
             vd = displayManager.createVirtualDisplay(name, w, h, dpi, surface, 0);
@@ -353,6 +376,47 @@ public final class ShellHelper {
         sessions.put(displayId, s);
         drainEncoder(s);
         return "OK " + displayId;
+    }
+
+    /**
+     * 编码器配置（含降级链）：逐个尝试全部 AVC 编码器（c2 sw → omx sw…），每个编码器先按
+     * 主参数（I 间隔 300s）配置、失败再放宽（I 间隔 2s）。背景：Android 14 模拟器 vendor
+     * VQ shaping（CodecSeeding/VQApply）在实例冷启动间歇性令 c2 configure 返回 BAD_VALUE
+     *（实测 err 0xffffffea，2026-11-12），换编码器实例即可成功。全部失败抛带上下文的 IAE。
+     */
+    private static android.media.MediaCodec configureEncoderAny(
+        String mimeType, android.media.MediaFormat format, int w, int h) {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        android.media.MediaCodecList list =
+            new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS);
+        for (android.media.MediaCodecInfo info : list.getCodecInfos()) {
+            if (!info.isEncoder()) continue;
+            for (String type : info.getSupportedTypes()) {
+                if (type.equalsIgnoreCase(mimeType)) { names.add(info.getName()); break; }
+            }
+        }
+        if (names.isEmpty()) throw new IllegalArgumentException("no AVC encoder found");
+        Exception last = null;
+        for (String encName : names) {
+            for (int attempt = 0; attempt < 2; attempt++) {
+                android.media.MediaCodec codec = null;
+                try {
+                    codec = android.media.MediaCodec.createByCodecName(encName);
+                    if (attempt == 1) format.setInteger(
+                        android.media.MediaFormat.KEY_I_FRAME_INTERVAL, 2);
+                    codec.configure(format, null, null, android.media.MediaCodec.CONFIGURE_FLAG_ENCODE);
+                    return codec;
+                } catch (IllegalArgumentException | java.io.IOException e) {
+                    last = e;
+                    if (codec != null) {
+                        try { codec.release(); } catch (Exception ignored) {}
+                    }
+                }
+            }
+        }
+        throw new IllegalArgumentException(
+            "configure " + w + "x" + h + " failed on " + names.size() + " encoders: "
+                + (last == null ? "n/a" : last.getMessage()));
     }
 
     private static void drainEncoder(final VdSession s) {
@@ -399,6 +463,12 @@ public final class ShellHelper {
                         long ptsUs = android.os.SystemClock.elapsedRealtimeNanos() / 1000;
                         // 封 [u8 0x02][视频载荷] 记录，入队供帧流连接读取（布局 docs/protocol.md §2.2）
                         s.frames.offer(encodeVideoRecord(s.sequence.getAndIncrement(), ptsUs, keyframe, payload));
+                        if ((s.sequence.get() % 60) == 0) {
+                            android.util.Log.i("cloudphone-helper",
+                                "vd-enc d" + s.displayId + " emitted seq=" + s.sequence.get()
+                                    + " sess=@" + Integer.toHexString(System.identityHashCode(s))
+                                    + " running=" + s.running + " qsize=" + s.frames.size());
+                        }
                     }
                 } else {
                     s.codec.releaseOutputBuffer(idx, false);
@@ -409,18 +479,28 @@ public final class ShellHelper {
         t.start();
     }
 
-    /** [u8 0x02][u32 seq][u64 pts][u8 flags][u16 fragIdx][u16 fragCnt][u32 total][data...] */
+    /**
+     * 帧流记录 = Framing 封装 [u8 type=0x02][u32 len][payload]，payload = §2.2 视频帧布局
+     * [u32 seq][u64 pts][u8 flags][u16 fragIdx][u16 fragCnt][u32 total][data...]。
+     * 源端 VirtualDisplaySession 用 Framing.StreamRecordReader 解析本流——不带 [u32 len]
+     * 封装的裸视频帧会被误当记录长度（seq 被读成 len），必然 "video payload shorter
+     * than header" → 帧读线程崩溃 → 单应用黑屏（2026-11-12 实证）。
+     */
     private static byte[] encodeVideoRecord(long seq, long ptsUs, boolean keyframe, byte[] data) {
-        byte[] rec = new byte[1 + 21 + data.length];
+        byte[] video = new byte[21 + data.length];
+        ByteBuffer v = ByteBuffer.wrap(video);
+        v.putInt((int) seq);
+        v.putLong(ptsUs);
+        v.put((byte) (keyframe ? 0x01 : 0x00));
+        v.putShort((short) 0);
+        v.putShort((short) 1);
+        v.putInt(data.length);
+        v.put(data);
+        byte[] rec = new byte[5 + video.length];
         rec[0] = 0x02;
-        ByteBuffer b = ByteBuffer.wrap(rec, 1, 21 + data.length);
-        b.putInt((int) seq);
-        b.putLong(ptsUs);
-        b.put((byte) (keyframe ? 0x01 : 0x00));
-        b.putShort((short) 0);
-        b.putShort((short) 1);
-        b.putInt(data.length);
-        b.put(data);
+        ByteBuffer w = ByteBuffer.wrap(rec, 1, 4 + video.length);
+        w.putInt(video.length);
+        w.put(video);
         return rec;
     }
 
@@ -428,16 +508,27 @@ public final class ShellHelper {
         int displayId = -1;
         OutputStream out = null;
         try {
+            s.setTcpNoDelay(true); // 帧流低延迟优先
             BufferedReader r = new BufferedReader(new InputStreamReader(s.getInputStream()));
             String head = r.readLine();
             displayId = Integer.parseInt(head.trim());
             VdSession session = sessions.get(displayId);
+            android.util.Log.i("cloudphone-helper", "frame conn for display " + displayId
+                + " -> " + (session != null ? "session ok" : "UNKNOWN DISPLAY")
+                + (session != null
+                    ? " sess=@" + Integer.toHexString(System.identityHashCode(session))
+                        + " running=" + session.running
+                        + " qsize=" + session.frames.size()
+                    : ""));
+            // 实例比对锚点：drainEncoder 的 vd-enc 日志同样带 sess=@hash——若两者不一致，
+            // 即 createDisplay 重复创建/覆盖 sessions 表项导致「编码器在产、消费读空」
+            //（photos 黑屏案 2026-11-12 的头号嫌疑）。
             out = s.getOutputStream();
             if (session == null) {
-                out.write("ERR no such display\n".getBytes());
+                // 不回任何文本行：源端 StreamRecordReader 把本流当作纯 Framing 记录解析，
+                // "OK\n" 这类行会破坏封帧（type=0x4F → bad record length → 断流黑屏）
                 return;
             }
-            out.write("OK\n".getBytes());
             out.flush();
             while (session.running) {
                 byte[] rec = session.frames.poll(1, TimeUnit.SECONDS);
@@ -456,6 +547,13 @@ public final class ShellHelper {
         // 解析 launcher activity（shell cmd）
         android.util.Pair<String, String> comp = resolveLauncher(pkg);
         if (comp == null) return "ERR cannot resolve launcher activity of " + pkg;
+        // App 旧 Task 可能残留在另一块虚拟屏上（挂机路径保留屏与 App）：
+        // 直接 am start --display 到新屏会被 ATMS 拒绝 ——
+        // "Failed to put Task ... on display N"（2026-11-12 chrome 黑屏多次实证，
+        // photos 能成纯属其旧 Task 已随旧屏销毁）。故先 force-stop 清旧 Task 再上目标屏。
+        // 已知代价：同一 App 的并存双会话会互踢（单应用语义下可接受）。
+        forceStop(pkg);
+        try { Thread.sleep(300); } catch (InterruptedException ignored) {}
         ProcessBuilder pb = new ProcessBuilder(
             "am", "start", "--display", String.valueOf(displayId), "-n",
             comp.first + "/" + comp.second);
@@ -464,6 +562,14 @@ public final class ShellHelper {
         String out = readAll(proc.getInputStream());
         try { proc.waitFor(); } catch (InterruptedException ignored) {}
         return out.contains("Error") || out.contains("Exception") ? "ERR " + firstLine(out) : "OK " + comp.second;
+    }
+
+    private static void forceStop(String pkg) throws IOException {
+        ProcessBuilder pb = new ProcessBuilder("am", "force-stop", pkg);
+        pb.redirectErrorStream(true);
+        Process proc = pb.start();
+        readAll(proc.getInputStream());
+        try { proc.waitFor(); } catch (InterruptedException ignored) {}
     }
 
     private static android.util.Pair<String, String> resolveLauncher(String pkg) throws IOException {

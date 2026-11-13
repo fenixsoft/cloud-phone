@@ -47,7 +47,24 @@ python3 scripts/measure_latency.py --touch --samples 20 --client <client_serial>
 - 预期：P95 ≤ 300ms（模拟器 60fps 负载基线 43ms；静屏 ≤800ms 口径）
 - 失败时抓什么：分段看 logcat `cloudphone-touch` ①–⑥ 插桩；确认 SAW 悬窗权限未降级（`adb shell appops get <client_pkg> SYSTEM_ALERT_WINDOW`，真机需手动允许「显示在其他应用上层」，否则 InputComposer 自动降级并 WARN，见 §6.1）
 
-## 4. deeplink 直达（§7.2/§7.3 真机清单）
+## 3a. 操作延迟分段验收（op-latency-measurement 清单 ⑤；客户端已内置 INPUT_ACK 回执与分段打点）
+
+- [ ] 操作：真机源端 + 客户端建会话（先 lan-direct 口径）→ 客户端点按/滑动 ≥20 次离散事件（DOWN/UP 为主，间隔 ≥300ms）→ `adb -s <client> logcat -d > /tmp/op-latency.log` → `python3 scripts/measure_op_latency.py --file /tmp/op-latency.log`
+  - 实测：
+- 预期：脚本输出 P95(e2e) ≤ 200ms 且判「达标 ✓」；g2g 配对率 >80%（渲染帧未跟上时 op 行 g2gMs=-1 属正常）
+- 段位预算（超段即定位到段，判读表见 docs/op-latency-measurement.md）：
+
+  | 段位 | 预算 | 超标含义 |
+  |---|---|---|
+  | uplinkMs | ≤20ms | 客户端→源端上行拥塞/调度（含 rtt/2 时钟不确定度） |
+  | injectMs | ≤10ms | 源端注入慢（SurfaceFlinger/权限路径） |
+  | frameWaitMs+encQueueMs | ≤150ms | 输入→合成→出码链路（合成器节流/编码器排队；1s+ 延迟最大嫌疑段） |
+  | downMs | ≤50ms | 回执下行（残差归并段，含解码/渲染旁路） |
+  | e2eAckMs | ≤200ms | 全程合计（P95 口径） |
+
+- 失败时抓什么：两端完整 logcat（`cloudphone-latency` 的 `op/g2g/rtt` 行 + `cloudphone-touch` 的 `t1/t2/t3/t6a/t6b` 行）；`--all` 复跑看 FRAME_TIMEOUT 占比；`rtt` 行对照链路质量；transport 分组对比（lan-direct vs frp）确认瓶颈归属链路还是服务端
+
+
 
 - [ ] 操作：杀掉客户端进程 → 桌面点单应用快捷方式 → 冷启直达；另测浏览器/Notes 点 `cloudphone://launch?host=<host>&backend=<lan-direct>&app=<pkg>&name=<名>&auto=1`；再点一个未安装目标应用的快捷方式
   - 实测：

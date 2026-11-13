@@ -337,6 +337,8 @@ object ClientSession {
                 (backend as? P2pBackend)?.onPeerCandidates(msg.candidates)
             }
             is ControlMessage.StatsMessage -> {
+                // op-latency：记录当前传输类型作 op 分组标签（同链路双向同质）
+                OpLatencyStats.onStatsTransport(msg.transport)
                 // 矩阵采集口径（run_matrix.py 解析）
                 android.util.Log.i(
                     "cloudphone-stats",
@@ -346,6 +348,8 @@ object ClientSession {
             }
             is ControlMessage.Ping -> sendControl(ControlMessage.Pong(msg.nonce, msg.senderUs, nowUs()))
             is ControlMessage.Pong -> {
+                // op-latency：Pong 采样喂时钟偏移估计（θ = server − client，min-RTT 胜出）
+                OpLatencyStats.onPong(msg.senderUs, msg.echoUs, nowUs())
                 lastPongAtMs = SystemClock.elapsedRealtime()
                 val rtt = (nowUs() - msg.senderUs) / 1000
                 if (rtt in 0..10000) android.util.Log.i("cloudphone-latency", "rtt Ms=$rtt")
@@ -356,6 +360,8 @@ object ClientSession {
             is ControlMessage.ClipboardText -> onAux?.invoke(msg)
             is ControlMessage.AuxNotice -> onAux?.invoke(msg)
             is ControlMessage.TextInputAck -> onAux?.invoke(msg)
+            // op-latency：操作回执（0x12）——服务端到达/注入/出码时刻，客户端分段结算
+            is ControlMessage.InputAck -> OpLatencyStats.onInputAck(msg, nowUs())
             is ControlMessage.Unknown -> Unit // 未知消息忽略且不中断会话
             else -> Unit
         }

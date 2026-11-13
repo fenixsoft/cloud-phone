@@ -41,6 +41,9 @@ object MsgType {
     const val CLIPBOARD_GET: Int = 0x0F
     const val CLIPBOARD_TEXT: Int = 0x10
     const val TEXT_INPUT: Int = 0x11
+
+    /** 输入回执（op-latency-measurement，增量扩展不 bump PROTOCOL_VERSION）：源端 → 客户端，一次 op 恰好一回执 */
+    const val INPUT_ACK: Int = 0x12
 }
 
 /** 观看模式：整屏 / 单应用（指定包名）/ 附着到已挂机会话 */
@@ -105,6 +108,15 @@ data class HungSession(
 
 /** 协议解析失败（结构性损坏；未知消息类型不算失败，见 [ControlMessage.Unknown]） */
 class ProtocolException(message: String) : Exception(message)
+
+/** 输入回执结果（op-latency-measurement） */
+enum class InputAckResult(val id: Int) {
+    OK(0), UNKNOWN_SESSION(1), INJECT_FAILED(2), FRAME_TIMEOUT(3);
+
+    companion object {
+        fun from(id: Int): InputAckResult? = values().firstOrNull { it.id == id }
+    }
+}
 
 /** 控制消息基类；所有子类字段布局定宽 C 兼容 */
 sealed class ControlMessage(val type: Int) {
@@ -239,7 +251,33 @@ sealed class ControlMessage(val type: Int) {
         val pointerId: Int,
         val x: Int,
         val y: Int,
+        /**
+         * op-latency 扩展尾块：操作配对号（客户端生成，DOWN/UP/BACK 离散事件携带；MOVE 恒 0 防风暴）。
+         * 0=不带尾块，线字节与 v1 基线逐字节一致（老端定宽读自然忽略新端尾块）。
+         */
+        val opId: Int = 0,
     ) : ControlMessage(MsgType.INPUT_EVENT)
+
+    /**
+     * 源端 → 客户端：输入回执（op-latency-measurement，一次 op 恰好一回执）。
+     * 时间戳全部为源端单调钟（SystemClock.elapsedRealtimeNanos/1000 微秒，与视频 ptsUs 同钟），
+     * 客户端经 PONG 估出的钟偏移 θ 桥接（见 OpLatency.kt）。
+     * result=FRAME_TIMEOUT 时约定 frameSeq=0、encPtsUs=0（注入后 1.5s 未等到合成帧）。
+     */
+    data class InputAck(
+        val opId: Int,
+        val result: InputAckResult,
+        /** 服务端收到 InputEvent 的时刻 */
+        val arrUs: Long,
+        /** 注入完成的时刻 */
+        val injDoneUs: Long,
+        /** 注入后首个合成出帧的帧序号（超时=0） */
+        val frameSeq: Long,
+        /** 该帧编码器 ptsUs（超时=0） */
+        val encPtsUs: Long,
+        /** 回执构造时刻 */
+        val srvNowUs: Long,
+    ) : ControlMessage(MsgType.INPUT_ACK)
 
     /** 双向：≥1Hz 统计（驱动统计显示与验证矩阵采集） */
     data class StatsMessage(
@@ -440,13 +478,24 @@ fun encodeControlMessage(msg: ControlMessage): ByteArray {
             putU16String(msg.candidates)
         }
         is ControlMessage.IdrRequest -> ByteBuffer.allocate(4).apply { putInt(msg.sessionId) }
-        is ControlMessage.InputEvent -> ByteBuffer.allocate(4 + 1 + 1 + 2 + 2).apply {
+        is ControlMessage.InputEvent -> ByteBuffer.allocate(4 + 1 + 1 + 2 + 2 + (if (msg.opId != 0) 4 else 0)).apply {
             putInt(msg.sessionId)
             put(msg.action.id.toByte())
             put(msg.pointerId.toByte())
             // 归一化坐标 u16（[0,65535]），按无符号 16 位写入
             putShort((msg.x and 0xFFFF).toShort())
             putShort((msg.y and 0xFFFF).toShort())
+            // op-latency 尾块：opId≠0 才追加；opId=0 时线字节与 v1 基线一致（老端兼容）
+            if (msg.opId != 0) putInt(msg.opId)
+        }
+        is ControlMessage.InputAck -> ByteBuffer.allocate(4 + 1 + 8 + 8 + 8 + 8 + 8).apply {
+            putInt(msg.opId)
+            put(msg.result.id.toByte())
+            putLong(msg.arrUs)
+            putLong(msg.injDoneUs)
+            putLong(msg.frameSeq)
+            putLong(msg.encPtsUs)
+            putLong(msg.srvNowUs)
         }
         is ControlMessage.StatsMessage -> ByteBuffer.allocate(4 + 4 + 4 + 4 + 4 + 4 + 1).apply {
             putInt(msg.sessionId)
@@ -599,7 +648,22 @@ fun decodeControlMessage(payload: ByteArray): ControlMessage {
             pointerId = buf.get().toInt(),
             x = buf.short.toInt() and 0xFFFF,
             y = buf.short.toInt() and 0xFFFF,
+            // op-latency 尾块：老端流无尾块（remaining()==0）→ 缺省 0，向后兼容
+            opId = if (buf.remaining() >= 4) buf.int else 0,
         )
+        MsgType.INPUT_ACK -> {
+            // 严格定长 45B：截断=结构性损坏 → ProtocolException（记录级丢弃，不拖垮会话）
+            if (buf.remaining() != 45) throw ProtocolException("bad input ack length ${buf.remaining()}")
+            ControlMessage.InputAck(
+                opId = buf.int,
+                result = InputAckResult.from(buf.get().toInt()) ?: throw ProtocolException("bad input ack result"),
+                arrUs = buf.long,
+                injDoneUs = buf.long,
+                frameSeq = buf.long,
+                encPtsUs = buf.long,
+                srvNowUs = buf.long,
+            )
+        }
         MsgType.STATS -> ControlMessage.StatsMessage(
             sessionId = buf.int,
             seq = buf.int,
