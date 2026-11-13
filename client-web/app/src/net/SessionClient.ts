@@ -130,7 +130,8 @@ export class SessionClient {
   private pendingStart = false;
   private helloWaiter: AckWaiter | null = null;
   private startWaiter: AckWaiter | null = null;
-  private appListWaiters = new Map<number, (msg: Extract<ControlMessage, { kind: 'appList' }>) => void>();
+  /** APP_LIST 等待者：resolve/reject 成对持有——连接关闭时逐个 reject（同 HELLO/START_SESSION 口径） */
+  private appListWaiters = new Map<number, { resolve: (apps: AppEntry[]) => void; reject: (err: Error) => void }>();
   private textSeq = 0;
   private appListSeq = 0;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -253,7 +254,7 @@ export class SessionClient {
       this.emit('handshakeAccepted', undefined);
 
       // ── START_SESSION：建立（或附着）会话，HELLO_ACK 返回真实参数 ──
-      await this.startOrSwitchSession(opts.mode, opts.profile);
+      await this.startSessionInternal(opts.mode, opts.profile);
     } finally {
       this.connectInFlight = false;
     }
@@ -261,9 +262,22 @@ export class SessionClient {
 
   /**
    * 发 START_SESSION 并等真实参数 HELLO_ACK（公开能力：连接内单应用切换 / 挂机会话
-   * ATTACH 恢复；重连路径内部复用）。成功发 sessionStarted 事件（坐标基准换新信号）。
+   * ATTACH 恢复）。成功发 sessionStarted 事件（坐标基准换新信号）。
+   *
+   * 互斥守卫：首连（connectInFlight）或断线重连链（reconnecting）在飞时，内部路径已持有
+   * START_SESSION 等待者，外部再发起会覆写 pendingStart/startWaiter——前一个等待者的
+   * Promise 既不 resolve 也不 reject（await 永久悬挂）。故在飞期间显式抛错拒绝
+   * （调用方 switchSession 的既有 catch 呈现原因），保证任一时刻至多一个在飞 START_SESSION。
    */
   async startOrSwitchSession(mode: StartMode, profile?: VideoProfile): Promise<void> {
+    if (this.connectInFlight || this.reconnecting) {
+      throw new Error(this.reconnecting ? '重连进行中，请稍候再切换会话' : '连接建立中，请稍候再切换会话');
+    }
+    return this.startSessionInternal(mode, profile);
+  }
+
+  /** START_SESSION 内部路径（connect / reconnectOnce 专用）：自身持有互斥标志，绕过公开守卫 */
+  private async startSessionInternal(mode: StartMode, profile?: VideoProfile): Promise<void> {
     const msg: EncodableControlMessage = {
       kind: 'startSession',
       sessionId: mode.kind === 'attach' ? mode.sessionId : 0,
@@ -333,7 +347,7 @@ export class SessionClient {
     if (!this.ws || this.ws.readyState !== 1) throw new Error('未连接');
     const requestId = ++this.appListSeq;
     const promise = new Promise<AppEntry[]>((resolve, reject) => {
-      this.appListWaiters.set(requestId, (msg) => resolve(msg.apps));
+      this.appListWaiters.set(requestId, { resolve, reject });
       this.scheduleTimer(() => {
         if (this.appListWaiters.delete(requestId)) reject(new Error('APP_LIST 应答超时'));
       }, APP_LIST_TIMEOUT_MS);
@@ -482,7 +496,7 @@ export class SessionClient {
         const waiter = this.appListWaiters.get(msg.requestId);
         if (waiter) {
           this.appListWaiters.delete(msg.requestId);
-          waiter(msg);
+          waiter.resolve(msg.apps);
         }
         this.emit('appList', { requestId: msg.requestId, apps: msg.apps });
         break;
@@ -590,10 +604,12 @@ export class SessionClient {
   }
 
   /**
-   * 连接关闭时落定挂起的请求-应答 Promise（BUG-01 修复）：等待者的超时定时器已被
-   * clearRequestTimers 取消，若不显式 reject，await connect()/startOrSwitchSession() 的
-   * Promise 永久 pending——UI 连接入口的 finally 恢复永不执行，连接按钮永久 disabled，
-   * 用户只能刷新页面（验证场景 web-upstream-unreachable-explicit-fail 实证）。
+   * 连接关闭时落定挂起的请求-应答 Promise（BUG-01 修复）：HELLO/START_SESSION 等待者的
+   * 超时定时器已被 clearRequestTimers 取消，若不显式 reject，await connect()/
+   * startOrSwitchSession() 的 Promise 永久 pending——UI 连接入口的 finally 恢复永不执行，
+   * 连接按钮永久 disabled，用户只能刷新页面（验证场景 web-upstream-unreachable-explicit-fail 实证）。
+   * APP_LIST 等待者同口径落定（断线即时失败，不等 3s 超时）：其超时定时器未被取消，
+   * 但回调先 delete 再 reject，Map 已清空时 delete 返回 false 空转，不会二次 reject。
    */
   private failPendingRequestsOnClose(code: number, reason: string): void {
     // 首连握手阶段断开的文案与 reconnectFailed 收尾口径一致（UI 两条错误路径呈现同一失败原因，后写者仍含关键短语）
@@ -612,6 +628,12 @@ export class SessionClient {
       const w = this.startWaiter;
       this.startWaiter = null;
       w.reject(err);
+    }
+    // APP_LIST 等待者随连接关闭逐个 reject 并清空（定时器回调的 delete 幂等，不会二次 reject）
+    if (this.appListWaiters.size > 0) {
+      const listErr = new Error(`连接已关闭（${detail}），APP_LIST 应答未达`);
+      for (const w of this.appListWaiters.values()) w.reject(listErr);
+      this.appListWaiters.clear();
     }
   }
 
@@ -679,6 +701,19 @@ export class SessionClient {
     const memo = this.lastConnect!;
     const sessionId = this.currentSession?.sessionId ?? 0;
     if (sessionId === 0) throw new Error('无会话可附着');
+    // 旧 socket 收尾（必须先于 this.ws 被覆盖）：上一轮尝试失败（如 HELLO/START_SESSION
+    // 超时抛错）遗留的 socket 未关闭，其 onmessage 闭包仍指向共享的 this.feed/this.parser，
+    // 迟到的应答字节会注入新一轮记录流（旧 ACK 抢先 resolve 新等待者 / 记录边界错位致
+    // ProtocolError 整链断开）。先置空全部回调再 close：其 close 事件不再触发 onWsClosed，
+    // 防止把随后赋值的新 this.ws 置空。
+    const staleWs = this.ws;
+    if (staleWs) {
+      staleWs.onopen = null;
+      staleWs.onmessage = null;
+      staleWs.onclose = null;
+      staleWs.onerror = null;
+      staleWs.close(1000, 'superseded by reconnect retry');
+    }
     const ws = this.wsFactory(memo.wsUrl);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
@@ -708,7 +743,7 @@ export class SessionClient {
     }
     this.emit('handshakeAccepted', undefined);
     // 会话可能已换 sessionId（源端恢复）：清旧坐标基准由 sessionStarted 事件驱动
-    await this.startOrSwitchSession({ kind: 'attach', sessionId }, memo.profile);
+    await this.startSessionInternal({ kind: 'attach', sessionId }, memo.profile);
     this.reconnectAttempt = 0;
     this.reconnecting = false; // 重连成功，链结束；后续断开按新的意外断开处理
   }
