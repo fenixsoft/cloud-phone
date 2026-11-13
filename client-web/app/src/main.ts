@@ -32,7 +32,7 @@ const connectBtn = $('connect-btn');
 const forgetTokenBtn = $('forget-token-btn');
 const appGrid = $('app-grid');
 const hungSessionsBox = $('hung-sessions');
-const logoutBtn = $('logout-btn');
+const disconnectBtn = $('disconnect-btn');
 const canvas = $<HTMLCanvasElement>('video-canvas');
 const btnBack = $('btn-back');
 const btnClipRead = $('btn-clip-read');
@@ -281,11 +281,23 @@ function bindSessionEvents(s: SessionClient, profile: VideoProfile): void {
     }
   });
 
+  // 帧级降级告警节流：持续线路损坏（如逐帧 fragCnt≠1 结构性错误）时逐帧 warn 会在数秒内刷屏，
+  // 干扰 DevTools 与 e2e 日志采集并掩盖根因；首条保留完整错误，同类告警每秒至多 1 条并附带被抑制计数
+  let lastFrameWarnAt = 0;
+  let suppressedFrameWarns = 0;
   s.on('videoRecord', (payload) => {
     try {
       video?.feedRecord(payload);
     } catch (err) {
-      console.warn('视频记录异常（帧丢弃）', err);
+      const now = Date.now();
+      if (now - lastFrameWarnAt >= 1000) {
+        const suffix = suppressedFrameWarns > 0 ? `（另有 ${suppressedFrameWarns} 条同类告警被节流抑制）` : '';
+        console.warn(`视频记录异常（帧丢弃）${suffix}`, err);
+        lastFrameWarnAt = now;
+        suppressedFrameWarns = 0;
+      } else {
+        suppressedFrameWarns++;
+      }
     }
   });
 
@@ -473,7 +485,7 @@ btnAudio.addEventListener('click', () => {
   btnAudio.textContent = muted ? '音频' : '已静音';
 });
 
-logoutBtn.addEventListener('click', endSessionToConnect);
+disconnectBtn.addEventListener('click', endSessionToConnect);
 
 // ── 启动 ──
 
