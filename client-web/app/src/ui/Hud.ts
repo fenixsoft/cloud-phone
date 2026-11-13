@@ -62,6 +62,9 @@ export interface LatencySamplesDoc {
 /** 环形样本窗口（容量封顶防内存增长） */
 const MAX_SAMPLES = 6000;
 
+/** 正向离群剔除阈值（5s）：offset 漂移/重连后未收敛窗口的秒级假延迟，远超正常全链路 P95（≤200ms 量级） */
+const LATENCY_OUTLIER_US = 5_000_000;
+
 export class Hud {
   private sampling = false;
   private samples: LatencySample[] = [];
@@ -106,8 +109,10 @@ export class Hud {
     if (this.samples.length >= MAX_SAMPLES) return;
     const nowUs = Math.round(performance.now() * 1000);
     const latencyUs = nowUs - (Number(ptsUs) + offsetUs);
-    // 异常样本过滤：offset 未就绪/迟到 PONG/跨重连旧 nonce 使命中算出负延迟 → 剔除并计数，不参与分位与导出
-    if (latencyUs < 0) {
+    // 异常样本过滤（剔除计数入 summary.droppedOutliers，不参与分位与导出）：
+    // ① 负延迟——offset 未就绪/迟到 PONG/跨重连旧 nonce 使命中算出负值；
+    // ② 正向离群——时钟 offset 波动/重连后未收敛窗口算出秒级假延迟，超阈值剔除防拉高 P50/P95 失真
+    if (latencyUs < 0 || latencyUs > LATENCY_OUTLIER_US) {
       this.droppedOutliers += 1;
       return;
     }
@@ -191,7 +196,7 @@ export class Hud {
     const rttAvgMs = this.rttMs();
     return {
       caliber:
-        '浏览器端口径：管线延迟 = now(browser) − (ptsUs(源端钟) + offset)；offset 为自发 PING→PONG 时钟估计（offset ≈ echoUs − (t_send+t_recv)/2）；含采集/解码/渲染前全链路',
+        '浏览器端口径：管线延迟 = now(browser) − (ptsUs(源端钟) + offset)；offset 为自发 PING→PONG 时钟估计（offset ≈ echoUs − (t_send+t_recv)/2）；含采集/解码/渲染前全链路；已剔除负延迟与 >5s 正向离群样本（summary.droppedOutliers 计数）',
       profile: this.sessionProfile ?? { width: 0, height: 0, fps: 0, bitrateKbps: 0 },
       browser,
       collectedAt: new Date().toISOString(),
@@ -215,7 +220,9 @@ export class Hud {
     a.href = url;
     a.download = 'web-latency-samples.json';
     a.click();
-    URL.revokeObjectURL(url);
+    // revoke 延迟到下载启动之后：click 与下载启动存在竞态，个别浏览器（Firefox/旧内核）立即
+    // revoke 会取消下载或落 0 字节文件；延迟回收属零成本兼容性加固
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   clearSamples(): void {
