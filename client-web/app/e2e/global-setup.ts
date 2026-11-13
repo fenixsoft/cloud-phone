@@ -10,6 +10,7 @@ import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { adb, sleep, ADB_TIMEOUT_MS } from './adbx';
 import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -40,6 +41,9 @@ const APK_STAMP_PATH = '/sdcard/.e2e_apk_stamp';
 const GATEWAY_PROBE_COUNT = 50;
 const GATEWAY_PROBE_INTERVAL_MS = 200;
 const GATEWAY_READY_TIMEOUT_MS = GATEWAY_PROBE_COUNT * GATEWAY_PROBE_INTERVAL_MS;
+// gradlew 构建超时（毫秒）：gradle 冷启动（守护进程拉起 + 首次配置）本身分钟级耗时，
+// 缺省放宽到 10 分钟；E2E_GRADLE_TIMEOUT 覆盖。僵死构建无超时会令 setup 整体挂起。
+const GRADLE_TIMEOUT_MS = Number(process.env.E2E_GRADLE_TIMEOUT) || 600_000;
 
 let gateway: ChildProcess | null = null;
 // 装配侧网关清理责任标记：spawn 后置 true，setup 成功返回即移交 teardown（置 false）。
@@ -65,21 +69,6 @@ function mainRepoFromGit(from: string): string {
   } catch {
     return from;
   }
-}
-
-function adb(...args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const p = spawn('adb', ['-s', SOURCE_SERIAL, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    p.stdout.on('data', (d: Buffer) => (out += d.toString()));
-    p.stderr.on('data', (d: Buffer) => (out += d.toString()));
-    p.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`adb ${args.join(' ')} → exit ${code}: ${out}`))));
-    p.on('error', reject);
-  });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 /** 宿主侧 APK 指纹（size:mtimeMs，epoch 值与时区无关）——设备侧 stamp 的写入/比对基准 */
@@ -140,11 +129,30 @@ export default async function globalSetup(): Promise<void> {
   const devices = await new Promise<string>((resolve, reject) => {
     const p = spawn('adb', ['devices'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      p.kill('SIGKILL');
+      reject(new Error(`adb devices 超时（${ADB_TIMEOUT_MS}ms，E2E_ADB_TIMEOUT 可调）——adb 服务无响应`));
+    }, ADB_TIMEOUT_MS);
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
     p.stdout.on('data', (d: Buffer) => (out += d.toString()));
-    p.on('close', () => resolve(out));
-    p.on('error', reject);
+    p.on('close', () => settle(() => resolve(out)));
+    p.on('error', (err) => settle(() => reject(err)));
   });
-  if (!devices.includes(SOURCE_SERIAL)) {
+  // 状态感知匹配：按行校验 serial 处于 device 状态——整串 includes 会把
+  // "serial\toffline" 一并误判为在线，随后卡死在 wait-for-device 而非明确报错
+  if (!new RegExp(`^${SOURCE_SERIAL}\\s+device\\s*$`, 'm').test(devices)) {
+    const state = new RegExp(`^${SOURCE_SERIAL}\\s+(\\S+)`, 'm').exec(devices)?.[1];
+    if (state === 'offline' || state === 'unauthorized') {
+      throw new Error(`源端模拟器 ${SOURCE_SERIAL} 处于 ${state} 状态（adb devices）——${state === 'unauthorized' ? '需在设备上确认 USB 调试授权' : '等待设备就绪或重启 adb'}`);
+    }
     throw new Error(`源端模拟器 ${SOURCE_SERIAL} 未连接（adb devices）——e2e 需要 M0 bootstrap 环境`);
   }
   await adb('wait-for-device');
@@ -166,8 +174,21 @@ export default async function globalSetup(): Promise<void> {
     if (!existsSync(APK)) {
       await new Promise<void>((resolve, reject) => {
         const build = spawn('./gradlew', ['assembleDebug', '-q'], { cwd: path.join(SOURCE_PROJECT, 'source'), stdio: 'inherit' });
-        build.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`源端 APK 构建失败 exit ${code}`))));
-        build.on('error', reject);
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          build.kill('SIGKILL');
+          reject(new Error(`源端 APK 构建超时（${GRADLE_TIMEOUT_MS}ms，E2E_GRADLE_TIMEOUT 可调）`));
+        }, GRADLE_TIMEOUT_MS);
+        const settle = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          fn();
+        };
+        build.on('close', (code) => settle(() => (code === 0 ? resolve() : reject(new Error(`源端 APK 构建失败 exit ${code}`)))));
+        build.on('error', (err) => settle(() => reject(err)));
       });
       APK = resolveApk(); // 构建后按实际产物重解析，确保安装路径 = 构建输出路径
     }
