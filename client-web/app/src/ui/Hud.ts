@@ -229,5 +229,10 @@ export class Hud {
     this.samples = [];
     this.seqCounter = 0;
     this.droppedOutliers = 0;
+    if (this.refs.sampleDownload) {
+      // 与 setSampling 同口径：样本被清空后必须同步回收下载按钮，防止导出 samples 为空、
+      // p50/p95/rtt 均为 0 的空采样文档误导采集者（main.ts 每次换会话 sessionStarted 时调用本方法）
+      this.refs.sampleDownload.hidden = this.sampling || this.samples.length === 0;
+    }
   }
 }

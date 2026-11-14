@@ -1,6 +1,8 @@
 /**
  * 冒烟用例（任务 7.1，模拟器 FULLSCREEN 口径，design.md「Playwright 冒烟」）：
- * 1. 首帧渲染：连接后 canvas 像素非空（getImageData 探针）；
+ * 1. 首帧渲染：连接后 canvas 像素非空（getImageData 探针，「绘制发生」口径：
+ *    alpha 非零即通过，黑屏类画面内容故障不作硬断言，RGB 非零像素数另行记录
+ *    供人工复核）；
  * 2. 触控注入：点画布 → 浏览器 WS 发出 INPUT_EVENT（0x06；源端侧 t2/t3 打点由
  *    run 外侧 adb logcat 断言，见 .fenix/verify-evidence/web-browser-client/）；
  * 3. STATS：浏览器侧收到源端 STATS 推送且 HUD fps 可解析为数值；
@@ -42,23 +44,42 @@ test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应�
 
   await page.getByRole('button', { name: '连接' }).click();
 
-  // 首帧渲染：canvas 非空像素（HELLO → START_SESSION → 视频记录 → WebCodecs 解码全链路）
+  // 首帧渲染：canvas 非空像素（HELLO → START_SESSION → 视频记录 → WebCodecs 解码全链路）。
+  // 硬断言口径＝「绘制发生」：画布初始全透明（alpha=0），只要执行过 drawImage，opaque
+  // （alpha 非零像素数）即 >0——即使源端推全黑帧（RGB=0/alpha=255）也通过，故采集黑屏、
+  // 颜色空间错误等画面内容故障不在本断言覆盖内。lit（RGB 任一分量非零的像素数）仅作
+  // 记录供人工复核（黑屏帧 lit≈0），不作硬断言，避免深色画面/黑边导致环境性误报。
+  let firstFrame = { opaque: 0, lit: 0 };
   await expect
     .poll(
-      async () =>
-        page.evaluate(() => {
+      async () => {
+        firstFrame = await page.evaluate(() => {
           const canvas = document.getElementById('video-canvas') as HTMLCanvasElement | null;
-          if (!canvas || canvas.width === 0) return 0;
+          if (!canvas || canvas.width === 0) return { opaque: 0, lit: 0 };
           const ctx = canvas.getContext('2d');
-          if (!ctx) return 0;
+          if (!ctx) return { opaque: 0, lit: 0 };
           const { data } = ctx.getImageData(canvas.width / 2 - 8, canvas.height / 2 - 8, 16, 16);
-          let nonZero = 0;
-          for (let i = 3; i < data.length; i += 4) if (data[i] !== 0) nonZero++;
-          return nonZero;
-        }),
+          let opaque = 0;
+          let lit = 0;
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] !== 0) opaque++;
+            if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) lit++;
+          }
+          return { opaque, lit };
+        });
+        return firstFrame.opaque;
+      },
       { timeout: 30_000, intervals: [1_000, 2_000] },
     )
     .toBeGreaterThan(0);
+  // 首帧画面有效性人工复核信号（非断言）：像素统计落控制台与测试附件
+  console.log(
+    `[smoke] 首帧像素探针 opaque=${firstFrame.opaque}/256 lit=${firstFrame.lit}/256（lit≈0 疑似黑屏帧，供人工复核）`,
+  );
+  await test.info().attach('first-frame-pixels.json', {
+    body: JSON.stringify(firstFrame),
+    contentType: 'application/json',
+  });
 
   // 触控注入：画布点击 → WS 出站 INPUT_EVENT。viewport 480×960（playwright.config），
   // 会话档位 UI 默认 720p60（720×1280）：画布 letterbox 适配视口，点击坐标经

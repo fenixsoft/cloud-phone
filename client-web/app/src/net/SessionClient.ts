@@ -255,6 +255,22 @@ export class SessionClient {
 
       // ── START_SESSION：建立（或附着）会话，HELLO_ACK 返回真实参数 ──
       await this.startSessionInternal(opts.mode, opts.profile);
+    } catch (err) {
+      // 失败收尾（与 reconnectOnce 对 staleWs 的处理同款）：requestHello/requestStartSession
+      // 超时或抛错时遗留的 socket 既未摘回调也未 close，其 onmessage 闭包仍指向共享的
+      // this.feed/this.parser——后续重试 connect() 重置 parser 并覆盖 this.ws 后，旧连接
+      // 迟到的 HELLO_ACK/PONG/STATS 字节会注入新连接的记录流（旧 ACK 抢先 resolve 新
+      // helloWaiter 误判握手成功），半开时无看门狗兜底而永久泄漏。先置空全部回调再
+      // close：其 close 事件不再触发 onWsClosed。
+      const staleWs = this.ws;
+      if (staleWs) {
+        staleWs.onopen = null;
+        staleWs.onmessage = null;
+        staleWs.onclose = null;
+        staleWs.onerror = null;
+        staleWs.close(1000, 'connect failed');
+      }
+      throw err;
     } finally {
       this.connectInFlight = false;
     }
@@ -664,6 +680,10 @@ export class SessionClient {
     const disconnectedAt = Date.now();
     const chain = ++this.reconnectChain;
     this.reconnecting = true;
+    // 退避计数随新链归零：上一链超窗/显式拒绝/close 重建遗留的递增值不得跨链，
+    // 保证每次新链从 RECONNECT_BASE_MS 起步（「0.5s 起步，倍增」契约；另一复位点
+    // 为重连成功处）
+    this.reconnectAttempt = 0;
     const attemptReconnect = () => {
       if (this.userClosed || chain !== this.reconnectChain) return;
       const windowMs = this.config.reconnectWindowMs ?? RECONNECT_WINDOW_MS;

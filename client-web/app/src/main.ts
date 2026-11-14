@@ -39,6 +39,7 @@ const btnClipRead = $('btn-clip-read');
 const btnClipWrite = $('btn-clip-write');
 const btnAudio = $('btn-audio');
 const btnEnd = $('btn-end');
+const toolbar = $('toolbar');
 const textInput = $<HTMLInputElement>('text-input');
 const toast = $('toast');
 
@@ -165,7 +166,16 @@ let lastClockOffsetUs = 0;
 /** 时钟已同步标记（首个自发 PONG 到达置位）：此前 offset 尚未估计，延迟样本按零偏移计算会失真，不入采样窗 */
 let clockSynced = false;
 
+/** APP_LIST 拉取失败降级期动态挂到工具条的重拉入口（列表恢复或会话拆除时撤下） */
+let appListRetryBtn: HTMLButtonElement | null = null;
+
+function removeAppListRetryEntry(): void {
+  appListRetryBtn?.remove();
+  appListRetryBtn = null;
+}
+
 function teardownSessionObjects(): void {
+  removeAppListRetryEntry(); // 会话拆除：降级期动态挂的工具条重拉入口一并撤下
   hudCtl?.dispose();
   hudCtl = null;
   bridge?.dispose();
@@ -201,8 +211,40 @@ function backToConnect(reason: string): void {
   if (reason) showError(reason);
 }
 
+/**
+ * APP_LIST 穷尽失败的降级进入（backToConnect 的对照面）：列表失败只影响应用选择入口，
+ * 已建立的视频/音频/控制面会话与全屏画面不作废——携带提示直入会话页，并在工具条动态挂
+ * 「应用列表」重拉入口，不把用户已付出的连接成本作废整体 teardown 回连接页。
+ */
+function enterSessionWithoutApps(reason: string): void {
+  if (!session) return;
+  showToast(`${reason}；会话已保留，可点工具条「应用列表」重新拉取`);
+  if (!appListRetryBtn) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '应用列表';
+    btn.title = '重新拉取应用列表';
+    btn.addEventListener('click', () => void refreshApps());
+    toolbar.appendChild(btn);
+    appListRetryBtn = btn;
+  }
+  show('session');
+  sizeCanvas();
+}
+
+/** 手动重拉应用列表（降级入口消费）：成功恢复应用网格并撤下重拉入口，失败 toast 原因留守会话页 */
+async function refreshApps(): Promise<void> {
+  if (!session) return;
+  try {
+    renderApps(await session.listApps(), session.lastHungSessions);
+  } catch (err) {
+    showToast(`应用列表拉取失败：${(err as Error).message}`);
+  }
+}
+
 /** 应用网格渲染（APP_LIST + 挂机会话恢复入口） */
 function renderApps(apps: AppEntry[], hung: HungSession[]): void {
+  removeAppListRetryEntry(); // 列表已恢复：撤下降级期挂的工具条重拉入口
   appGrid.innerHTML = '';
   for (const app of apps) {
     const item = document.createElement('button');
@@ -437,9 +479,25 @@ async function doConnectOnce(): Promise<void> {
 
     await session.connect({ wsUrl: buildWsUrl(window.location), token, mode: { kind: 'fullscreen' }, profile });
 
-    // 应用网格：FULLSCREEN 建会话后列应用 + 挂机恢复入口
-    const apps = await session.listApps();
-    renderApps(apps, session.lastHungSessions);
+    // 应用网格：FULLSCREEN 建会话后列应用 + 挂机恢复入口。
+    // 降级而非整体拆会话：源端刚建立会话、编码器初始化繁忙时 APP_LIST 应答可能超 3s，
+    // 列表失败只影响应用选择入口，会话本身（全屏画面）已可用——先有限重试 1 次（退避 1s），
+    // 仍失败则携带提示进入会话页并保留工具条重拉入口，不把已付出的连接成本作废回连接页。
+    let apps: AppEntry[] | null = null;
+    let listFailure: Error | null = null;
+    for (let attempt = 0; attempt < 2 && apps === null; attempt++) {
+      if (attempt > 0) await new Promise<void>((resolve) => setTimeout(resolve, 1_000));
+      try {
+        apps = await session.listApps();
+      } catch (err) {
+        listFailure = err as Error;
+      }
+    }
+    if (apps) {
+      renderApps(apps, session.lastHungSessions);
+    } else {
+      enterSessionWithoutApps(`应用列表拉取失败：${listFailure?.message ?? '未知原因'}`);
+    }
   } catch (err) {
     if (err instanceof VideoUnsupportedError) {
       showError(`当前浏览器不支持视频硬解（${err.support.browser}）：${err.support.reason ?? ''}`);
