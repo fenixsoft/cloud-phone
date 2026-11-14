@@ -22,6 +22,17 @@ export type InputSender = {
   clipboardGet(): void;
 };
 
+/** Esc 让位判定：事件源自可编辑元素（input/textarea/select/contenteditable，含隐藏
+ *  文本输入框）时，Esc 属输入框自身语义（取消输入/收起键盘），全局 BACK 注入让位。
+ *  防御性实现兼容最小测试替身（无 HTMLInputElement 构造器时按 tagName/属性降级判断）。 */
+function isEditableElement(el: Element | null | undefined): boolean {
+  if (!el) return false;
+  const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (el.getAttribute?.('contenteditable') === 'true') return true;
+  return el.isContentEditable === true;
+}
+
 export interface Letterbox {
   /** 视频在画布元素内的偏移（CSS px）与缩放 */
   offsetX: number;
@@ -165,6 +176,9 @@ export class InputBridge {
       this.listen(globalThis, 'keydown', (ev) => {
         const ke = ev as KeyboardEvent;
         if (ke.key === 'Escape') {
+          // 文本输入框聚焦时 Esc 属输入框自身语义（取消输入/收起键盘）：
+          // 跳过 BACK 注入且不吞默认行为，避免「取消输入」被误当源端返回、直接退出源端当前界面
+          if (typeof document !== 'undefined' && isEditableElement(document.activeElement)) return;
           ke.preventDefault();
           this.sendBack();
         }
