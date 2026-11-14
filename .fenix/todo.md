@@ -354,6 +354,7 @@
 
 ### 浪费
 - **两成功 run 七次 API 停滞纯等逾 420 秒零干预**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：本窗仅有的 2 个 run（周期代码审查 572.4s、审查台账修复 826.3s，合计墙钟约 23 分钟）虽双双成功，但内含 7 次 >60 秒的单轮 API 停滞（请求发出后长时间无响应的等待），纯等待可验证下界 420 秒、约占墙钟三成，零告警零止损；该形态已连续至少 3 天复发，复发敞口为每个窗口照付同量级等待与超时风险。
   - 证据：fenixd.log run_metrics 延迟汇总行（daemon 每次 run 收工落盘的指标行）：code-review-1794675815（每日周期代码审查 run）14 轮 stalls>60s=5（36%）max 105.8s（11-14T17:13:07Z 行）、时长 572.4s、输入 99,916/输出 29,530 tokens；code-fix-1794676388（审查台账修复 run）28 轮 stalls=2（7%）max 93.5s（17:26:54Z 行）、时长 826.3s；11-13 三行同形态：code-review-1794589400 stalls=7/27 max 96.1s、code-fix-1794590193 stalls=1 max 175.2s、review-2026-11-14（自省 run）stalls=3/51 max 165.5s。数据摘要第六节合计 429.0s/184.2s 未能在原始行回源：run_metrics 行与归档 run 记录均无 stall 合计字段，归档 .dsh-events.jsonl（原始事件留档）无时间戳无法重算，该两数标注未核实。
   - 调查评估：暴露于 code-review→code-fix 日常链路（每日周期审查与台账修复），非产品 SPEC。已核实：两 run 停滞计数与 max 直读 daemon 延迟汇总行，因每次停滞计数对应单轮 >60s，7 次停滞得出 ≥420s 纯等待为可验证下界，摘要 total 613.2s 无法回源故不作断言。根因只写到形态层：同窗两类 agent_type 均现 >90s 长尾且连续多日同形态，指向 provider 网关长尾（未定、多假说并存，不据此给根因特异修复）；框架侧判停（agents.run_stall_budget_* 键）缺省关闭（config.yaml 无该键，core/config.py L525 起为缺省定义）、成功终态豁免停滞升级，日志仅留痕零干预。与存量工作关系：todo.md 11-13 既有条目「停滞监督面缺位」已立项且配置键至今未落地（核实），其窗口级观测建议已见于本次摘要第六节 api-stall 行，本条不重复立项监督面。结论：属既有系统性敞口的第 4 天复发，唯一增量缺口是 stall 合计与逐轮时长未落 run_metrics/归档字段，事后无法复核合计类数字（本次 613.2s 即无法回源）。
@@ -361,6 +362,7 @@
 
 ### 失误
 - **蒸馏重试台账假欠账挂 6 天，催办信号 32 连发零处置**
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
   - 影响：knowledge-distill（知识归档蒸馏）车道两条 11-09 登记的重试欠账实为已完成工作——产物在失败登记 41 分钟后已由另一路径入库，台账行悬置 6 天未勾选；催办信号 knowledge_distill_retry_stale（重试台账欠账超 24 小时未重试的提示信号）自 11-10 起累计 32 条全部无处置，本窗 4 小时内连发 5 条，纯告警噪音与检查点 token 消耗，复发敞口为同类假欠账每天催办 4-8 次。
   - 证据：.fenix/todo.md 第 95-96 行两条未勾选重试行（登记 2026-11-09，登记原因是蒸馏 run 失败「调用 claude CLI 失败: No such file or directory: 'claude'」）；git 291fb59（11-09 10:43「knowledge: distill m0-a2a-streaming-pipeline, client-ux-and-input-latency」，23 文件 +425 行含 validation 域页与 index 更新，产物落库已核实）；.fenix/admin_alerts.json 中 knowledge_distill_retry_stale 共 32 条（11-10T10:04Z 起，全部 handled=false），窗口内 5 条（11-14T12:23:51Z→16:03:42Z，信号样本 id 1ad148fb0ba9）；.fenix/knowledge-distill-pending.json 的 batches 为空（实际重试队列为空，催办对象仅是 todo 未勾选行）。
   - 调查评估：暴露于 knowledge-distill 归档蒸馏车道。已核实：台账两条 spec 名与 291fb59 产物内容一一对应，失败登记（11-09 02:02Z）先于产物落库（11-09 02:43Z，即 10:43 本地）41 分钟，产物由另一次成功蒸馏完成、登记行从此无人勾选——确定性归因（产物 commit 与台账条目对应关系已逐项核实）。根因：台账闭合只有人工勾选一条路，框架无「产物已存在即闭合」核验；11-12 既有条目已建议自动闭环但至今未落地，信号量 17→32 条属（恶化）。与存量工作关系：todo.md 11-12 条目（催办 17 次无闭合）仍开放，本条为其恶化重述，并补窗口内 5 连发与产物 commit 核实证据。结论：状态误置型假欠账（工作已完成、台账仍记待重试）叠加同文催办无去重聚合，噪音持续放大且挤占告警面注意力。
@@ -368,6 +370,7 @@
 
 ### 可改进
 - **体检误报跨产品档位矛盾，待人工四项 3 天零闭环**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：知识体检（每晚对 spec/knowledge 全域做病灶检测的检查点）连续 3 晚（11-13/14/15）报「修 0 / 转写 0 / 待人工 4」，四项待人工无一闭环、修复通道零吞吐；其中 1 项档位矛盾经代码级核实为跨产品误报，悬置 2 天且每晚产生一条龄期改写提交；复发敞口为每晚一次体检加一条提交的固定消耗，知识库长期带着「疑似冲突」规则运行，后续蒸馏/实现 agent 引用错页规则的错误成本未发生但敞口存在。
   - 证据：spec/knowledge/log.md 三行体检留痕（11-13/14/15 各记「修 0 / 转写 0 / 待人工 4」）；.fenix/knowledge_audit_findings.json 唯一在案疑点 fingerprint af0432abac95（体检追踪同一疑点的哈希键）kind=contradiction（跨页规则疑似冲突病灶）、status=escalated（升级待人工）、first_seen=2026-11-13、review_rounds=2；矛盾对为 spec/knowledge/domains/client/windows-desktop-client.md 档位规则（跟随本机/自定义全矩阵、aspect-exact 校验，L15）对 web-client/browser-streaming-client.md 档位规则（仅 720p/1080p、区间校验加 /16 对齐交源端，L18）；检测器 .fenix/core/knowledge_audit.py L1339-1354：规则主题前 12 字同桶（「档位选择与校验」）且数字集不同即判 contradiction，无产品/页域感知；源端 source/app/src/main/kotlin/cloudphone/source/StreamService.kt params()（L1064-1069）对任意正数 width/height/fps/bitrate 归一化（缺省 1280×720@60/8Mbps），无 720/1080 硬限制；每晚龄期改写提交 02ad37b 与 54eaeb0（todo.md 各 1 行 diff，龄期 1 天改 2 天）；.fenix/knowledge_audit_arbitration.json（人工仲裁登记入口文件）自 11-13 起不存在、无任何写入。
   - 调查评估：暴露于 knowledge audit 体检检查点。已核实：两规则分属两个不同观看端产品（Windows 桌面客户端与浏览器客户端），源端接受任意分辨率，故两档位规则同时为真、非矛盾——检测逻辑（代码）、源端行为（代码）、两页产品归属（页路径）三源核实，足以对该配对给出确定性「误报」归因。根因：contradiction 判定只看规则主题桶与数字集差异、缺产品域感知，跨产品正常差异被升格为待人工矛盾；且仲裁通道依赖人工向登记文件写入，headless 无人值守部署下该文件从未被创建，积压必然只增不减。与存量工作关系：todo.md 11-13 条目「audit 语义项转写失败：contradiction」是同一疑点的早期形态（当时转写失败未定性），本条增量为误报的代码级根因、修复通道三晚零吞吐与龄期改写提交 churn；其余 3 项锚点悬空（aux-channels-m3.md 的 enable/set、touch-latency-fix.md 的 P50/P95、p2p-nat-traversal.md 的 netns/iptables）在 findings 台账无记录、首见时间未核实。结论：检出能力正常而修复与仲裁面零吞吐，报告「结论：通过」与 4 项待人工并存的口径进一步弱化了积压可见性。
