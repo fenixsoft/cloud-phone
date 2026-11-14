@@ -121,6 +121,13 @@ class Peer:
                 for ev in self.events:
                     if ev.get("event") == name:
                         return ev
+                # 对端进程已退出且 stdout 采集线程已收尾：事件流不会再有新事件，
+                # 立即返回不再空等至超时（对端启动即崩溃场景）。须等采集线程收尾，
+                # 避免末批事件尚未入列就被误判为「未等到」
+                if self.p.poll() is not None and not self._t.is_alive():
+                    print(f"[natlab_run] {self.label} 对端进程已退出（rc={self.p.poll()}），"
+                          f"未等到事件 {name}", file=sys.stderr)
+                    return None
                 remain = deadline - time.time()
                 if remain <= 0:
                     return None
@@ -161,10 +168,13 @@ def classify(cli):
     result = last_result(events)
     established = [e for e in events if e.get("event") == "punch_established"]
     fallback = any(e.get("event") == "punch_fallback" for e in events)
-    prediction_stage = next(
-        (s for e in events if e.get("event") == "result"
-         for s in _parse_trace(e.get("punch_trace")).get("stages", [])
-         if s.get("stage") == "port_prediction"), None)
+    # prediction_stage 与 result 同口径：只从末条 result（last_result）的 punch_trace 解析，
+    # 防多 result 事件（重连重复 emit）时与 punch_ms 首末错配
+    prediction_stage = None
+    if result:
+        prediction_stage = next(
+            (s for s in _parse_trace(result.get("punch_trace")).get("stages", [])
+             if s.get("stage") == "port_prediction"), None)
     prediction_hit = bool(prediction_stage) and str(prediction_stage.get("detail", "")).startswith("hit")
     if established and prediction_hit:
         outcome = "prediction"
@@ -343,7 +353,7 @@ def matrix(data, profiles, rounds, prediction, client_timeout):
                 print(f"  [{cl}×{srv}] round{i + 1}: {rec['outcome']} punch_ms={rec.get('punch_ms')}"
                       + (f" prediction={rec.get('prediction_stage')}" if rec.get("prediction_stage") else ""))
             wins = [r for r in rounds_rec if r["outcome"] in ("direct", "prediction")]
-            punch_vals = [r["punch_ms"] for r in wins if r["punch_ms"]]
+            punch_vals = [r["punch_ms"] for r in wins if r["punch_ms"] is not None]
             data["matrix"].append({
                 "client": cl, "server": srv, "rounds": rounds_rec,
                 "direct": sum(r["outcome"] == "direct" for r in rounds_rec),

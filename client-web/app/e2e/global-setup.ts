@@ -10,7 +10,7 @@ import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { adb, sleep, ADB_TIMEOUT_MS } from './adbx';
+import { adb, sleep, ADB_TIMEOUT_MS, SOURCE_SERIAL, HOST_PORT } from './adbx';
 import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -21,8 +21,7 @@ const REPO_ROOT = path.resolve(APP_DIR, '..', '..');
 // 主仓根：E2E_MAIN_REPO 显式覆盖 → git 公共目录推导（worktree 检出即主仓根）→ git 不可用回退本检出根
 const MAIN_REPO = process.env.E2E_MAIN_REPO ?? mainRepoFromGit(REPO_ROOT);
 const GATEWAY_DIR = path.resolve(APP_DIR, '..', 'gateway');
-const SOURCE_SERIAL = process.env.E2E_SOURCE_SERIAL ?? 'emulator-5554';
-const HOST_PORT = Number(process.env.E2E_SOURCE_PORT ?? 22333);
+// SOURCE_SERIAL / HOST_PORT 单处声明于 adbx.ts（env 名 + 默认值），此处 import 使用
 const GATEWAY_PORT = Number(process.env.E2E_GATEWAY_PORT ?? 8090);
 // 构建仓库：本检出内有 source/gradlew 用本检出，缺失（特殊 worktree/稀疏检出）回退主仓
 const SOURCE_PROJECT = existsSync(path.join(REPO_ROOT, 'source', 'gradlew')) ? REPO_ROOT : MAIN_REPO;
@@ -55,6 +54,11 @@ let gatewayOwnedBySetup = false;
  *  消费方为 e2e 探针与冒烟用例（grant.ts / smoke.spec.ts）。网关进程不经此模块传递——
  *  teardown 经 .gateway.pid 文件交换 PID（globalTeardown 读 PID 清理）。 */
 export const E2E_STATE = { token: process.env.E2E_TOKEN ?? 'cloudphone-m0' };
+
+/** 正则元字符转义（serial 等外部输入拼 RegExp 前必经）：按字面匹配，防元字符过宽匹配或语法错误 */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /** 由 git 公共目录推导主仓根：worktree 检出返回主仓根，主仓检出返回本仓根 */
 function mainRepoFromGit(from: string): string {
@@ -147,9 +151,12 @@ export default async function globalSetup(): Promise<void> {
     p.on('error', (err) => settle(() => reject(err)));
   });
   // 状态感知匹配：按行校验 serial 处于 device 状态——整串 includes 会把
-  // "serial\toffline" 一并误判为在线，随后卡死在 wait-for-device 而非明确报错
-  if (!new RegExp(`^${SOURCE_SERIAL}\\s+device\\s*$`, 'm').test(devices)) {
-    const state = new RegExp(`^${SOURCE_SERIAL}\\s+(\\S+)`, 'm').exec(devices)?.[1];
+  // "serial\toffline" 一并误判为在线，随后卡死在 wait-for-device 而非明确报错。
+  // serial 来自环境变量（如 192.168.1.5:5555 含 `.`），拼 RegExp 前先转义元字符：
+  // 否则点号过宽匹配（192x168x1x5:5555 误命中）、含 +() 等元字符时直接抛语法错误
+  const serialRe = escapeRegExp(SOURCE_SERIAL);
+  if (!new RegExp(`^${serialRe}\\s+device\\s*$`, 'm').test(devices)) {
+    const state = new RegExp(`^${serialRe}\\s+(\\S+)`, 'm').exec(devices)?.[1];
     if (state === 'offline' || state === 'unauthorized') {
       throw new Error(`源端模拟器 ${SOURCE_SERIAL} 处于 ${state} 状态（adb devices）——${state === 'unauthorized' ? '需在设备上确认 USB 调试授权' : '等待设备就绪或重启 adb'}`);
     }

@@ -13,11 +13,11 @@
 import net from 'node:net';
 import { HelloStatus, WatchMode, encodeControlRecord, decodeControlMessage } from '../src/protocol/Messages';
 import { MAX_RECORD_BYTES, RECORD_HEADER_BYTES, RECORD_CONTROL } from '../src/protocol/Framing';
-import { adb, sleep } from './adbx';
+import { adb, sleep, HOST_PORT } from './adbx';
 import { E2E_STATE } from './global-setup';
 import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
 
-const HOST_PORT = Number(process.env.E2E_SOURCE_PORT ?? 22333);
+// HOST_PORT 单处声明于 adbx.ts（env 名 + 默认值），此处 import 使用
 
 /** 探针档位 = 浏览器端默认档位（720p 竖屏 60fps / 8Mbps）。源端在「请求档位与现行管线
  * 不同时按请求重建」（StreamService.handleStartSession → ensureSharedCapture），探针档位
@@ -53,8 +53,11 @@ function probeSessionAccepted(): Promise<boolean> {
     const hello = encodeControlRecord({ kind: 'hello', version: 1, token: E2E_STATE.token, mode: WatchMode.FULLSCREEN, packageName: '', width: 0, height: 0, fps: 30, bitrateKbps: 8000, sessionId: 0, p2pOffer: '', crypto: null });
     const start = encodeControlRecord({ kind: 'startSession', sessionId: 0, mode: WatchMode.FULLSCREEN, packageName: '', width: PROBE_PROFILE.width, height: PROBE_PROFILE.height, fps: PROBE_PROFILE.fps, bitrateKbps: PROBE_PROFILE.bitrateKbps });
     const s = net.connect(HOST_PORT, '127.0.0.1', () => {
+      // START_SESSION 不再固定延迟 300ms 抢跑：源端 HELLO 裁决变慢时 START 先于裁决
+      // 到达会被按未握手请求拒绝，该 REJECT 被当作第一响应误判 token 失败 → 触发
+      // ensureSourcePipeline 的 force-stop + 重新授权 + 45s 等日志全量复位路径。
+      // 改为在 data 处理器收到第一响应 HELLO 裁决 ACCEPTED 后再发（保留 30s 冷启动窗口）
       s.write(hello);
-      setTimeout(() => s.write(start), 300);
     });
     let buf = Buffer.alloc(0);
     let decided = false;
@@ -99,6 +102,7 @@ function probeSessionAccepted(): Promise<boolean> {
               return;
             }
             helloAcked = true;
+            s.write(start); // HELLO 裁决 ACCEPTED 后再发 START_SESSION（消除固定 300ms 时序假设）
             startTimer = setTimeout(() => finish(false), 30_000); // START 冷启动窗口
           } else if (msg.status === HelloStatus.ACCEPTED) {
             // 第二响应 = START_SESSION 被接受（就绪判据成立，sessionId 为真实值）

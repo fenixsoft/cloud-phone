@@ -179,7 +179,11 @@ def main():
         for lo, hi in BUCKETS:
             labels.append(("%d-%dms" % (lo, hi)) if hi is not None else (">=%dms" % lo))
             counts.append(sum(1 for v in e2e_vals if v >= lo and (hi is None or v < hi)))
-        print("e2e 直方图: " + "  ".join("%s:%d" % (l, c) for l, c in zip(labels, counts) if c))
+        hist = "  ".join("%s:%d" % (l, c) for l, c in zip(labels, counts) if c)
+        n_e2e = sum(1 for v in e2e_vals if v >= 0)
+        if n_e2e < len(e2e_vals):
+            hist += "  （e2eMs=-1 未兑现: %d 个）" % (len(e2e_vals) - n_e2e)
+        print("e2e 直方图: " + hist)
 
     # 验收提示（P95 口径：e2eAck ≤ 200ms）
     e2e_all = sorted(s["e2eMs"] for s in samples if s["e2eMs"] >= 0)

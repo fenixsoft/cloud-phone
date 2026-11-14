@@ -14,11 +14,14 @@ import { spawn } from 'node:child_process';
  *  （如 global-setup 的 devices 探测）复用同一档位，保持整条 adb 链路单一超时口径 */
 export const ADB_TIMEOUT_MS = Number(process.env.E2E_ADB_TIMEOUT) || 30_000;
 
-const SERIAL = process.env.E2E_SOURCE_SERIAL ?? 'emulator-5554';
+/** 源端目标与端口约定单处声明（env 名 + 默认值唯此一处）：global-setup.ts / grant.ts
+ *  一律 import 本常量，杜绝三处重复声明各自漂移（adb 注入目标与转发/探测端口各说各话） */
+export const SOURCE_SERIAL = process.env.E2E_SOURCE_SERIAL ?? 'emulator-5554';
+export const HOST_PORT = Number(process.env.E2E_SOURCE_PORT ?? 22333);
 
 export function adb(...args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const p = spawn('adb', ['-s', SERIAL, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const p = spawn('adb', ['-s', SOURCE_SERIAL, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let settled = false;
     const timer = setTimeout(() => {
