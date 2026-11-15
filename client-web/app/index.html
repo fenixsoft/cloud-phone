@@ -23,9 +23,12 @@
         <label>配对 Token <input id="token-input" name="token" autocomplete="off" required /></label>
         <fieldset id="profile-fieldset">
           <legend>档位</legend>
+          <!-- 分辨率选项的 data-width/height 是 src/main.ts RESOLUTIONS 的防漂移镜像
+            （e2e/grant.ts 模块加载时与 PROBE_PROFILE 比对，漂移即 e2e 早期失败）：
+            改 RESOLUTIONS 键值 MUST 同步这里，反之亦然。零行为属性，运行时不读取。 -->
           <select id="profile-resolution">
-            <option value="720p" selected>720p</option>
-            <option value="1080p">1080p</option>
+            <option value="720p" data-width="720" data-height="1280" selected>720p</option>
+            <option value="1080p" data-width="1080" data-height="2400">1080p</option>
           </select>
           <select id="profile-fps">
             <option value="30">30 fps</option>
