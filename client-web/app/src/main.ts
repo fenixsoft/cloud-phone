@@ -7,7 +7,7 @@
 
 import { AudioPipeline } from './media/AudioPipeline';
 import { VideoPipeline, VideoUnsupportedError, probeVideoSupport } from './media/VideoPipeline';
-import { SessionClient, SessionRejectedError, buildWsUrl, type AppEntry, type HungSession, type SessionParameters, type StartMode, type VideoProfile } from './net/SessionClient';
+import { SessionBusyError, SessionClient, SessionRejectedError, buildWsUrl, type AppEntry, type HungSession, type SessionParameters, type StartMode, type VideoProfile } from './net/SessionClient';
 import { InputBridge } from './input/InputBridge';
 import { Hud } from './ui/Hud';
 
@@ -274,7 +274,9 @@ async function switchSession(mode: StartMode): Promise<void> {
     show('session');
     sizeCanvas();
   } catch (err) {
-    if (err instanceof SessionRejectedError) backToConnect(`会话切换被拒绝（${err.statusName}）：${err.reason}`);
+    // 瞬态竞争（首连/重连在飞）：会话仍有效，仅 toast 提示稍后重试，不拆会话回连接页
+    if (err instanceof SessionBusyError) showToast(err.message);
+    else if (err instanceof SessionRejectedError) backToConnect(`会话切换被拒绝（${err.statusName}）：${err.reason}`);
     else backToConnect((err as Error).message);
   }
 }
@@ -288,8 +290,10 @@ async function startSingleApp(packageName: string): Promise<void> {
 /** canvas 尺寸 = 会话分辨率（letterbox 由 CSS object-fit 语义 + 映射共同承担） */
 function sizeCanvas(): void {
   if (!currentParams) return;
-  canvas.width = currentParams.width;
-  canvas.height = currentParams.height;
+  // 仅尺寸变化才赋值：对 canvas.width/height 赋值即使值相同也会清空位图（规范行为），
+  // resize/orientationchange 触发时若解码停滞会把最后一帧清成空白，直到流恢复
+  if (canvas.width !== currentParams.width) canvas.width = currentParams.width;
+  if (canvas.height !== currentParams.height) canvas.height = currentParams.height;
 }
 
 // ── 会话事件绑定（HUD/视频/音频/输入/断线）──
@@ -529,6 +533,8 @@ $('btn-text').addEventListener('click', () => {
 
 /** 「结束会话」共用入口（工具条「结束」与应用网格「退出」同语义）：STOP_SESSION 无响应消息 fire-and-forget，随后回连接页 */
 function endSessionToConnect(): void {
+  // 前提：stopSession 的 ws.send 必须同步完成，随后 backToConnect→close 前帧已写入发送栈；
+  // 若未来 stopSession 改异步编码/分片，STOP 帧会被 close 截断，语义从「显式结束」退化为「断连回收」
   session?.stopSession();
   backToConnect('');
 }
