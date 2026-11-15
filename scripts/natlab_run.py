@@ -54,15 +54,29 @@ IF_CL_P = "vcl-peer"
 PROFILES = ["ei", "ap-rr", "symmetric"]
 
 
+_SETUP_TIMEOUT = {"up": 120, "down": 120, "profile": 30}
+# 外部命令一律带超时（同 adb 工具链纪律）：iptables 规则冲突、netns 内进程残留卡住
+# down 清理时不致无限期阻塞，TimeoutExpired 转带命令上下文的 RuntimeError
+# （调用方既有 except Exception 口径将其归入 infra_fail / 基础设施失败记录，无需新口径）
+
+
 def sh_setup(*args):
-    r = subprocess.run([SETUP, *args], capture_output=True, text=True)
+    timeout = _SETUP_TIMEOUT.get(args[0] if args else "", 120)
+    try:
+        r = subprocess.run([SETUP, *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(
+            f"natlab_setup.sh {' '.join(args)} 超时（>{timeout}s）：疑似 iptables 规则冲突或 netns 内进程残留") from e
     if r.returncode != 0:
         raise RuntimeError(f"natlab_setup.sh {' '.join(args)} 失败：{r.stderr.strip() or r.stdout.strip()}")
     return r.stdout.strip()
 
 
 def netns_run(ns, *cmd):
-    return subprocess.run(["ip", "netns", "exec", ns, *cmd], capture_output=True, text=True)
+    try:
+        return subprocess.run(["ip", "netns", "exec", ns, *cmd], capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"netns {ns} 命令超时（>30s）：{' '.join(cmd)}") from e
 
 
 class Peer:
@@ -354,16 +368,20 @@ def matrix(data, profiles, rounds, prediction, client_timeout):
                       + (f" prediction={rec.get('prediction_stage')}" if rec.get("prediction_stage") else ""))
             wins = [r for r in rounds_rec if r["outcome"] in ("direct", "prediction")]
             punch_vals = [r["punch_ms"] for r in wins if r["punch_ms"] is not None]
+            # infra_fail（环境故障）与真实 fail 分列，成功率/会话建立率分母剔除 infra_fail 轮：
+            # 环境损坏不再伪装成该档位组合的打洞失败污染回归对比；剔除后无有效轮则置 None
+            scored = [r for r in rounds_rec if r["outcome"] != "infra_fail"]
             data["matrix"].append({
                 "client": cl, "server": srv, "rounds": rounds_rec,
                 "direct": sum(r["outcome"] == "direct" for r in rounds_rec),
                 "prediction": sum(r["outcome"] == "prediction" for r in rounds_rec),
                 "frp_fallback": sum(r["outcome"] == "frp_fallback" for r in rounds_rec),
-                "fail": sum(r["outcome"] in ("fail", "infra_fail") for r in rounds_rec),
-                "success_rate": round(len(wins) / len(rounds_rec), 3),
+                "fail": sum(r["outcome"] == "fail" for r in rounds_rec),
+                "infra_fail": sum(r["outcome"] == "infra_fail" for r in rounds_rec),
+                "success_rate": round(len(wins) / len(scored), 3) if scored else None,
                 "avg_punch_ms": round(sum(punch_vals) / len(punch_vals), 1) if punch_vals else None,
                 "session_established_rate": round(
-                    sum(1 for r in rounds_rec if r["ok"]) / len(rounds_rec), 3),
+                    sum(1 for r in scored if r["ok"]) / len(scored), 3) if scored else None,
             })
 
 
@@ -406,12 +424,15 @@ def migration_scenario(data, client_timeout):
 
 def print_table(data):
     print("\n=== 3×3 NAT 矩阵结果（client 档 × server 档）===")
-    print(f"{'组合':<18}{'直连':>4}{'预测':>4}{'兜底':>4}{'失败':>4}{'打洞成功率':>10}{'会话建立':>9}{'平均耗时ms':>11}")
+    print(f"{'组合':<18}{'直连':>4}{'预测':>4}{'兜底':>4}{'失败':>4}{'环境':>4}{'打洞成功率':>10}{'会话建立':>9}{'平均耗时ms':>11}")
     for row in data["matrix"]:
         label = f"{row['client']}×{row['server']}"
         avg = f"{row['avg_punch_ms']:.0f}" if row["avg_punch_ms"] is not None else "-"
+        sr = f"{row['success_rate'] * 100:>9.0f}%" if row["success_rate"] is not None else f"{'-':>10}"
+        ser = (f"{row['session_established_rate'] * 100:>8.0f}%"
+               if row["session_established_rate"] is not None else f"{'-':>9}")
         print(f"{label:<18}{row['direct']:>4}{row['prediction']:>4}{row['frp_fallback']:>4}"
-              f"{row['fail']:>4}{row['success_rate'] * 100:>9.0f}%{row['session_established_rate'] * 100:>8.0f}%{avg:>11}")
+              f"{row['fail']:>4}{row['infra_fail']:>4}{sr}{ser}{avg:>11}")
 
 
 def main():
@@ -487,6 +508,13 @@ def main():
             sh_setup("down")
         except Exception:
             pass
+
+    # 迁移恢复回归失败并入退出码（3）：按退出码判定的消费方不再把「未恢复」当通过放行
+    if not args.skip_migration and mig and not mig.get("session_continuous"):
+        print(f"[natlab_run] 迁移验证未通过：session_continuous={mig.get('session_continuous')}"
+              f"（会话未恢复或帧序列断裂），本轮按失败退出", file=sys.stderr)
+        if code == 0:
+            code = 3               # 既有 0/1/2/130 语义不变，不因迁移失败降级既有失败码
     return code
 
 

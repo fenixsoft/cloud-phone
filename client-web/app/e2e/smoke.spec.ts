@@ -26,7 +26,10 @@ test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应�
   await ensureSourcePipeline();
 
   // WS 出站帧统计（INPUT_EVENT 断言用）：控制记录头 [u8 recordType][u32 payloadLen]，
-  // 头后首字节为 msgType，统计键由 MsgType 常量生成
+  // 头后首字节为 msgType，统计键由 MsgType 常量生成。
+  // 前提固化：SessionClient 当前逐条 send、一帧恰承载一条控制记录，故「头后首字节=本帧
+  // 记录类型」成立；若未来为降功耗引入多记录合帧，本探针只统计到首条，届时应改用
+  // Framing.RecordStreamParser 对帧载荷完整切片后再计数。
   const sentTypes: Record<string, number> = {};
   const inputEventKey = `0x${MsgType.INPUT_EVENT.toString(16)}`;
   page.on('websocket', (ws) => {
@@ -92,10 +95,11 @@ test('FULLSCREEN 冒烟全链路：首帧 → 触控注入 → STATS → 单应�
   // STATS：HUD fps 字段可解析为数值（源端 ≥1Hz 推送，浏览器消费渲染；非 '—' 占位）。
   // 口径固化：源端静态画面按「重复上一帧持续出流」保持 fps≈档位（EncoderPipeline 标准做法），
   // 活动会话内 fps 理论恒 >0；但首个 STATS 快照聚合窗口未满时 fpsSent 可能短暂为 0，
-  // 故本断言只验证 STATS 已到达且可解析（与 not.toBe('—') 同意图），不断言 >0，避免环境性误报。
+  // 故本断言只验证 STATS 已到达且可解析——HUD 文本必须整体匹配十进制数字（空串、'—'
+  // 占位、残缺文本一律不过关），不断言 >0，避免环境性误报。
   await expect
     .poll(async () => page.locator('#hud-fps').textContent(), { timeout: 20_000, intervals: [1_000] })
-    .not.toBe('—');
+    .toMatch(/^\d+(\.\d+)?$/);
   const fps = Number((await page.locator('#hud-fps').textContent()) ?? '');
   expect(fps).not.toBeNaN();
 

@@ -11,6 +11,9 @@
  */
 
 import net from 'node:net';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { HelloStatus, WatchMode, encodeControlRecord, decodeControlMessage } from '../src/protocol/Messages';
 import { MAX_RECORD_BYTES, RECORD_HEADER_BYTES, RECORD_CONTROL } from '../src/protocol/Framing';
 import { adb, sleep, HOST_PORT } from './adbx';
@@ -23,8 +26,49 @@ import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
  * 不同时按请求重建」（StreamService.handleStartSession → ensureSharedCapture），探针档位
  * 与冒烟会话档位一致才能零扰动（不触发 MediaProjection/VD 抖动）。出处：src/main.ts
  * RESOLUTIONS['720p']（720×1280）+ index.html 档位控件默认选中项（60 fps / 8 Mbps）；
- * SessionClient 无可 import 的默认档位常量，故本地声明，勿与页面档位各自漂移。 */
+ * SessionClient 无可 import 的默认档位常量，故本地声明；防漂移不靠人工对齐——模块加载
+ * 时经 assertProbeProfileMatchesPageDefault 与 index.html 默认档位强制比对，漂移即早期失败。 */
 const PROBE_PROFILE = { width: 720, height: 1280, fps: 60, bitrateKbps: 8000 } as const;
+
+/** 档位防漂移闸门：模块加载时读取本检出的 index.html，解析档位控件默认选中项（分辨率
+ * 选项的 data-width/data-height 属性 + fps/bitrate 的 selected value）与 PROBE_PROFILE 比对，
+ * 不一致立即抛错并附三方值（grant.ts PROBE_PROFILE / index.html 默认项 / 分辨率出处
+ * main.ts RESOLUTIONS）——e2e 早期失败优于静默漂移触发源端按请求重建管线。 */
+function assertProbeProfileMatchesPageDefault(): void {
+  const htmlPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'index.html');
+  let html: string;
+  try {
+    html = readFileSync(htmlPath, 'utf8');
+  } catch (err) {
+    throw new Error(`档位防漂移检查：无法读取 ${htmlPath}（${String(err)}）`);
+  }
+  // 取指定 <select> 内带 selected 的 <option>：value 为档位值，attrs 串供 data-* 解析
+  const selectedOption = (selectId: string): { value: string; attrs: string } => {
+    const select = new RegExp(`<select id="${selectId}"[^>]*>((?:(?!</select>)[\\s\\S])*)</select>`).exec(html);
+    const option = select ? /<option\s+([^>]*\bselected[^>]*)>/.exec(select[1]) : null;
+    const value = option ? /value="([^"]*)"/.exec(option[1]) : null;
+    if (!option || !value) {
+      throw new Error(`档位防漂移检查：index.html #${selectId} 未解析到 selected 默认项（控件结构变动，防漂移闸门无法核对）`);
+    }
+    return { value: value[1], attrs: option[1] };
+  };
+  const res = selectedOption('profile-resolution');
+  const pageDefault = {
+    width: Number(/data-width="(\d+)"/.exec(res.attrs)?.[1]),
+    height: Number(/data-height="(\d+)"/.exec(res.attrs)?.[1]),
+    fps: Number(selectedOption('profile-fps').value),
+    bitrateKbps: Number(selectedOption('profile-bitrate').value),
+  };
+  if (pageDefault.width !== PROBE_PROFILE.width || pageDefault.height !== PROBE_PROFILE.height
+    || pageDefault.fps !== PROBE_PROFILE.fps || pageDefault.bitrateKbps !== PROBE_PROFILE.bitrateKbps) {
+    throw new Error(
+      `档位防漂移检查失败：PROBE_PROFILE=${JSON.stringify(PROBE_PROFILE)} ≠ index.html 默认档位 ` +
+      `${JSON.stringify(pageDefault)}（选中 ${res.value}，分辨率出处 src/main.ts RESOLUTIONS['${res.value}']）——` +
+      '三方对齐前禁止探针（探针档位≠会话档位会触发源端按请求重建管线，违背零扰动）',
+    );
+  }
+}
+assertProbeProfileMatchesPageDefault();
 
 /** 等待 logcat 出现指定标记（cached-app freezing 会把授权确认 tap 的生效延迟到
  * 探针之后——管线重建完成的唯一权威信号是 StreamService 的「shared capture ready」
@@ -111,7 +155,10 @@ function probeSessionAccepted(): Promise<boolean> {
             // 留出 STOP 往返窗口再断开：先 destroy 会让 DISCONNECTED 抢在 STOP 前到，
             // 走断开挂机路径遗留挂机会话
             setTimeout(() => finish(true), 500);
-          } else {
+          } else if (!startAccepted) {
+            // 与上方 close 路径同口径：判据成立后的 STOP 回收窗口内，源端若以 helloAck
+            // 形态对 STOP_SESSION 回 REJECT（如 session not found），不得回翻已成立的
+            // 就绪判据（否则触发 ensureSourcePipeline 无谓的全量复位重建管线）
             finish(false);
           }
         } catch {
@@ -122,14 +169,40 @@ function probeSessionAccepted(): Promise<boolean> {
   });
 }
 
+/** ensureSourcePipeline 总体时限（毫秒）：E2E_PIPELINE_TIMEOUT 覆盖，缺省 80s。复位路径
+ * 各阶段串联最坏可达 3 分钟以上，而调用方用例超时为 90s（playwright.config.ts timeout）——
+ * 无总体时限会在复位中途被外部打断且丢失卡点诊断，故缺省须小于 90s 才能让自带诊断的
+ * 错误先落地（正常复位全路径 ~35-50s，80s 覆盖之）；预期更慢复位时连同用例超时一起经
+ * env 放宽。 */
+const PIPELINE_TIMEOUT_MS = Number(process.env.E2E_PIPELINE_TIMEOUT) || 80_000;
+
 /** 确保源端可接受新会话（探针 ACCEPTED）。
  * 接受失败 → 全量复位路径：force-stop（清僵尸投影/挂机会话/VD）→ FGS → MainActivity
  * → 手动路径授予（只存凭据不消费，区别于 captureLost 自动重授权路径的立即消费）
- * → 系统框确认 → 探针消费新鲜凭据建管线。 */
+ * → 系统框确认 → 探针消费新鲜凭据建管线。
+ * 总体 deadline：在各阶段边界检查剩余预算（阶段内部超时/重试逻辑不动；单阶段自身的
+ * 45s 日志等待等极端越界要到下一边界才被发现），耗尽即抛带已完成阶段清单的明确错误。 */
 export async function ensureSourcePipeline(): Promise<void> {
-  await adb('forward', `tcp:${HOST_PORT}`, `tcp:${HOST_PORT}`);
-  if (await probeSessionAccepted()) return;
+  const deadline = Date.now() + PIPELINE_TIMEOUT_MS;
+  const donePhases: string[] = [];
+  const checkBudget = (next: string): void => {
+    if (Date.now() < deadline) return;
+    throw new Error(
+      `ensureSourcePipeline 超出总体时限 ${PIPELINE_TIMEOUT_MS}ms（E2E_PIPELINE_TIMEOUT 可调），` +
+      `进入「${next}」前中止；已完成阶段：${donePhases.join(' → ') || '（无）'}`,
+    );
+  };
+  const phaseDone = (name: string): void => { donePhases.push(name); };
 
+  checkBudget('端口转发');
+  await adb('forward', `tcp:${HOST_PORT}`, `tcp:${HOST_PORT}`);
+  phaseDone('端口转发');
+
+  checkBudget('首次探针');
+  if (await probeSessionAccepted()) return;
+  phaseDone('首次探针（未接受）');
+
+  checkBudget('force-stop 复位');
   await adb('shell', 'am', 'force-stop', 'cloudphone.source');
   await sleep(2000);
   await adb('logcat', '-c'); // 复位起点清日志，「shared capture ready」只认本轮重建
@@ -138,19 +211,31 @@ export async function ensureSourcePipeline(): Promise<void> {
   await adb('shell', 'svc', 'power', 'stayon', 'true');
   await adb('shell', 'am', 'start', '-n', 'cloudphone.source/.MainActivity');
   await sleep(3000);
+  phaseDone('force-stop 复位 + FGS + MainActivity');
+
+  checkBudget('授权 tap 轮询');
   for (let i = 0; i < 4; i++) {
     if (await tapText(APP_GRANT_PATTERN, { unfreeze: true })) break;
     await sleep(1500);
   }
+  phaseDone('授权 tap 轮询');
+
+  checkBudget('开始采集 tap 轮询');
   for (let i = 0; i < 4; i++) {
     if (await tapText(START_NOW_PATTERN, { unfreeze: true })) break;
     await sleep(1500);
   }
+  phaseDone('开始采集 tap 轮询');
+
   // 授权 tap 的实际生效受系统冻结进程调度延迟（实测 ~13s），必须等管线重建完成的
   // 日志信号再探，否则探针抢跑于对话框确认 → 拒绝
+  checkBudget('shared capture ready 日志等待');
   if (!(await waitForLogMarker('shared capture ready', 45_000))) {
     console.warn('[e2e] 未等到 shared capture ready 日志标记，直接进入探针');
   }
+  phaseDone('shared capture ready 日志等待');
+
+  checkBudget('复位后探针重试');
   for (let i = 0; i < 3; i++) {
     if (await probeSessionAccepted()) return;
     await sleep(2500);

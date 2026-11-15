@@ -21,7 +21,6 @@
 import { ProtocolError, RECORD_CONTROL, RECORD_VIDEO, RecordStreamParser } from '../protocol/Framing';
 import {
   HelloStatus,
-  MsgType,
   WatchMode,
   decodeControlMessage,
   encodeControlRecord,
@@ -282,12 +281,13 @@ export class SessionClient {
    *
    * 互斥守卫：首连（connectInFlight）或断线重连链（reconnecting）在飞时，内部路径已持有
    * START_SESSION 等待者，外部再发起会覆写 pendingStart/startWaiter——前一个等待者的
-   * Promise 既不 resolve 也不 reject（await 永久悬挂）。故在飞期间显式抛错拒绝
-   * （调用方 switchSession 的既有 catch 呈现原因），保证任一时刻至多一个在飞 START_SESSION。
+   * Promise 既不 resolve 也不 reject（await 永久悬挂）。故在飞期间显式抛 SessionBusyError
+   * 拒绝（瞬态竞争、可等待重试：调用方 switchSession 对其 toast 提示并保留会话，不整场拆除），
+   * 保证任一时刻至多一个在飞 START_SESSION。
    */
   async startOrSwitchSession(mode: StartMode, profile?: VideoProfile): Promise<void> {
     if (this.connectInFlight || this.reconnecting) {
-      throw new Error(this.reconnecting ? '重连进行中，请稍候再切换会话' : '连接建立中，请稍候再切换会话');
+      throw new SessionBusyError(this.reconnecting ? '重连进行中，请稍候再切换会话' : '连接建立中，请稍候再切换会话');
     }
     return this.startSessionInternal(mode, profile);
   }
@@ -397,7 +397,11 @@ export class SessionClient {
     this.send({ kind: 'clipboardGet' });
   }
 
-  /** 结束会话（fire-and-forget，无响应消息） */
+  /**
+   * 结束会话（fire-and-forget，无响应消息）。
+   * 前提：下方 send 必须同步完成（当前编码同步写入 WS 发送栈），调用方在 close 前调用本方法
+   * 才能保证 STOP 帧发出；若未来改异步编码/分片，帧会被 close 截断，语义从「显式结束」退化为「断连回收」。
+   */
   stopSession(): void {
     if (this.currentSession) {
       this.send({ kind: 'stopSession', sessionId: this.currentSession.sessionId });
@@ -740,7 +744,7 @@ export class SessionClient {
     this.parser = new RecordStreamParser(); // 新连接从零按记录边界解析，旧连接残留半包不拼入
     this.bindSocket(ws);
     await this.awaitSocketOpen(ws, '重连');
-    this.emit('connecting', { attempt: this.reconnectAttempt + 1 });
+    this.emit('connecting', { attempt: this.reconnectAttempt });
     this.startPingLoop();
     const helloMsg: EncodableControlMessage = {
       kind: 'hello',
@@ -777,11 +781,16 @@ export class SessionRejectedError extends Error {
   }
 }
 
+/** 瞬态竞争拒绝（首连/重连链在飞时外部再切会话）：可等待重试，调用方应保留会话而非整场拆除 */
+export class SessionBusyError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = 'SessionBusyError';
+  }
+}
+
 /** 构建 WS URL（同源网关：ws(s)://host:port/ws） */
 export function buildWsUrl(loc: { protocol: string; host: string }): string {
   const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${scheme}//${loc.host}/ws`;
 }
-
-// 供诊断：消息类型表导出再确认（防 tree-shake 误删常量引用）
-export const SUPPORTED_MSG_TYPES = MsgType;
