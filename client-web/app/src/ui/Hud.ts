@@ -124,7 +124,7 @@ export class Hud {
     });
   }
 
-  /** 1s 节拍的 HUD 刷新（main.ts 定时调用） */
+  /** HUD 刷新：由 main.ts 的源端 stats 事件回调驱动（源端 ≥1Hz 推送），刷新节拍随源端推送频率，无本地定时器 */
   update(input: HudInput): void {
     this.refs.fps.textContent = input.fps.toFixed(1);
     this.refs.bitrate.textContent = `${(input.bitrateKbps / 1000).toFixed(2)} Mbps`;
@@ -165,7 +165,8 @@ export class Hud {
   percentiles(): { p50: number; p95: number } | null {
     if (this.samples.length < 2) return null;
     const lat = this.samples.map((s) => s.latencyMs).sort((a, b) => a - b);
-    const at = (q: number): number => lat[Math.min(lat.length - 1, Math.floor(q * lat.length))];
+    // 最近秩取位（1 基秩 = ceil(q×N)）：floor 口径小样本时系统性偏向较大样本（N=2 时 P50 取两样本中较大者）
+    const at = (q: number): number => lat[Math.min(lat.length - 1, Math.max(0, Math.ceil(q * lat.length) - 1))];
     return { p50: at(0.5), p95: at(0.95) };
   }
 
