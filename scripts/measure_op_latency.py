@@ -29,9 +29,12 @@ import re
 import sys
 from collections import Counter, defaultdict
 
+# 8 个段位捕获组与 SEGMENTS 同名（命名组），sample 按名取值，避免位置耦合：
+# 段位增删时须同步修改 SEGMENTS 与此处命名组，不一致会在取值时显式报错。
 OP_RE = re.compile(
-    r"op opId=(\d+) transport=(\S+) result=(\S+) e2eMs=(-?\d+) uplinkMs=(-?\d+) "
-    r"srvMs=(-?\d+) downMs=(-?\d+) injectMs=(-?\d+) frameWaitMs=(-?\d+) encQueueMs=(-?\d+) g2gMs=(-?\d+)"
+    r"op opId=(\d+) transport=(\S+) result=(\S+) e2eMs=(?P<e2eMs>-?\d+) uplinkMs=(?P<uplinkMs>-?\d+) "
+    r"srvMs=(?P<srvMs>-?\d+) downMs=(?P<downMs>-?\d+) injectMs=(?P<injectMs>-?\d+) "
+    r"frameWaitMs=(?P<frameWaitMs>-?\d+) encQueueMs=(?P<encQueueMs>-?\d+) g2gMs=(?P<g2gMs>-?\d+)"
 )
 G2G_RE = re.compile(r"g2g opId=(\d+) g2gMs=(-?\d+)")
 T1_RE = re.compile(r"t1 action=(\d+) p=\d+ x=-?\d+ y=-?\d+ opId=(\d+)")
@@ -92,8 +95,7 @@ def main():
         m = OP_RE.search(line)
         if m:
             op_id = int(m.group(1))
-            vals = [int(m.group(i)) for i in range(4, 12)]
-            sample = dict(zip(SEGMENTS, vals))
+            sample = {seg: int(m.group(seg)) for seg in SEGMENTS}
             sample["transport"] = m.group(2)
             sample["result"] = m.group(3)
             if op_id not in ops:
