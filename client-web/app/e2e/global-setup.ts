@@ -10,7 +10,7 @@ import { execSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { adb, sleep, ADB_TIMEOUT_MS, SOURCE_SERIAL, HOST_PORT } from './adbx';
+import { adb, adbRaw, sleep, SOURCE_SERIAL, HOST_PORT } from './adbx';
 import { APP_GRANT_PATTERN, START_NOW_PATTERN, tapText } from './uiautomator';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,10 @@ const APK_STAMP_PATH = '/sdcard/.e2e_apk_stamp';
 // 网关就绪预算：探测次数 × 间隔；报错文案由同一常量生成，行为与文案一致
 const GATEWAY_PROBE_COUNT = 50;
 const GATEWAY_PROBE_INTERVAL_MS = 200;
+// 单次探测超时（Node 18+ 内置 AbortSignal.timeout）：网关「已监听但不响应」（事件循环
+// 阻塞 / 上游连接挂死）时单次 fetch 可能远超间隔（undici 默认 headersTimeout 分钟级），
+// 不设上限会令探测实际耗时脱离 GATEWAY_READY_TIMEOUT_MS 预算约束，报错文案与实际不符
+const GATEWAY_PROBE_TIMEOUT_MS = 1000;
 const GATEWAY_READY_TIMEOUT_MS = GATEWAY_PROBE_COUNT * GATEWAY_PROBE_INTERVAL_MS;
 // gradlew 构建超时（毫秒）：gradle 冷启动（守护进程拉起 + 首次配置）本身分钟级耗时，
 // 缺省放宽到 10 分钟；E2E_GRADLE_TIMEOUT 覆盖。僵死构建无超时会令 setup 整体挂起。
@@ -46,8 +50,9 @@ const GRADLE_TIMEOUT_MS = Number(process.env.E2E_GRADLE_TIMEOUT) || 600_000;
 
 let gateway: ChildProcess | null = null;
 // 装配侧网关清理责任标记：spawn 后置 true，setup 成功返回即移交 teardown（置 false）。
-// SIGINT/SIGTERM/exit 兜底仅在标记为 true（装配未完成、teardown 尚未接管）时生效，
-// 正常路径仍由 teardown 按 PID 文件杀网关并回收，避免重复 kill 噪音。
+// SIGINT/SIGTERM/exit 兜底仅在标记为 true（装配未完成、teardown 尚未接管）时生效
+// （成功后 SIGINT/SIGTERM 监听器摘除、exit 兜底幂等 no-op），正常路径仍由 teardown
+// 按 PID 文件杀网关并回收，避免重复 kill 噪音。
 let gatewayOwnedBySetup = false;
 
 /** e2e token 覆盖通道：E2E_STATE.token = process.env.E2E_TOKEN 回退默认 cloudphone-m0，
@@ -85,7 +90,8 @@ function apkFingerprint(): string | null {
 async function waitForGateway(): Promise<void> {
   for (let i = 0; i < GATEWAY_PROBE_COUNT; i++) {
     try {
-      const res = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/`);
+      // 超时中断的 AbortError 一并落入 catch 按「未就绪」处理，探测节奏与预算常量一致
+      const res = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/`, { signal: AbortSignal.timeout(GATEWAY_PROBE_TIMEOUT_MS) });
       if (res.ok) return;
     } catch {
       /* 未就绪 */
@@ -114,42 +120,38 @@ function cleanupGatewayBestEffort(): boolean {
   return true;
 }
 
-/** 装配期进程级兜底：SIGINT/SIGTERM/exit 时杀网关并回收 PID 文件，SIGINT/SIGTERM
- *  按信号惯例退出码终止（130/143）。装配成功返回后 gatewayOwnedBySetup=false，
- *  三者均 no-op——正常路径由 globalTeardown 按 PID 文件清理，信号处理交还 Playwright
- *  自身的优雅退出流程。 */
+/** 装配期信号兜底处理器（具名引用供装配完成后 process.off 摘除）：仅当清理责任仍在
+ *  装配侧时杀网关并按信号惯例退出码终止（130/143） */
+const sigintGuard = (): void => {
+  if (cleanupGatewayBestEffort()) process.exit(130);
+};
+const sigtermGuard = (): void => {
+  if (cleanupGatewayBestEffort()) process.exit(143);
+};
+
+/** 装配期进程级兜底安装：SIGINT/SIGTERM/exit 时杀网关并回收 PID 文件。装配成功返回后
+ *  由 uninstallGatewayExitGuards 摘除信号监听器交还默认终止行为——残留监听器会抑制
+ *  默认信号处理，本模块被 Playwright 之外的脚本单独 import 时 Ctrl+C 将无法终止进程；
+ *  exit 兜底保留（清理责任移交后为幂等 no-op），正常路径由 globalTeardown 按 PID 文件
+ *  清理。 */
 function installGatewayExitGuards(): void {
-  process.on('SIGINT', () => {
-    if (cleanupGatewayBestEffort()) process.exit(130);
-  });
-  process.on('SIGTERM', () => {
-    if (cleanupGatewayBestEffort()) process.exit(143);
-  });
+  process.on('SIGINT', sigintGuard);
+  process.on('SIGTERM', sigtermGuard);
   process.on('exit', () => cleanupGatewayBestEffort());
+}
+
+/** 装配成功后摘除 SIGINT/SIGTERM 监听器交还默认终止行为：只摘本模块注册的具名处理器，
+ *  不影响 Playwright runner 自身的信号处理 */
+function uninstallGatewayExitGuards(): void {
+  process.off('SIGINT', sigintGuard);
+  process.off('SIGTERM', sigtermGuard);
 }
 
 export default async function globalSetup(): Promise<void> {
   // ── 源端环境 ──
-  const devices = await new Promise<string>((resolve, reject) => {
-    const p = spawn('adb', ['devices'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    let out = '';
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      p.kill('SIGKILL');
-      reject(new Error(`adb devices 超时（${ADB_TIMEOUT_MS}ms，E2E_ADB_TIMEOUT 可调）——adb 服务无响应`));
-    }, ADB_TIMEOUT_MS);
-    const settle = (fn: () => void) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      fn();
-    };
-    p.stdout.on('data', (d: Buffer) => (out += d.toString()));
-    p.on('close', () => settle(() => resolve(out)));
-    p.on('error', (err) => settle(() => reject(err)));
-  });
+  // devices 为全局命令（不绑定 serial），经 adbRaw 复用 adbx 单一 spawn/超时/settle
+  // 骨架，替代曾内联复制的第二份实现（与 adb() 的收敛初衷一致，消除双份漂移面）
+  const devices = await adbRaw('devices');
   // 状态感知匹配：按行校验 serial 处于 device 状态——整串 includes 会把
   // "serial\toffline" 一并误判为在线，随后卡死在 wait-for-device 而非明确报错。
   // serial 来自环境变量（如 192.168.1.5:5555 含 `.`），拼 RegExp 前先转义元字符：
@@ -256,7 +258,9 @@ export default async function globalSetup(): Promise<void> {
     cleanupGatewayBestEffort();
     throw err;
   }
-  // setup 成功：清理责任移交 globalTeardown（读 PID 文件杀并回收），信号兜底转 no-op
+  // setup 成功：清理责任移交 globalTeardown（读 PID 文件杀并回收），摘除信号兜底监听器
+  // 交还默认终止行为（不依赖「Playwright 自身也注册了信号处理」的隐含前提）
   gatewayOwnedBySetup = false;
+  uninstallGatewayExitGuards();
   console.log(`[e2e] 环境就绪：网关 :${GATEWAY_PORT} → 源端 :${HOST_PORT}（${SOURCE_SERIAL}）`);
 }
