@@ -380,6 +380,7 @@
 
 ### 浪费
 - **五次API停滞纯等逾300秒，判停修复第4窗仍未落地**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：本窗仅有的 2 个 run（夜间自维护双 run）内含 5 次 >60 秒的单轮 API 停滞（请求发出后长时间无响应的等待），可验证纯等待下界 ≥300 秒，占两 run 合计墙钟 1367.5 秒的 ≥22%，其中最长单轮 171.1 秒已越过 120 秒判停线却仅留痕零干预；该形态连续第 4 个窗口复发，复发敞口为每窗照付同量级等待与超时风险。
   - 证据：fenixd.log run_metrics 行（daemon 每次 run 收工落盘的指标行）：code-review-1794762151（本窗周期代码审查 run）23 轮 stalls>60s=3（13%）max 89.0s、时长 555.3s（11-15T17:11:46Z 行）；code-fix-1794762706（本窗审查台账修复 run）28 轮 stalls>60s=2（7%）max 171.1s、时长 812.2s（17:25:18Z 行），另有单停滞事件行「API round-trip stall: 171.1s (round #4 > 120s)」grade=info 仅留痕。数据摘要第六节合计 228.2s/233.5s 在 run_metrics 行与归档 run 记录均无对应字段，标注未核实。
   - 调查评估：暴露于 code-review→code-fix 每夜自维护链路，非产品 SPEC。已核实：停滞计数与 max 直读上述两行 run_metrics，5 次 >60s 得 ≥300s 下界成立；171.1s 超 120s 判停线仅 info 留痕。根因只写到形态层：两 run 同 provider（bigmodel-cn）且 11-13/14/15/16 四窗同形态，指向网关长尾（未定、多假说并存，不据此给根因特异修复）。与存量工作关系：todo.md 11-13 可改进「停滞监督面缺位」与 11-15 浪费条目均已建议 agents.run_stall_budget_* 判停键（复合判停：连续 N 次 120 秒往返即判定 run 卡死）与 stall 合计字段，逐项核实至今未落地——config.yaml 无该键、core/config.py 仍缺省关闭、run_metrics 行无 stall 合计字段；窗口内框架代码确实更新过（.fenix/core 三个文件 mtime 11-15 03:15/04:10，陈旧自愈机制随之重启 daemon 3 次），但更新内容为 fenixd 仓库 fix-windows-review-longtail 规格的 Windows 移植修复（/root/fenixd git log 00:11-01:16 已核实范围），未含停滞项。结论：既有敞口第 4 窗复发，缺口已定性为「建议受理两晚、排期未落地」，非新发现。
@@ -387,6 +388,7 @@
 
 ### 失误
 - **蒸馏催办假欠账第7天连发，信号累计37条零处置**
+  - 自进化：问题成立 / 建议合理 / — 不需要
   - 影响：knowledge_distill_retry_stale（重试台账欠账超 24 小时未重试的提示信号）本窗再发 5 条且全部未处置，自 11-10 起累计 37 条；催办对象始终是两条 11-09 登记的假欠账（工作 41 分钟后已由另一路径完成入库），每晚 2-5 条纯告警噪音与检查点 token 消耗，复发敞口为同形态持续到有人勾选台账或闭合逻辑修复为止。
   - 证据：admin_alerts.json（管理员信号台账）本窗 5 条 knowledge_distill_retry_stale 全部 handled=false：1251593a4c66/4e1acc4ddf7f/7bddd5b9f864（催办信号，11-14T18:52-20:45Z 约 2 小时内连发 3 条）、f6abf74f7229/bebd99f23303（11-15T16:02/16:52Z，即 11-16 00:02/00:52 本地随体检时点再发）；todo.md 第 95-96 行两条「knowledge-distill 重试」未勾选行（登记 2026-11-09，登记原因是蒸馏 run 报「调用 claude CLI 失败」）；.fenix/knowledge-distill-pending.json（蒸馏重试待办队列）batches=[]，实际重试队列为空。
   - 调查评估：暴露于 knowledge-distill（知识归档蒸馏）车道。已核实：假欠账产物 commit 291fb59（11-09 10:43 本地「knowledge: distill m0-a2a-streaming-pipeline, client-ux-and-input-latency」，23 文件 +425 行）早经 11-13 条目逐项核实与台账两条 spec 名一一对应；窗口内部署代码 .fenix/core 与框架源 /root/fenixd/core 逐字节一致（diff -q 零差异），两处均无「产物已存在即闭合」逻辑生效的行为证据（信号照发、台账行仍未勾）。根因（行为层确定性）：台账闭合只有人工勾选一条路，headless 无人值守部署下无人勾选，催办只增不减。与存量工作关系：todo.md 11-13 失误与 11-15 失误条目同题（11-15 时点累计 32 条），本窗为连续第 7 天噪音并（恶化）32→37；11-15 建议的自动闭环与按日去重未落地，窗口内框架更新经核实为 fix-windows-review-longtail Windows 移植规格，未含此项。结论：同型第 3 次重述，属「修复建议受理但排期缺位」的执行面状态误置，非新发现。
@@ -394,6 +396,7 @@
 
 ### 可改进
 - **体检连续4晚通过与待人工4并存，矛盾误报龄期3天零仲裁**
+  - 自进化：问题成立 / 建议部分合理 / — 不需要
   - 影响：知识体检（每晚对 spec/knowledge 全域做病灶检测的检查点）连续 4 晚（11-13/14/15/16）产出「修 0 / 转写 0 / 待人工 4」且报告维持「结论：通过」，4 项待人工无一闭环、修复通道连续 4 晚零吞吐；每晚一条龄期改写提交已成固定 churn（复发敞口：每晚一次体检加一条提交，知识库带「疑似冲突」规则运行时间每天 +1 天）。
   - 证据：spec/knowledge/log.md（知识真相源体检留痕）11-13 至 11-16 四行均为「修 0 / 转写 0 / 待人工 4」；.fenix/knowledge_audit_report.md（11-16 00:02:39）自述「结论：通过……共 1 条待人工仲裁，最长龄期 3 天」；.fenix/knowledge_audit_findings.json（体检疑点台账）唯一在案疑点 af0432abac95（fingerprint，即体检追踪同一疑点的哈希键）kind=contradiction（跨页规则疑似冲突病灶）、status=escalated（升级待人工）、first_seen=2026-11-13；.fenix/knowledge_audit_arbitration.json（人工仲裁登记入口文件）经 ls 核实至今不存在；龄期改写提交三连：02ad37b（11-14 00:03）→54eaeb0（11-15 00:03）→a0e6100（11-16 00:02），每次仅 1 行 todo diff。
   - 调查评估：暴露于 knowledge audit 体检检查点。已核实：报告口径、台账、仲裁入口缺失三者互相一致；「待人工 4」中除 af0432ab 外的 3 条锚点悬空项（报告病灶⑥所列 aux-channels-m3.md 的 enable/set、touch-latency-fix.md 的 P50/P95、p2p-nat-traversal.md 的 netns/iptables）在 findings 台账无记录、无龄期追踪、无仲裁路径，实际处于不可仲裁状态；af0432ab 的「误报」定性已经 11-15 条目以检测器代码、源端 StreamService.kt params() 行为、两页产品归属三源核实。与存量工作关系：todo.md 11-13 知识真相源节与 11-15 可改进条目同题，11-15 给的三条建议（contradiction 配对键加入页路径产品域或判定前源端只读核验、连续 2 晚零吞吐时结论降级「带病通过」、为 headless 部署给 arbiter（裁决调查车道）授权消费仲裁文件）逐项核实未落地——报告仍「通过」、仲裁文件仍不存在、误报仍 escalated；窗口内框架更新（fix-windows-review-longtail）未含此项。结论：同型第 2 次重述，增量证据为龄期满 3 天与 churn 提交三连，属修复排期缺位。
