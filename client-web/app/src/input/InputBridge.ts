@@ -29,6 +29,9 @@ function isEditableElement(el: Element | null | undefined): boolean {
   if (!el) return false;
   const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : '';
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  // [fenix-ignore:88ad5592284e] 下一行 isContentEditable 兜底已按规范折算 contenteditable 空串/plaint-only
+  // 等全部可编辑形态，真实浏览器不漏判；本行 attribute==='true' 仅为无 DOM 构造器的最小测试
+  // 替身保留的降级判断（见函数头注释），不构成漏判
   if (el.getAttribute?.('contenteditable') === 'true') return true;
   return el.isContentEditable === true;
 }
@@ -133,8 +136,10 @@ export class InputBridge {
     const point = (ev: Event): void => {
       const pe = ev as PointerEvent;
       if (this.sessionWidth === 0) return;
-      // MOVE 属按下序列语义：仅注入已按下（在表中）指针的 MOVE，过滤桌面鼠标悬停等无 DOWN 前提的移动流
-      if (pe.type === 'pointermove' && !this.pointerTable.has(pe.pointerId)) return;
+      // MOVE/UP/CANCEL 属按下序列语义：仅注入已按下（在表中）指针的后续事件——既过滤桌面鼠标
+      // 悬停等无 DOWN 前提的移动流，也过滤画布外点击/capture 失败派发的幽灵抬起（不注入
+      // 从未按下过的 UP，也不让 pointerIdU8 为幽灵事件白分配槽位）
+      if (pe.type !== 'pointerdown' && !this.pointerTable.has(pe.pointerId)) return;
       const rect = this.canvas.getBoundingClientRect();
       const geo = letterboxGeometry(rect.width, rect.height, this.sessionWidth, this.sessionHeight);
       const { x, y } = mapClientPoint(pe.clientX - rect.left, pe.clientY - rect.top, geo, this.sessionWidth, this.sessionHeight);
@@ -268,7 +273,12 @@ export class InputBridge {
     if (existing !== undefined) return existing;
     if (this.pointerTable.size >= 255) {
       const oldest = this.pointerTable.keys().next().value;
-      if (oldest !== undefined) this.pointerTable.delete(oldest);
+      if (oldest !== undefined) {
+        // 强回收必须同步清 lastSentPoint：残留条目既缓慢泄漏，又会在该指针重按后让首个 MOVE
+        // 与过期基准比较而误触发节流抑制（源端丢一段位移）
+        this.pointerTable.delete(oldest);
+        this.lastSentPoint.delete(oldest);
+      }
     }
     for (let guard = 0; guard < 255; guard++) {
       this.nextPointerSeq = (this.nextPointerSeq % 255) + 1;
