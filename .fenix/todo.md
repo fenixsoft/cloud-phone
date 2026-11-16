@@ -80,7 +80,7 @@
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：在 family 咽喉对 chain_context 非空的链终点件跳过 submit_for_alert（只保留 narrative 或零补叙）；或在 submit_for_alert 入口检测 entry['chain'] 存在即短路；补单测覆盖「链终点件不产生新的 arbiter 触发」。
 - **[arbiter:client-u] 矩阵进度未记录实际采集/编码几何，跨轮 fps 基线不可比**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：验收矩阵跨轮/跨 commit 比较失真，本次仲裁险些把 +24% 像素的真实负载增长整体误判为产品回归；也直接影响 env 归因与 D6 阈值决策的可信度。
   - 证据：21fefb6 与 07a7ee6 的 docs/validation-report.md.progress.json 仅记 resolution 标签「1080p」与 fps，不记 VD/编码尺寸；cb0536b 后实际为 1072x2400（/tmp/admin-src-logcat.txt：capture: vd=... 1072x2400@30），旧管道为 1920x1080；两轮被当作同一组合直接比较（55.7 vs 36.2fps）。；触发 run_id=arbiter-client-ux-and-input-latency-1794163410（签名 client-ux-and-input-latency::warning_stale_triage，来源 escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
