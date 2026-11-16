@@ -250,7 +250,7 @@
 
 ### 失误
 - **场景集扩容未同步契约serve段，验证被打回13分钟**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：web-browser-client 实现合并当刻（21:46:58）被验证契约静态门打回：场景 kind 集（api/cli/web 三类场景形态）已超出契约声明（verify.yaml 验证契约文件无 serve 段——被验证应用如何拉起并可服务的约定段），按 fail-fast 拦截且场景执行数为 0，随后动用 1 个 admin run（857 秒/128 轮）代起草 serve/ready 段，验证启动推迟约 13 分钟（21:46 打回、21:59 契约落位）。
   - 证据：ERROR 2026-11-11T13:46:58.999Z「契约 serve 一致性门打回 'web-browser-client'…无 serve 段且 config commands.start 无有效兜底」；处置记录 verify_contract_missing（验证契约缺失类信号，21:48:19）自述「出题产物消费期打回，场景执行数为 0；共 1 处缺口」；admin run admin-web-browser-client-1794404819（857s）产出补段提交 b959617（21:59:20，diff 自述「场景集由纯 cli 扩为 api/cli/web 混合，serve/ready 不再可省」）。
   - 调查评估：在处置 web-browser-client 验证准备时暴露。已核实：契约 96a21df 起草时（11-08）场景集为纯 cli、serve/ready 依法省略（提交 diff 注释自证）；本 spec 出题（planner-plan 场景规划 agent，18:38 派发）把场景集扩为 api/cli/web 时未同步补段，直到实现合并消费出题产物才被静态门拦截——门本身按设计工作（零场景执行、不触发 planner replan），缺口在「场景集变更与契约段位同步」无前置校验。与存量工作关系：同族第三次复发——①11-08 契约模板态 verify_contract_missing、②11-09 regression 段事后补记（f3b577e）、③本次 serve 段；11-09 既有改进条目「verify契约前置起草缺位」已立提案，本条为复发实例补强（新形态：kind 集扩容），不重复立项。结论：出题产物落盘前按 kind 集校验契约段位，可把该族三类缺口全部前移消灭。
