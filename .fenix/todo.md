@@ -242,7 +242,7 @@
   - 建议：窗口级停滞合计已可从本回顾数据面持续观测；配合既有判停提案灰度启用后，把均摊停滞比（停滞秒/run 墙钟秒）纳入日回顾作趋势行。
 
 - **验证环境根治后spec滞留blocked57分钟才恢复重验**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：web-browser-client 的验证环境已于 01:09 根治并探针实证，但 spec 在 blocked 态空等约 57 分钟、其中 39 分钟无任何 run 在飞，直到 60 分钟超时滞留信号触发一次 admin run（1038 秒/166 轮）才转回 testing 并派发 verifier——验证恢复被纯机制延迟拖慢，多烧 1 个 distress 信号与 1 个本可不发生的 admin run。
   - 证据：fenixd.log 17:09:02Z「Admin 处置成功链闭环: sig=web-browser-client::verify_env_blocked run=admin-web-browser-client-1794415508 unfrozen=False」（处置闭环但未执行解冻）；17:48:27Z blocked_stuck（spec 滞留 blocked 超阈值信号）「blocked 超过 63 分钟」（阈值 60 分钟，STATE updated=00:45:08Z）；18:05:47Z「Gate transition: blocked → testing」与「Dispatching verifier (P5)」；其间 17:09–17:48 日志仅 run 归档动作。
   - 调查评估：在处置 web-browser-client 验证阶段暴露。已核实事实：环境修复处置自身成功（bootstrap 根治提交 0a30212 于 01:07 落地，处置回执自述「环境已修复并探针实证」），但闭环回执 unfrozen=False 表明该处置路径不含解冻动作，框架也没有「环境已修复→自动解冻重验」的联动，只能等 60 分钟 stuck 阈值兜底后由 admin run 显式迁移；末次 admin run 内处置选项 manual_fixed_reverify 还因作用域不匹配执行失败记 ERROR（spec 作用域动作被当信号作用域消费），迁移靠 run 的门转换路径完成。根因归属：处置「修复环境」与「解冻状态」两段语义分离且无联动校验，属系统性缺口而非一次性失误。与存量工作关系：todo 既有条目「[arbiter:single-a] unfreeze/reset→testing 不入队 verifier」与「处置动作回执缺下游落地校验」同族，本例为复发补强——连探针实证已修复的成功处置也不触发状态迁移，不另立新案。结论：处置回执应携带并校验状态迁移落地，否则 stuck 定时器+额外 admin run 是必然代价。
