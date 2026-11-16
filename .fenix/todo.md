@@ -93,7 +93,7 @@
   - 建议：升级告警回派前检查 spec 的 verification-report 是否含人工裁定/最近 human disposition commit；或把人工裁定登记为一等状态（STATE 字段/台账），供升级链入队前短路；或在 Arbiter 触发快照中固定采集 git log 最近 human disposition commit 供裁决复用。
 ### 知识真相源
 - [x] knowledge-distill 重试：归档 client-ux-and-input-latency — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
-- [ ] knowledge-distill 重试：归档 m0-a2a-streaming-pipeline — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
+- [x] knowledge-distill 重试：归档 m0-a2a-streaming-pipeline — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
 - **[arbiter:p2p-cros] daemon 关停击杀的 impl run 不获死亡豁免退款（预算伪耗尽）**
   - 影响：daemon 重启窗口内的 run 死亡照样消耗 impl 尝试预算 → impl_budget_exhausted 假阳性冻结/人工升级（本 spec used=4 中 2 格为非实质消耗，直接触发本次升级）；对账偏差仅告警不修正、无人工核查工具面；同类形态可在任何长 run 跨 daemon 重启时复现。
   - 证据：fenixd.log：05:56:48Z impl-1 interrupted(reason=daemon shutdown)+flush error 后，06:06:55Z impl-2 派发直接 used=2/4 无退款；对照 01:31:07–01:40:40Z 同夜 4 次「预算豁免（死亡 run）used 回退」均发生于 daemon 在飞观测窗；STATE p2p 条目 _budget_exempt_runs=4 全部来自 01:31–01:40 且无本 spec 退款锚点字段；08:05:08Z/08:21:12Z 两条「预算计数对账偏差 used=2/3 vs runs 目录正常收工 run 数=1…不自动改数，供人工核查」为框架自身失真自证（两源：日志×STATE）。；触发 run_id=arbiter-p2p-crossnet-traversal-1794215565（签名 p2p-crossnet-traversal::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
