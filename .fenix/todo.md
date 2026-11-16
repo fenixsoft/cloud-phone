@@ -318,7 +318,7 @@
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：①场景加载期静态 lint：validate_scenario_dicts 增加「命令内 cd 与 step.cwd 目录重复」与「命令引用 /tmp 脚本且裸调 node 无 NODE_PATH」两条机械检查，加载即报而非执行期才败；②judge 裁决协议允许同因类批修复：同一缺陷类命中多场景时一次修复全链并一次申报，不必逐轮等失败复现；③批量生成器模板收敛 cd/NODE_PATH 口径（生成端根治）
 - **[arbiter:web-brow] 纯归因模式testing停泊与Recovery重派回环**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：无修复纯归因模式下验证链结构性不可收敛：每次 Recovery 重派机械重放同一未修复缺陷、rerun 计数必然递增至触顶，产生必然的冻结与人工升级，每轮白耗一次 34 场景执行与 judge token（本链累计 input 2.5M+/output 690K+）；同时把可由框架自愈的局面反复升级给人类。
   - 证据：fenixd.log：06:51:39Z 拒收修复申报后 spec 保持 testing 且无驱动（「场景文件不改写、不重入执行，转纯归因」）→ 07:09:20Z orphaned_state（testing 超 17 分钟无驱动）→ 07:14:18Z「Recovery: re-triggering verify for undriven testing」全量重执行 34 场景 → 07:15:26Z rerun 6/5 触顶冻结。本窗口两小时内 rerun 计数 0→6，其中末轮为 Recovery 自动重派而非 judge 主动复判。；触发 run_id=arbiter-web-browser-client-1794467726（签名 web-browser-client::judge_rerun_cap，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 judge_rerun_cap（spec=web-browser-client）：'web-browser-client' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
