@@ -204,7 +204,7 @@
 
 ### 可改进
 - **推送成功判据校验过时的main分支，36个提交滞留本地**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：pm_engine 的收尾推送成功判据（D1：git push origin main）推的是本地 main 分支，而实际工作自 11-09 起全部落在 master——7 次「Main push succeeded」里除首次建立远端外均为空转成功（本地 main 引用整个时段只停在两个值上），origin/main 停在 11-09 16:21 的合并提交、落后本地 94 个提交，origin/master 停在 11-10 18:36、落后 36 个提交；windows-desktop-client 全套交付（合并、验证报告、知识蒸馏、code-review 修复）仅存于本地与 fenix/* 特性分支，单机故障即丢一整天交付。
   - 证据：engine.py 3333/3446 行 `_git_push_ref("main")` 执行 `git push origin main`；main 分支 reflog 仅两条：11-09 09:26 自 master 创建（969d7a7）→ 11-10 16:56 被「branch: Reset to origin/main」（0023fdf），期间零移动，而同期「Main push succeeded」7 次（11-09 02:02Z m0 至 11-10 14:14Z windows-desktop）；实测 rev-list 计数 origin/main..master=94、origin/master..master=36；11-10 05:03Z p2p 推送被远端以 non-fast-forward 拒绝（本地 main 落后远端），约两小时后被人工式复位后才推成功。
   - 调查评估：在处置 windows-desktop-client 收尾推送时暴露（推送「成功」而交付未上远端）。已核实事实如上；origin/main 如何在本地 main 不动的情况下领先来源未核实——多假说：人工或其他 clone 外带推送/复位，两次外带干预（复位 main、origin/master 推进到 623978c）都发生在框架推送失败之后。根因：推送成功判据与工作落地分支脱钩（工作在 master、判据校验 main），pushed 状态不再证明交付可达远端——STATE.md 8 个 spec 全标 pushed 与远端 36 提交缺口并存即自证。与存量工作关系：todo 既有条目「code-fix fastlane 修复 commit 停留侧分支，主树不落位」讲修复件不进主树基线，本条是收尾推送判据错引用，同属交付落位域但机制不同，互补。结论：本窗最大资产风险，pushed 状态当前不可信。
