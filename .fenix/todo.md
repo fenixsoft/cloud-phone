@@ -74,7 +74,7 @@
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：增加聚合断言（一步 python 校验 len==12 且 all(passed)，或 json_output 指向汇总字段），把『逐条 passed』从描述落到断言；同类多组合场景统一模板。
 - **[arbiter:client-u] 升级件自环回派（链终点 escalation alert 二次入 Arbiter 车道）**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：每次 Arbiter 升级都会多派一轮同证据调查（本签名 2 轮，约 15 万 tokens/7 分钟量级），占用单飞串行队列并推迟真正新信号的裁决；升级件（给人类的裁决包）与 Arbiter 回执语义混淆，直到 arbiter_rulings 配额（=2）耗尽才停。
   - 证据：core/pm_engine/family.py:_send_human_escalation_alert 在 store.append 成功后无条件走 narrative_yielded_to_arbiter → ArbiterLane.submit_for_alert，未以 chain_context 非空短路；fenixd.log 实证：18:43:30.431 arbiter 产裁决包升级 → 18:43:30.677 落告警 c6fccc1be3e8（kind=escalation, chain.endpoint_kind=arbiter-escalated）→ 18:43:30.847 'arbiter 触发入队 ... source=escalation-alert'，本 run 与 1794162973 证据完全相同（最近验证仍为 18:31:57Z）。；触发 run_id=arbiter-client-ux-and-input-latency-1794163410（签名 client-ux-and-input-latency::warning_stale_triage，来源 escalation-alert）
   - 调查评估：触发信号 warning_stale_triage（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' 以下场景连续多轮均为 warning，需人工 triage 甄别是否真缺陷被悬置：regression-matrix-12-combos（连续 2 轮）。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
