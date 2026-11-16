@@ -306,7 +306,7 @@
   > [成本参考] 。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：消费端对已有 pending escalation package（handled=false）的签名抑制 Arbiter 重唤起；或 re-trigger payload 附前次 ruling 摘要并声明『仅新证据落地后再裁』的增量裁决语义。
 - **[arbiter:web-brow] admin-monitor-orphan-check-generation-blind**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：凡「处置生效后 spec 又被后续验证轮再冻结」的场景都会重演：孤儿处置收敛核查把状态前移误判为处置失败，产生假阴性人工升级，并经回扫重复触发同签名仲裁调查（烧仲裁预算、污染人工告警面）；触发建议中「已生效可手动 resolve 收口信号」分支永远不会被框架自动走向，因为生效核查只比对当前状态、不认「生效后状态已合法前移」。
   - 证据：fenixd.log 18:05:47.151（直通道 blocked→testing 复位成功）与 18:06:23-59（round B 重验实际发生）证明处置已生效；18:20:27.206/.311（verified 洗白门禁再冻结）为处置后的新代际状态；19:10:23 admin_monitor「Orphaned final disposition group not effective, escalated to human: admin-web-browser-client-1794419307」以当前 frozen/blocked 反推旧处置未生效（fail-closed），admin_alerts 条目 40e8d6fd4292/43a51528ef70 留痕；arbiter ledger 证明同签名 1 小时内第 3 次仲裁调查（1794421227/1794422083/1794425770）。两源互证：fenixd.log 时序 + admin_alerts/arbiter_ledger 台账。；触发 run_id=arbiter-web-browser-client-1794425770（签名 web-browser-client::blocked_stuck，来源 startup）
   - 调查评估：触发信号 blocked_stuck（spec=web-browser-client）：Administrator 处置终态未收口（run admin-web-browser-client-1794419307）：处置组已终态但底层信号 blocked_stuck 仍未收口，生效核查未找到动作已实际生效的真实状态证据，需人工介入。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
