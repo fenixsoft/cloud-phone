@@ -92,7 +92,7 @@
   - 调查评估：触发信号 judge_rerun_cap（spec=client-ux-and-input-latency）：'client-ux-and-input-latency' judge 重跑超上限（6/5 轮），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
   - 建议：升级告警回派前检查 spec 的 verification-report 是否含人工裁定/最近 human disposition commit；或把人工裁定登记为一等状态（STATE 字段/台账），供升级链入队前短路；或在 Arbiter 触发快照中固定采集 git log 最近 human disposition commit 供裁决复用。
 ### 知识真相源
-- [ ] knowledge-distill 重试：归档 client-ux-and-input-latency — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
+- [x] knowledge-distill 重试：归档 client-ux-and-input-latency — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
 - [ ] knowledge-distill 重试：归档 m0-a2a-streaming-pipeline — run 失败: 调用 claude CLI 失败: [Errno 2] No such file or directory: 'claude'
 - **[arbiter:p2p-cros] daemon 关停击杀的 impl run 不获死亡豁免退款（预算伪耗尽）**
   - 影响：daemon 重启窗口内的 run 死亡照样消耗 impl 尝试预算 → impl_budget_exhausted 假阳性冻结/人工升级（本 spec used=4 中 2 格为非实质消耗，直接触发本次升级）；对账偏差仅告警不修正、无人工核查工具面；同类形态可在任何长 run 跨 daemon 重启时复现。
