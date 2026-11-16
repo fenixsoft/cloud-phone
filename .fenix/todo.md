@@ -158,7 +158,7 @@
 ## 2026-11-10
 ### 可改进
 - **[arbiter:client-u] worktree-pre-rmtree-stash-ref-loss**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：待处理 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
   - 影响：任何 impl 后冻结 spec 的实现交付（尤其全套重实现）在分支删除 + worktree 清扫后沦为悬空对象，默认 gc.pruneExpire 窗口内可被 GC 静默清除；本案 run4 交付已处此险，人工裁决前丢失则三套交付折损一套。
   - 证据：fenixd.log 06:50:38Z 清扫 impl-client-ui-redesign-1794286517 worktree 时留快照并指引「recover via: git stash store 584de3ee…」，但当前 refs/stash 不存在、git for-each-ref --contains 4306e3f 为空、fsck 报悬空 commit——stash ref 为 per-worktree 引用，随 worktree rmtree 一并销毁，快照指引失效，run4 全套重实现（9 提交 c3143e5→4306e3f）现零引用可达。两源互证：worktree_manager 快照日志 ↔ git 引用/对象实测。；触发 run_id=arbiter-client-ui-redesign-1794302874（签名 client-ui-redesign::impl_budget_exhausted，来源 chain-handoff:escalation-alert）
   - 调查评估：触发信号 impl_budget_exhausted（spec=client-ui-redesign）：'client-ui-redesign' 实现尝试预算耗尽（4/4），已冻结等待人工裁决。Arbiter 调查判定为框架缺口——修复涉及框架代码或产品面变更，超出处置白名单，记 todo 由自进化统一立项。
