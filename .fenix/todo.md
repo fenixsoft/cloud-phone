@@ -401,3 +401,44 @@
   - 证据：spec/knowledge/log.md（知识真相源体检留痕）11-13 至 11-16 四行均为「修 0 / 转写 0 / 待人工 4」；.fenix/knowledge_audit_report.md（11-16 00:02:39）自述「结论：通过……共 1 条待人工仲裁，最长龄期 3 天」；.fenix/knowledge_audit_findings.json（体检疑点台账）唯一在案疑点 af0432abac95（fingerprint，即体检追踪同一疑点的哈希键）kind=contradiction（跨页规则疑似冲突病灶）、status=escalated（升级待人工）、first_seen=2026-11-13；.fenix/knowledge_audit_arbitration.json（人工仲裁登记入口文件）经 ls 核实至今不存在；龄期改写提交三连：02ad37b（11-14 00:03）→54eaeb0（11-15 00:03）→a0e6100（11-16 00:02），每次仅 1 行 todo diff。
   - 调查评估：暴露于 knowledge audit 体检检查点。已核实：报告口径、台账、仲裁入口缺失三者互相一致；「待人工 4」中除 af0432ab 外的 3 条锚点悬空项（报告病灶⑥所列 aux-channels-m3.md 的 enable/set、touch-latency-fix.md 的 P50/P95、p2p-nat-traversal.md 的 netns/iptables）在 findings 台账无记录、无龄期追踪、无仲裁路径，实际处于不可仲裁状态；af0432ab 的「误报」定性已经 11-15 条目以检测器代码、源端 StreamService.kt params() 行为、两页产品归属三源核实。与存量工作关系：todo.md 11-13 知识真相源节与 11-15 可改进条目同题，11-15 给的三条建议（contradiction 配对键加入页路径产品域或判定前源端只读核验、连续 2 晚零吞吐时结论降级「带病通过」、为 headless 部署给 arbiter（裁决调查车道）授权消费仲裁文件）逐项核实未落地——报告仍「通过」、仲裁文件仍不存在、误报仍 escalated；窗口内框架更新（fix-windows-review-longtail）未含此项。结论：同型第 2 次重述，增量证据为龄期满 3 天与 churn 提交三连，属修复排期缺位。
   - 建议：催办 11-15 三条建议排期；另给一条零代码止血路径：由处置白名单内动作对 af0432ab 直接裁决「跨产品误报」并登记入 .fenix/knowledge_audit_arbitration.json（fingerprint/decision/decided_at/note，decision 引用 StreamService.kt params() 只读核验结论），框架检查点自动消费后即闭合该疑点、消除后续龄期改写提交 churn，无需等框架代码改动。
+
+## 2026-11-18
+
+### 浪费
+- **429周配额打挂双车道：审查10文件零进展、自省丢日一整天**
+  - 影响：provider 每周用量上限（429 code 1310）把本窗仅有的两条自维护车道全部打挂：code-review 周期审查 3 次派发零产出（快照 10/10 文件待审、整窗零进展），每日自省 11-17 全天缺失、回顾窗口被迫拉长到 48 小时；复发敞口为配额按周重置，每个周期耗尽时按本次代价照付一次。
+  - 证据：daemon run 指标行（run_metrics，daemon 每次 run 收工落盘的指标行）三源一致：run code-review-1794848693（周期审查首跑）duration 21.3 秒 terminal=error 0 轮，run code-review-1794849014（429 重派 run，redispatch_of 指回首跑）duration 0.021 秒 terminal=error「未启动进程」，run review-2026-11-17（每日自省 run）0 轮 error；429 响应体明示「每周/每月使用上限……2026-11-17 10:43:04 重置」；git 无「daily self-review: 2026-11-17」提交，.fenix/self_review_state.json（自省调度状态文件）last_run_date 已推进到 2026-11-17 而 last_run_at 仍停留在 11-15——日期被标记为已跑但当天无产出。
+  - 调查评估：在 code-review 周期审查与每日自省两条自维护车道暴露。已核实：三次派发集中在 11-17 01:05-02:05（本地）因同一配额错误失败，attempt 均为 1/1 无重试（provider switched 日志行「无可用候选（全链冷却）」）；自省失败时刻 02:05 距配额重置仅约 8.6 小时，当天剩余 15.6 小时可用窗口被整体放弃。根因分两层：配置层 14 个角色的模型候选链全部单候选 bigmodel-cn@glm-5.3-flash（config.yaml 逐角色核实候选数均为 1），配额耗尽即全框架单点；调度层未解析 429 响应体自带的重置时间戳，self-review 失败即顺延次日、code-review 重派按 299 秒固定冷却（细节见失误两条）。与存量工作关系：spec/changes 活跃区 9 个 SPEC 均为产品功能项，无模型链韧性条目；fenixd 框架仓库归档 SPEC 2026-09-30-add-code-review-concurrency-and-429-resilience 已落地限流重派与换道冷却，但未区分配额型与限流型 429，属对既有能力的缺口补强而非重复立项。结论：系统性缺口首次在周配额场景显形，改进方向见可改进条目，此处只记录已发生损失。
+  - 建议：self-review 失败时解析 429 响应体的配额重置时间，安排重置后当日补跑而非顺延次日；code-review 重派冷却同步改用重置到期时间；候选链冗余与检测器修复见对应可改进/失误条目，一并排进 fenixd 框架下一批更新。
+
+### 失误
+- **429重派用299秒固定冷却，配额未重置即白跑一场**
+  - 影响：一次注定失败的重派：429 重派机制（ratelimit_redispatch，限流失败后按冷却期以原清单重试一次的编排动作）在周配额上限场景仍按 299 秒固定冷却排程，到期时全链仍在冷却、进程未启动即 21 毫秒 error 终态，零产出白跑一场还多留一条 run 记录；复发敞口为每次配额型 429 的重派都会同样无效。
+  - 证据：fenixd.log（daemon 主日志）时间链：17:05:14.717Z 记「429 重派已排程：原 run code-review-1794848693，299s 后（provider 限流冷却到期）以原 manifest 重派一次」；17:10:14.732Z 该重派 run（code-review-1794849014）的 run_metrics 行为 duration_seconds=0.021、terminal=error、provider=null，同秒 admin_monitor 记「链上全部 1 个候选处于冷却/不可用（未启动进程）」——而 429 响应体明示配额重置时间为 10:43:04，299 秒冷却远远不够。
+  - 调查评估：在 code-review 周期审查车道暴露。已核实：重派机制出自 fenixd 框架归档 SPEC 2026-09-30-add-code-review-concurrency-and-429-resilience（日志行「Ratelimit redispatch intent registered (add-code-review-concurrency-and-429-resilience)」自证，配套 ADR-201/ADR-202 已入框架知识库），其设计针对限流型 429（短冷却后即恢复），未覆盖配额型（响应体携带周/月上限与明确重置时间）。根因单因可裁决：排程决策只读了通用「限流冷却 299 秒」而未解析响应体的配额重置时间，属该归档 SPEC 落地时的场景遗漏，非一次性失误——配额周期性重置，每次耗尽都会重演。与存量工作关系：该 SPEC 的 429 韧性意图正确，本条是其缺口补强；与候选链单点问题（可改进条目）互补不重复。结论：修复方向明确（区分两类 429 按重置时间排程），应排进框架更新批次。
+  - 建议：重派排程解析 429 响应体：识别到「每周/每月使用上限」及重置时间的按重置时刻加缓冲排程，其余限流型维持短冷却；冷却到期后先做一次候选可用性探针再决定是否真正派发，探针失败则不落新 run 记录。
+
+- **stall检测器无视终态，死run被计时19分钟发假告警**
+  - 影响：审查停滞检测器（check_progress_stall，对 code-review run 按「创建后零文件落盘」的持续时长发 major 升级告警的巡检）对一个 21 毫秒即 error 终态、进程从未启动的 run 持续计时 19 分钟后发出假告警，告警自述的根因假说（「async 子代理等待收工模式」）与事实相反，且该 major 告警悬置 24.6 小时零处置；复发敞口为每个快速失败的 code-review run 都会被照此误告警一次并长期占用台账。
+  - 证据：告警 9cf1d9538bb9（code_review_stall 升级告警，17:29:54Z 落账，handled=false）自述「run code-review-1794849014 已运行 19 分钟，done=0」；对照 fenixd.log，该 run 在 17:10:14.732Z 即已 error 终态（run_metrics duration_seconds=0.021、admin_monitor 记「未启动进程」，17:44:57Z 已移入归档）——告警发出时 run 已死亡 19 分钟；对照同为升级告警的 5987ee779c30（self_review_failed 自省失败信号）在 33 毫秒内即被自动处置，两条升级告警的处置路径不对称。
+  - 调查评估：在 code-review 周期审查车道暴露，是失误条目「重派白跑」的下游假告警。已核实事实三源一致（run_metrics 的 terminal 字段、admin_monitor「未启动进程」日志行、归档记录），单因已裁决：检测器只按 run 创建时刻与落盘计数判断「零进度」，未核对 run 终态字段，对已死亡 run 继续计时；告警的「async 子代理等待收工」假说被「未启动进程」日志直接证伪，证据足以裁决，故本条给确定性结论。与存量工作关系：同型检测器此前对 run code-review-1794244188（11-09 告警 4f613da32f08）触发过一次且已处置，说明检测器本身有效、缺的是终态核对；「escalation 需人工处置」在无人值守部署下没有消费主体，24.6 小时悬置是该结构的必然结果而非偶发遗漏。结论：框架代码缺陷加处置通道断链，修复成本低（一处终态核对），应与重派失配一并排期。
+  - 建议：check_progress_stall 计时前核对 run 终态（run_metrics 的 terminal 字段），非空即跳过；存量假告警 9cf1d9538bb9 由处置动作标记 handled 并注明「误报，run 未启动进程即终态」；评估给 escalation 类告警增加无人值守默认处置（超时自动标注过期），避免台账只增不减。
+
+### 可改进
+- **14角色全单候选链，配额耗尽成全框架周期性单点故障**
+  - 影响：复发敞口：14 个角色的模型候选链全部单候选 bigmodel-cn@glm-5.3-flash，provider 周/月配额上限（429 code 1310）耗尽时全部车道同时瘫痪且零重试（候选环 attempt 1/1 直接放弃）；按本窗实测单次代价为审查积压 10 文件零进展、自省丢日 1 天、3 条失败 run 记录加 1 条假告警，配额每周重置即每周敞口一次。
+  - 证据：.fenix/config.yaml 的 agents.models 逐角色核实，14 个角色（implementer/verifier/spec-review/code-review/self-review/administrator 等）全部 provider=bigmodel-cn、model=glm-5.3-flash、候选数为 1；fenixd.log 两条「provider switched（车道候选环，429 后按候选链换道的编排动作）」均记「后候选=无可用候选（全链冷却）（attempt 1/1）」；429 响应体内的重置时间「2026-11-17 10:43:04」未被任何调度逻辑消费（自省顺延次日、重派用 299 秒固定冷却）。
+  - 调查评估：在双车道 429 失败事件中暴露的配置层根因。已核实：单候选链是全量事实（14/14 角色），候选链无备选时编排层行为为直接放弃，无排队或延迟重试路径。与存量工作关系：spec/changes 活跃区 9 个 SPEC 均为产品功能项，无模型链韧性条目；fenixd 归档 SPEC 2026-09-30-add-code-review-concurrency-and-429-resilience 已建限流冷却与重派，但覆盖面限于 code-review 车道且不区分配额型，本条为其缺口补强（框架 ADR-201 已确立「限流换道独立冷却」语义，可复用扩展）。结论：调度感知重置时间与关键车道候选冗余两层修复均明确可立项，属系统性缺口而非一次性事件。
+  - 建议：SPEC 提案三层：① 调度层解析 429 响应体重置时间并入冷却与重排决策（区分配额型与限流型）；② 每日自省失败默认改为「重置后当日补跑」而非顺延次日；③ 评估为 self-review/code-review/administrator 三条关键车道配置第二候选（异 provider 或异模型），单候选现状下至少把重置时间写进告警 evidence 供人工决策。
+
+- **evolution标记回写逐条一提交，单日16个单行提交**
+  - 影响：自进化评审标记回写（evolution 车道把 todo.md 条目的「处理：待处理」改为「接受」等评审结论的动作）按单条目粒度提交，11-16 一天产生 16 个提交、每个仅 todo.md 1 行 diff，近 3 日 git 提交列表近半是回写噪音；复发敞口为评审吞吐越大提交噪音越大，每次提交还伴随进程与文件锁开销。
+  - 证据：git log 按 evolution 过滤统计 11-16 单日 16 个「[fenix] evolution: 自进化标记回写 2026-11-16」提交（21:29-23:01 本地两批密集落地）；git show fc3cb8d（其中之一）全 diff 仅 1 行：「处理：待处理」→「处理：接受」。
+  - 调查评估：在自进化评审（对昨日回顾条目给「问题成立/建议合理/是否立项」三段结论的车道）收尾环节暴露。已核实：窗口内 16 个提交全部为单行标记变更，无内容性差异；同型问题在 knowledge audit 车道也存在（每晚一条龄期改写提交，11-16 可改进条目已记录）。与存量工作关系：既往条目未覆盖 evolution 提交粒度，audit 龄期提交 churn 已有记录但仅针对 audit 车道，本条把同型问题扩展到 evolution 车道并建议统一批量化，非重复立项。结论：低成本机械改进（回写按批次合并提交），收益为 git 历史信噪比与提交开销。
+  - 建议：evolution 回写按批次合并：一批评审的全部标记变更落为一个「evolution: 自进化标记回写 <date>」提交；knowledge audit 的龄期改写提交同步并入同一批处理逻辑。
+
+- **体检矛盾疑点悬置第5天止血零落地（恶化）**
+  - 影响：知识体检疑点 af0432ab（contradiction 类病灶，即体检检出的跨页规则冲突：windows-desktop-client.md 与 browser-streaming-client.md 两能力页对档位默认值的写法互相冲突，一处「跟随本机/60fps/8Mbps」一处「720p60/8Mbps」）自 11-13 首见悬置第 5 天零仲裁，期间每晚一条龄期改写提交、每晚体检照跑；复发敞口为知识库带未裁决冲突规则运行，任何消费这两页的 agent 都可能拿到矛盾规则。
+  - 证据：.fenix/knowledge_audit_findings.json（体检疑点台账）唯一在案疑点 af0432ab（kind=contradiction、status=escalated、first_seen=2026-11-13）；最新体检报告（11-18 00:00 提交 cd9b1e1 与 34e3aa1 留痕）仍写「共 1 条待人工仲裁，最长龄期 5 天」；仲裁入口文件 .fenix/knowledge_audit_arbitration.json（登记 fingerprint/decision 后由检查点自动消费的裁决文件）经 ls 核实不存在；龄期改写提交三连：a0e6100（11-16，3 天）→1d79a9e（11-17，4 天）→ba6ef39（11-18，5 天）。
+  - 调查评估：在 knowledge audit 体检检查点暴露，为 11-15 与 11-16 两条既有条目的同型第 3 次重述（持续，龄期 3→5 天），非新发现。已核实：仲裁入口文件至今不存在、体检结论仍维持「通过」口径、11-15 给出的三条建议（contradiction 配对键加入产品域、连续零吞吐时结论降级「带病通过」、为 headless 部署授权消费仲裁文件）与 11-16 给出的零代码止血路径（由处置白名单动作直接裁决「跨产品误报」并登记仲裁文件）逐项未落地——其中「误报」定性已由 11-15 条目以检测器代码、源端 StreamService.kt params() 行为、两页产品归属三源核实，裁决材料现成。与存量工作关系：完全覆盖于既有两条目，本条仅更新龄期证据并催办，不重复立项。结论：headless 部署下「待人工」通道没有消费主体，零成本止血动作无人执行，属处置授权缺位而非检测缺陷。
+  - 建议：按零代码路径执行：由处置白名单内动作对 af0432ab 裁决「跨产品误报」并登记 .fenix/knowledge_audit_arbitration.json（fingerprint/decision/decided_at/note，decision 引用 StreamService.kt params() 只读核验结论），框架检查点自动消费后闭合该疑点；框架侧将「待人工龄期超 3 天且仲裁文件不存在」的体检结论从「通过」降级为「带病通过」，避免报告口径掩盖悬置。
