@@ -448,3 +448,7 @@
   - 证据：.fenix/knowledge_audit_findings.json（体检疑点台账）唯一在案疑点 af0432ab（kind=contradiction、status=escalated、first_seen=2026-11-13）；最新体检报告（11-18 00:00 提交 cd9b1e1 与 34e3aa1 留痕）仍写「共 1 条待人工仲裁，最长龄期 5 天」；仲裁入口文件 .fenix/knowledge_audit_arbitration.json（登记 fingerprint/decision 后由检查点自动消费的裁决文件）经 ls 核实不存在；龄期改写提交三连：a0e6100（11-16，3 天）→1d79a9e（11-17，4 天）→ba6ef39（11-18，5 天）。
   - 调查评估：在 knowledge audit 体检检查点暴露，为 11-15 与 11-16 两条既有条目的同型第 3 次重述（持续，龄期 3→5 天），非新发现。已核实：仲裁入口文件至今不存在、体检结论仍维持「通过」口径、11-15 给出的三条建议（contradiction 配对键加入产品域、连续零吞吐时结论降级「带病通过」、为 headless 部署授权消费仲裁文件）与 11-16 给出的零代码止血路径（由处置白名单动作直接裁决「跨产品误报」并登记仲裁文件）逐项未落地——其中「误报」定性已由 11-15 条目以检测器代码、源端 StreamService.kt params() 行为、两页产品归属三源核实，裁决材料现成。与存量工作关系：完全覆盖于既有两条目，本条仅更新龄期证据并催办，不重复立项。结论：headless 部署下「待人工」通道没有消费主体，零成本止血动作无人执行，属处置授权缺位而非检测缺陷。
   - 建议：按零代码路径执行：由处置白名单内动作对 af0432ab 裁决「跨产品误报」并登记 .fenix/knowledge_audit_arbitration.json（fingerprint/decision/decided_at/note，decision 引用 StreamService.kt params() 只读核验结论），框架检查点自动消费后闭合该疑点；框架侧将「待人工龄期超 3 天且仲裁文件不存在」的体检结论从「通过」降级为「带病通过」，避免报告口径掩盖悬置。
+
+## 2026-11-19
+
+- 自上次自省以来无 SPEC 活动，跳过自省。
