@@ -242,7 +242,7 @@
   - 建议：窗口级停滞合计已可从本回顾数据面持续观测；配合既有判停提案灰度启用后，把均摊停滞比（停滞秒/run 墙钟秒）纳入日回顾作趋势行。
 
 - **验证环境根治后spec滞留blocked57分钟才恢复重验**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：是
   - 影响：web-browser-client 的验证环境已于 01:09 根治并探针实证，但 spec 在 blocked 态空等约 57 分钟、其中 39 分钟无任何 run 在飞，直到 60 分钟超时滞留信号触发一次 admin run（1038 秒/166 轮）才转回 testing 并派发 verifier——验证恢复被纯机制延迟拖慢，多烧 1 个 distress 信号与 1 个本可不发生的 admin run。
   - 证据：fenixd.log 17:09:02Z「Admin 处置成功链闭环: sig=web-browser-client::verify_env_blocked run=admin-web-browser-client-1794415508 unfrozen=False」（处置闭环但未执行解冻）；17:48:27Z blocked_stuck（spec 滞留 blocked 超阈值信号）「blocked 超过 63 分钟」（阈值 60 分钟，STATE updated=00:45:08Z）；18:05:47Z「Gate transition: blocked → testing」与「Dispatching verifier (P5)」；其间 17:09–17:48 日志仅 run 归档动作。
   - 调查评估：在处置 web-browser-client 验证阶段暴露。已核实事实：环境修复处置自身成功（bootstrap 根治提交 0a30212 于 01:07 落地，处置回执自述「环境已修复并探针实证」），但闭环回执 unfrozen=False 表明该处置路径不含解冻动作，框架也没有「环境已修复→自动解冻重验」的联动，只能等 60 分钟 stuck 阈值兜底后由 admin run 显式迁移；末次 admin run 内处置选项 manual_fixed_reverify 还因作用域不匹配执行失败记 ERROR（spec 作用域动作被当信号作用域消费），迁移靠 run 的门转换路径完成。根因归属：处置「修复环境」与「解冻状态」两段语义分离且无联动校验，属系统性缺口而非一次性失误。与存量工作关系：todo 既有条目「[arbiter:single-a] unfreeze/reset→testing 不入队 verifier」与「处置动作回执缺下游落地校验」同族，本例为复发补强——连探针实证已修复的成功处置也不触发状态迁移，不另立新案。结论：处置回执应携带并校验状态迁移落地，否则 stuck 定时器+额外 admin run 是必然代价。
@@ -250,7 +250,7 @@
 
 ### 失误
 - **场景集扩容未同步契约serve段，验证被打回13分钟**
-  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：否
+  - 自进化：问题成立 / 建议合理 / ✓ 值得立项 · 处理：接受 · 删除：是
   - 影响：web-browser-client 实现合并当刻（21:46:58）被验证契约静态门打回：场景 kind 集（api/cli/web 三类场景形态）已超出契约声明（verify.yaml 验证契约文件无 serve 段——被验证应用如何拉起并可服务的约定段），按 fail-fast 拦截且场景执行数为 0，随后动用 1 个 admin run（857 秒/128 轮）代起草 serve/ready 段，验证启动推迟约 13 分钟（21:46 打回、21:59 契约落位）。
   - 证据：ERROR 2026-11-11T13:46:58.999Z「契约 serve 一致性门打回 'web-browser-client'…无 serve 段且 config commands.start 无有效兜底」；处置记录 verify_contract_missing（验证契约缺失类信号，21:48:19）自述「出题产物消费期打回，场景执行数为 0；共 1 处缺口」；admin run admin-web-browser-client-1794404819（857s）产出补段提交 b959617（21:59:20，diff 自述「场景集由纯 cli 扩为 api/cli/web 混合，serve/ready 不再可省」）。
   - 调查评估：在处置 web-browser-client 验证准备时暴露。已核实：契约 96a21df 起草时（11-08）场景集为纯 cli、serve/ready 依法省略（提交 diff 注释自证）；本 spec 出题（planner-plan 场景规划 agent，18:38 派发）把场景集扩为 api/cli/web 时未同步补段，直到实现合并消费出题产物才被静态门拦截——门本身按设计工作（零场景执行、不触发 planner replan），缺口在「场景集变更与契约段位同步」无前置校验。与存量工作关系：同族第三次复发——①11-08 契约模板态 verify_contract_missing、②11-09 regression 段事后补记（f3b577e）、③本次 serve 段；11-09 既有改进条目「verify契约前置起草缺位」已立提案，本条为复发实例补强（新形态：kind 集扩容），不重复立项。结论：出题产物落盘前按 kind 集校验契约段位，可把该族三类缺口全部前移消灭。
