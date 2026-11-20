@@ -2,6 +2,7 @@
 
 <!-- knowledge: capability=browser-streaming-client rev=1
      sources=spec/changes/web-browser-client -->
+<!-- disputed: since=2026-11-13 fps=af0432ab -->
 
 云手机的浏览器观看端形态（vanilla TypeScript 单页应用，零安装）：在 PC/平板/手机浏览器里完成 token 连接、单应用画面观看与触控/键鼠操作、音频播放、剪贴板与文本注入、延迟观测，经 Web 网关接入源端协议。
 

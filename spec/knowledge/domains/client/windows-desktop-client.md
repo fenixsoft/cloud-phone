@@ -2,6 +2,7 @@
 
 <!-- knowledge: capability=windows-desktop-client rev=1
      sources=spec/changes/windows-desktop-client -->
+<!-- disputed: since=2026-11-13 fps=af0432ab -->
 
 云手机的 Windows 桌面观看端形态：与 Android 客户端同协议对等消费的 Kotlin + Compose Desktop 桌面应用，在 PC 上直接观看与操作源端。协议与传输零重写、经复合构建复用 protocol 模块，桌面侧自建解码渲染、鼠标键盘输入映射、三辅助通道、连接体验与会话编排（会话核心见[续 2](windows-desktop-client-2.md)，辅助通道见[续 3](windows-desktop-client-3.md)），并携带一条可重复的 Windows 实机冒烟验证链路。
 
