@@ -487,5 +487,6 @@
 
 ## 2026-11-28
 ### 知识真相源
+- audit 待人工发现：spec/knowledge/domains/transport/p2p-nat-traversal.md：锚点悬空: netns/iptables
 - audit 待人工发现：spec/knowledge/domains/client/touch-latency-fix.md：锚点悬空: P50/P95
 - audit 待人工发现：spec/knowledge/domains/aux-channels/aux-channels-m3.md：锚点悬空: enable/set
