@@ -484,3 +484,7 @@
 ## 2026-11-27
 
 - 自上次自省以来无 SPEC 活动，跳过自省。
+
+## 2026-11-28
+### 知识真相源
+- audit 待人工发现：spec/knowledge/domains/aux-channels/aux-channels-m3.md：锚点悬空: enable/set
